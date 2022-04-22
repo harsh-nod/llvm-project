@@ -1631,5 +1631,8 @@ include "RISCVInstrInfoD.td"
 include "RISCVInstrInfoC.td"
 include "RISCVInstrInfoZb.td"
 include "RISCVInstrInfoZk.td"
-include "RISCVInstrInfoV.td"
+// ----------------------- //
+// -- Replace with v0.8 -- //
+include "RISCVInstrInfoV_0p8.td"
+// ----------------------- //
 include "RISCVInstrInfoZfh.td"
