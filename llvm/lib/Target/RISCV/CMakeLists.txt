@@ -1,6 +1,10 @@
 add_llvm_component_group(RISCV)
 
 set(LLVM_TARGET_DEFINITIONS RISCV.td)
+set(RVV_VERSION 0.8)
+if(${RVV_VERSION} VERSION_EQUAL 0.8)
+  add_compile_definitions(RVV_VERSION_0P8)
+endif()
 
 tablegen(LLVM RISCVGenAsmMatcher.inc -gen-asm-matcher)
 tablegen(LLVM RISCVGenAsmWriter.inc -gen-asm-writer)
