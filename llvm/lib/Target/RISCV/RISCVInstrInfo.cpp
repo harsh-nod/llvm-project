@@ -413,9 +413,13 @@ void RISCVInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
       unsigned SrcEncoding = TRI->getEncodingValue(SrcReg);
       unsigned DstEncoding = TRI->getEncodingValue(DstReg);
       unsigned LMulVal;
-      bool Fractional;
-      std::tie(LMulVal, Fractional) = RISCVVType::decodeVLMUL(LMul);
-      assert(!Fractional && "It is impossible be fractional lmul here.");
+      // ----------------------- //
+      // -- Replace with v0.8 -- //
+      //bool Fractional;
+      //std::tie(LMulVal, Fractional) = RISCVVType::decodeVLMUL(LMul);
+      LMulVal  = RISCVVType::decodeVLMUL(LMul);
+      //assert(!Fractional && "It is impossible be fractional lmul here.");
+      // ----------------------- //
       if (forwardCopyWillClobberTuple(DstEncoding, SrcEncoding, NF * LMulVal)) {
         I = NF - 1;
         End = -1;
