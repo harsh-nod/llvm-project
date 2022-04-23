@@ -187,9 +187,12 @@ static bool isConvertibleToVMV_V_V(const RISCVSubtarget &STI,
           return false;
       }
 
+      // ----------------------- //
+      // -- Replace with v0.8 -- //
       // If the vsetvli is tail undisturbed, keep the whole register move.
-      if (!RISCVVType::isTailAgnostic(VType))
-        return false;
+      //if (!RISCVVType::isTailAgnostic(VType))
+      //  return false;
+      // ----------------------- //
 
       // The checking is conservative. We only have register classes for
       // LMUL = 1/2/4/8. We should be able to convert vmv1r.v to vmv.v.v

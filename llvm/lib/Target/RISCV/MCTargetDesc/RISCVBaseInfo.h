@@ -424,9 +424,12 @@ inline static unsigned getSEW(unsigned VType) {
   return decodeVSEW(VSEW);
 }
 
-inline static bool isTailAgnostic(unsigned VType) { return VType & 0x40; }
-
-inline static bool isMaskAgnostic(unsigned VType) { return VType & 0x80; }
+// ----------------------- //
+// -- Replace with v0.8 -- //
+//inline static bool isTailAgnostic(unsigned VType) { return VType & 0x40; }
+//
+//inline static bool isMaskAgnostic(unsigned VType) { return VType & 0x80; }
+// ----------------------- //
 
 void printVType(unsigned VType, raw_ostream &OS);
 
