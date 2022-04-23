@@ -144,8 +144,12 @@ static bool isConvertibleToVMV_V_V(const RISCVSubtarget &STI,
       continue;
 
     if (MBBI->getOpcode() == RISCV::PseudoVSETVLI ||
-        MBBI->getOpcode() == RISCV::PseudoVSETVLIX0 ||
-        MBBI->getOpcode() == RISCV::PseudoVSETIVLI) {
+        MBBI->getOpcode() == RISCV::PseudoVSETVLIX0
+   // ----------------------- //
+   // -- Replace with v0.8 -- //
+   //   || MBBI->getOpcode() == RISCV::PseudoVSETIVLI
+   // ----------------------- //
+    ) {
       // There is a vsetvli between COPY and source define instruction.
       // vy = def_vop ...  (producing instruction)
       // ...
@@ -1385,6 +1389,9 @@ std::string RISCVInstrInfo::createMIROperandComment(
   case CASE_VFMA_OPCODE_COMMON(OP, TYPE, M4):                                  \
   case CASE_VFMA_OPCODE_COMMON(OP, TYPE, M8)
 
+/*
+// ----------------------- //
+// -- Replace with v0.8 -- //
 #define CASE_VFMA_OPCODE_LMULS_MF2(OP, TYPE)                                   \
   CASE_VFMA_OPCODE_COMMON(OP, TYPE, MF2):                                      \
   case CASE_VFMA_OPCODE_LMULS_M1(OP, TYPE)
@@ -1401,6 +1408,26 @@ std::string RISCVInstrInfo::createMIROperandComment(
   CASE_VFMA_OPCODE_LMULS_MF4(OP, VF16):                                        \
   case CASE_VFMA_OPCODE_LMULS_MF2(OP, VF32):                                   \
   case CASE_VFMA_OPCODE_LMULS_M1(OP, VF64)
+// ----------------------- //
+*/
+
+// ----------------------- //
+// -- Replace with v0.8 -- //
+#define CASE_VFMA_OPCODE_LMULS_MF2(OP, TYPE)                                   \
+  CASE_VFMA_OPCODE_LMULS_M1(OP, TYPE)
+
+#define CASE_VFMA_OPCODE_LMULS_MF4(OP, TYPE)                                   \
+  CASE_VFMA_OPCODE_LMULS_MF2(OP, TYPE)
+
+#define CASE_VFMA_OPCODE_LMULS(OP, TYPE)                                       \
+  CASE_VFMA_OPCODE_LMULS_MF4(OP, TYPE)
+
+#define CASE_VFMA_SPLATS(OP)                                                   \
+  CASE_VFMA_OPCODE_LMULS_MF4(OP, VF16):                                        \
+  case CASE_VFMA_OPCODE_LMULS_MF2(OP, VF32):                                   \
+  case CASE_VFMA_OPCODE_LMULS_M1(OP, VF64)
+// ----------------------- //
+
 // clang-format on
 
 bool RISCVInstrInfo::findCommutedOpIndices(const MachineInstr &MI,
@@ -1419,10 +1446,17 @@ bool RISCVInstrInfo::findCommutedOpIndices(const MachineInstr &MI,
   case CASE_VFMA_SPLATS(FNMSUB):
   case CASE_VFMA_SPLATS(FNMACC):
   case CASE_VFMA_SPLATS(FNMSAC):
-  case CASE_VFMA_OPCODE_LMULS_MF4(FMACC, VV):
-  case CASE_VFMA_OPCODE_LMULS_MF4(FMSAC, VV):
-  case CASE_VFMA_OPCODE_LMULS_MF4(FNMACC, VV):
-  case CASE_VFMA_OPCODE_LMULS_MF4(FNMSAC, VV):
+  // ----------------------- //
+  // -- Replace with v0.8 -- //
+  //case CASE_VFMA_OPCODE_LMULS_MF4(FMACC, VV):
+  //case CASE_VFMA_OPCODE_LMULS_MF4(FMSAC, VV):
+  //case CASE_VFMA_OPCODE_LMULS_MF4(FNMACC, VV):
+  //case CASE_VFMA_OPCODE_LMULS_MF4(FNMSAC, VV):
+  case CASE_VFMA_OPCODE_LMULS_M1(FMACC, VV):
+  case CASE_VFMA_OPCODE_LMULS_M1(FMSAC, VV):
+  case CASE_VFMA_OPCODE_LMULS_M1(FNMACC, VV):
+  case CASE_VFMA_OPCODE_LMULS_M1(FNMSAC, VV):
+  // ----------------------- //
   case CASE_VFMA_OPCODE_LMULS(MADD, VX):
   case CASE_VFMA_OPCODE_LMULS(NMSUB, VX):
   case CASE_VFMA_OPCODE_LMULS(MACC, VX):
@@ -1528,17 +1562,28 @@ bool RISCVInstrInfo::findCommutedOpIndices(const MachineInstr &MI,
   CASE_VFMA_CHANGE_OPCODE_COMMON(OLDOP, NEWOP, TYPE, M4)                       \
   CASE_VFMA_CHANGE_OPCODE_COMMON(OLDOP, NEWOP, TYPE, M8)
 
+// ----------------------- //
+// -- Replace with v0.8 -- //
+//#define CASE_VFMA_CHANGE_OPCODE_LMULS_MF2(OLDOP, NEWOP, TYPE)                  \
+//  CASE_VFMA_CHANGE_OPCODE_COMMON(OLDOP, NEWOP, TYPE, MF2)                      \
+//  CASE_VFMA_CHANGE_OPCODE_LMULS_M1(OLDOP, NEWOP, TYPE)
+//
+//#define CASE_VFMA_CHANGE_OPCODE_LMULS_MF4(OLDOP, NEWOP, TYPE)                  \
+//  CASE_VFMA_CHANGE_OPCODE_COMMON(OLDOP, NEWOP, TYPE, MF4)                      \
+//  CASE_VFMA_CHANGE_OPCODE_LMULS_MF2(OLDOP, NEWOP, TYPE)
+//
+//#define CASE_VFMA_CHANGE_OPCODE_LMULS(OLDOP, NEWOP, TYPE)                      \
+//  CASE_VFMA_CHANGE_OPCODE_COMMON(OLDOP, NEWOP, TYPE, MF8)                      \
+//  CASE_VFMA_CHANGE_OPCODE_LMULS_MF4(OLDOP, NEWOP, TYPE)
 #define CASE_VFMA_CHANGE_OPCODE_LMULS_MF2(OLDOP, NEWOP, TYPE)                  \
-  CASE_VFMA_CHANGE_OPCODE_COMMON(OLDOP, NEWOP, TYPE, MF2)                      \
   CASE_VFMA_CHANGE_OPCODE_LMULS_M1(OLDOP, NEWOP, TYPE)
 
 #define CASE_VFMA_CHANGE_OPCODE_LMULS_MF4(OLDOP, NEWOP, TYPE)                  \
-  CASE_VFMA_CHANGE_OPCODE_COMMON(OLDOP, NEWOP, TYPE, MF4)                      \
   CASE_VFMA_CHANGE_OPCODE_LMULS_MF2(OLDOP, NEWOP, TYPE)
 
 #define CASE_VFMA_CHANGE_OPCODE_LMULS(OLDOP, NEWOP, TYPE)                      \
-  CASE_VFMA_CHANGE_OPCODE_COMMON(OLDOP, NEWOP, TYPE, MF8)                      \
   CASE_VFMA_CHANGE_OPCODE_LMULS_MF4(OLDOP, NEWOP, TYPE)
+// ----------------------- //
 
 #define CASE_VFMA_CHANGE_OPCODE_SPLATS(OLDOP, NEWOP)                           \
   CASE_VFMA_CHANGE_OPCODE_LMULS_MF4(OLDOP, NEWOP, VF16)                        \
@@ -1653,16 +1698,42 @@ MachineInstr *RISCVInstrInfo::commuteInstructionImpl(MachineInstr &MI,
 #define CASE_WIDEOP_OPCODE_COMMON(OP, LMUL)                                    \
   RISCV::PseudoV##OP##_##LMUL##_TIED
 
+// ----------------------- //
+// -- Replace with v0.8 -- //
+//#define CASE_WIDEOP_OPCODE_LMULS_MF4(OP)                                       \
+//  CASE_WIDEOP_OPCODE_COMMON(OP, MF4):                                          \
+//  case CASE_WIDEOP_OPCODE_COMMON(OP, MF2):                                     \
+//  case CASE_WIDEOP_OPCODE_COMMON(OP, M1):                                      \
+//  case CASE_WIDEOP_OPCODE_COMMON(OP, M2):                                      \
+//  case CASE_WIDEOP_OPCODE_COMMON(OP, M4)
+//
+//#define CASE_WIDEOP_OPCODE_LMULS(OP)                                           \
+//  CASE_WIDEOP_OPCODE_COMMON(OP, MF8):                                          \
+//  case CASE_WIDEOP_OPCODE_LMULS_MF4(OP)
+//// clang-format on
+//
+//#define CASE_WIDEOP_CHANGE_OPCODE_COMMON(OP, LMUL)                             \
+//  case RISCV::PseudoV##OP##_##LMUL##_TIED:                                     \
+//    NewOpc = RISCV::PseudoV##OP##_##LMUL;                                      \
+//    break;
+//
+//#define CASE_WIDEOP_CHANGE_OPCODE_LMULS_MF4(OP)                                 \
+//  CASE_WIDEOP_CHANGE_OPCODE_COMMON(OP, MF4)                                    \
+//  CASE_WIDEOP_CHANGE_OPCODE_COMMON(OP, MF2)                                    \
+//  CASE_WIDEOP_CHANGE_OPCODE_COMMON(OP, M1)                                     \
+//  CASE_WIDEOP_CHANGE_OPCODE_COMMON(OP, M2)                                     \
+//  CASE_WIDEOP_CHANGE_OPCODE_COMMON(OP, M4)
+//
+//#define CASE_WIDEOP_CHANGE_OPCODE_LMULS(OP)                                    \
+//  CASE_WIDEOP_CHANGE_OPCODE_COMMON(OP, MF8)                                    \
+//  CASE_WIDEOP_CHANGE_OPCODE_LMULS_MF4(OP)
 #define CASE_WIDEOP_OPCODE_LMULS_MF4(OP)                                       \
-  CASE_WIDEOP_OPCODE_COMMON(OP, MF4):                                          \
-  case CASE_WIDEOP_OPCODE_COMMON(OP, MF2):                                     \
-  case CASE_WIDEOP_OPCODE_COMMON(OP, M1):                                      \
+  CASE_WIDEOP_OPCODE_COMMON(OP, M1):                                      \
   case CASE_WIDEOP_OPCODE_COMMON(OP, M2):                                      \
   case CASE_WIDEOP_OPCODE_COMMON(OP, M4)
 
 #define CASE_WIDEOP_OPCODE_LMULS(OP)                                           \
-  CASE_WIDEOP_OPCODE_COMMON(OP, MF8):                                          \
-  case CASE_WIDEOP_OPCODE_LMULS_MF4(OP)
+  CASE_WIDEOP_OPCODE_LMULS_MF4(OP)
 // clang-format on
 
 #define CASE_WIDEOP_CHANGE_OPCODE_COMMON(OP, LMUL)                             \
@@ -1671,15 +1742,13 @@ MachineInstr *RISCVInstrInfo::commuteInstructionImpl(MachineInstr &MI,
     break;
 
 #define CASE_WIDEOP_CHANGE_OPCODE_LMULS_MF4(OP)                                 \
-  CASE_WIDEOP_CHANGE_OPCODE_COMMON(OP, MF4)                                    \
-  CASE_WIDEOP_CHANGE_OPCODE_COMMON(OP, MF2)                                    \
   CASE_WIDEOP_CHANGE_OPCODE_COMMON(OP, M1)                                     \
   CASE_WIDEOP_CHANGE_OPCODE_COMMON(OP, M2)                                     \
   CASE_WIDEOP_CHANGE_OPCODE_COMMON(OP, M4)
 
 #define CASE_WIDEOP_CHANGE_OPCODE_LMULS(OP)                                    \
-  CASE_WIDEOP_CHANGE_OPCODE_COMMON(OP, MF8)                                    \
   CASE_WIDEOP_CHANGE_OPCODE_LMULS_MF4(OP)
+// ----------------------- //
 
 MachineInstr *RISCVInstrInfo::convertToThreeAddress(MachineInstr &MI,
                                                     LiveVariables *LV,

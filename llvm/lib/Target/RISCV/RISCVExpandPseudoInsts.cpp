@@ -106,20 +106,29 @@ bool RISCVExpandPseudo::expandMI(MachineBasicBlock &MBB,
     return expandLoadTLSGDAddress(MBB, MBBI, NextMBBI);
   case RISCV::PseudoVSETVLI:
   case RISCV::PseudoVSETVLIX0:
-  case RISCV::PseudoVSETIVLI:
+  // ----------------------- //
+  // -- Replace with v0.8 -- //
+  //case RISCV::PseudoVSETIVLI:
+  // ----------------------- //
     return expandVSetVL(MBB, MBBI);
-  case RISCV::PseudoVMCLR_M_B1:
-  case RISCV::PseudoVMCLR_M_B2:
-  case RISCV::PseudoVMCLR_M_B4:
+  // ----------------------- //
+  // -- Replace with v0.8 -- //
+  //case RISCV::PseudoVMCLR_M_B1:
+  //case RISCV::PseudoVMCLR_M_B2:
+  //case RISCV::PseudoVMCLR_M_B4:
+  // ----------------------- //
   case RISCV::PseudoVMCLR_M_B8:
   case RISCV::PseudoVMCLR_M_B16:
   case RISCV::PseudoVMCLR_M_B32:
   case RISCV::PseudoVMCLR_M_B64:
     // vmclr.m vd => vmxor.mm vd, vd, vd
     return expandVMSET_VMCLR(MBB, MBBI, RISCV::VMXOR_MM);
-  case RISCV::PseudoVMSET_M_B1:
-  case RISCV::PseudoVMSET_M_B2:
-  case RISCV::PseudoVMSET_M_B4:
+  // ----------------------- //
+  // -- Replace with v0.8 -- //
+  //case RISCV::PseudoVMSET_M_B1:
+  //case RISCV::PseudoVMSET_M_B2:
+  //case RISCV::PseudoVMSET_M_B4:
+  // ----------------------- //
   case RISCV::PseudoVMSET_M_B8:
   case RISCV::PseudoVMSET_M_B16:
   case RISCV::PseudoVMSET_M_B32:
@@ -247,13 +256,20 @@ bool RISCVExpandPseudo::expandVSetVL(MachineBasicBlock &MBB,
   DebugLoc DL = MBBI->getDebugLoc();
 
   assert((MBBI->getOpcode() == RISCV::PseudoVSETVLI ||
-          MBBI->getOpcode() == RISCV::PseudoVSETVLIX0 ||
-          MBBI->getOpcode() == RISCV::PseudoVSETIVLI) &&
+          MBBI->getOpcode() == RISCV::PseudoVSETVLIX0
+         // ----------------------- //
+         // -- Replace with v0.8 -- //
+         // || MBBI->getOpcode() == RISCV::PseudoVSETIVLI
+         // ----------------------- //
+         ) &&
          "Unexpected pseudo instruction");
   unsigned Opcode;
-  if (MBBI->getOpcode() == RISCV::PseudoVSETIVLI)
-    Opcode = RISCV::VSETIVLI;
-  else
+  // ----------------------- //
+  // -- Replace with v0.8 -- //
+  // if (MBBI->getOpcode() == RISCV::PseudoVSETIVLI)
+  //   Opcode = RISCV::VSETIVLI;
+  // else
+  // ----------------------- //
     Opcode = RISCV::VSETVLI;
   const MCInstrDesc &Desc = TII->get(Opcode);
   assert(Desc.getNumOperands() == 3 && "Unexpected instruction format");
