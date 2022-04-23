@@ -4420,7 +4420,7 @@ SDValue RISCVTargetLowering::lowerVectorFPRoundLike(SDValue Op,
   bool IsDirectConv = VT.getVectorElementType() != MVT::f16 ||
                       SrcVT.getVectorElementType() != MVT::f64;
 
-  // For FP_ROUND of scalable vectors, leave it to the pattern. 
+  // For FP_ROUND of scalable vectors, leave it to the pattern.
   if (!VT.isFixedLengthVector() && !IsVPFPTrunc && IsDirectConv)
     return Op;
 
@@ -5005,10 +5005,13 @@ SDValue RISCVTargetLowering::LowerINTRINSIC_W_CHAIN(SDValue Op,
     if (!IsUnmasked)
       Ops.push_back(Mask);
     Ops.push_back(VL);
-    if (!IsUnmasked) {
-      SDValue Policy = DAG.getTargetConstant(RISCVII::TAIL_AGNOSTIC, DL, XLenVT);
-      Ops.push_back(Policy);
-    }
+    // ----------------------- //
+    // -- Replace with v0.8 -- //
+    //if (!IsUnmasked) {
+    //  SDValue Policy = DAG.getTargetConstant(RISCVII::TAIL_AGNOSTIC, DL, XLenVT);
+    //  Ops.push_back(Policy);
+    //}
+    // ----------------------- //
 
     SDVTList VTs = DAG.getVTList({ContainerVT, MVT::Other});
     SDValue Result =
@@ -5953,8 +5956,11 @@ SDValue RISCVTargetLowering::lowerMaskedLoad(SDValue Op,
   if (!IsUnmasked)
     Ops.push_back(Mask);
   Ops.push_back(VL);
-  if (!IsUnmasked)
-    Ops.push_back(DAG.getTargetConstant(RISCVII::TAIL_AGNOSTIC, DL, XLenVT));
+  // ----------------------- //
+  // -- Replace with v0.8 -- //
+  //if (!IsUnmasked)
+  //  Ops.push_back(DAG.getTargetConstant(RISCVII::TAIL_AGNOSTIC, DL, XLenVT));
+  // ----------------------- //
 
   SDVTList VTs = DAG.getVTList({ContainerVT, MVT::Other});
 
@@ -6506,8 +6512,11 @@ SDValue RISCVTargetLowering::lowerMaskedGather(SDValue Op,
   if (!IsUnmasked)
     Ops.push_back(Mask);
   Ops.push_back(VL);
-  if (!IsUnmasked)
-    Ops.push_back(DAG.getTargetConstant(RISCVII::TAIL_AGNOSTIC, DL, XLenVT));
+  // ----------------------- //
+  // -- Replace with v0.8 -- //
+  //if (!IsUnmasked)
+  //  Ops.push_back(DAG.getTargetConstant(RISCVII::TAIL_AGNOSTIC, DL, XLenVT));
+  // ----------------------- //
 
   SDVTList VTs = DAG.getVTList({ContainerVT, MVT::Other});
   SDValue Result =

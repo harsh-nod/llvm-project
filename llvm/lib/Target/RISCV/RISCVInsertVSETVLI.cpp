@@ -129,8 +129,11 @@ public:
            "Can't set VTYPE for uninitialized or unknown");
     VLMul = RISCVVType::getVLMUL(VType);
     SEW = RISCVVType::getSEW(VType);
-    TailAgnostic = RISCVVType::isTailAgnostic(VType);
-    MaskAgnostic = RISCVVType::isMaskAgnostic(VType);
+    // ----------------------- //
+    // -- Replace with v0.8 -- //
+    //TailAgnostic = RISCVVType::isTailAgnostic(VType);
+    //MaskAgnostic = RISCVVType::isMaskAgnostic(VType);
+    // ----------------------- //
   }
   void setVTYPE(RISCVII::VLMUL L, unsigned S, bool TA, bool MA, bool MRO,
                 bool IsStore, bool IsScalarMovOp) {
