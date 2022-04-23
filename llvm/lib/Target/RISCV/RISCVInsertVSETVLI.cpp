@@ -449,8 +449,12 @@ INITIALIZE_PASS(RISCVInsertVSETVLI, DEBUG_TYPE, RISCV_INSERT_VSETVLI_NAME,
 
 static bool isVectorConfigInstr(const MachineInstr &MI) {
   return MI.getOpcode() == RISCV::PseudoVSETVLI ||
-         MI.getOpcode() == RISCV::PseudoVSETVLIX0 ||
-         MI.getOpcode() == RISCV::PseudoVSETIVLI;
+         MI.getOpcode() == RISCV::PseudoVSETVLIX0
+// ----------------------- //
+// -- Replace with v0.8 -- //
+//        || MI.getOpcode() == RISCV::PseudoVSETIVLI
+// ----------------------- //
+;
 }
 
 static MachineInstr *elideCopies(MachineInstr *MI,
@@ -474,20 +478,29 @@ static bool isScalarMoveInstr(const MachineInstr &MI) {
   case RISCV::PseudoVMV_S_X_M2:
   case RISCV::PseudoVMV_S_X_M4:
   case RISCV::PseudoVMV_S_X_M8:
-  case RISCV::PseudoVMV_S_X_MF2:
-  case RISCV::PseudoVMV_S_X_MF4:
-  case RISCV::PseudoVMV_S_X_MF8:
+  // ----------------------- //
+  // -- Replace with v0.8 -- //
+  //case RISCV::PseudoVMV_S_X_MF2:
+  //case RISCV::PseudoVMV_S_X_MF4:
+  //case RISCV::PseudoVMV_S_X_MF8:
+  // ----------------------- //
   case RISCV::PseudoVFMV_S_F16_M1:
   case RISCV::PseudoVFMV_S_F16_M2:
   case RISCV::PseudoVFMV_S_F16_M4:
   case RISCV::PseudoVFMV_S_F16_M8:
-  case RISCV::PseudoVFMV_S_F16_MF2:
-  case RISCV::PseudoVFMV_S_F16_MF4:
+  // ----------------------- //
+  // -- Replace with v0.8 -- //
+  //case RISCV::PseudoVFMV_S_F16_MF2:
+  //case RISCV::PseudoVFMV_S_F16_MF4:
+  // ----------------------- //
   case RISCV::PseudoVFMV_S_F32_M1:
   case RISCV::PseudoVFMV_S_F32_M2:
   case RISCV::PseudoVFMV_S_F32_M4:
   case RISCV::PseudoVFMV_S_F32_M8:
-  case RISCV::PseudoVFMV_S_F32_MF2:
+  // ----------------------- //
+  // -- Replace with v0.8 -- //
+  //case RISCV::PseudoVFMV_S_F32_MF2:
+  // ----------------------- //
   case RISCV::PseudoVFMV_S_F64_M1:
   case RISCV::PseudoVFMV_S_F64_M2:
   case RISCV::PseudoVFMV_S_F64_M4:
@@ -601,6 +614,9 @@ void RISCVInsertVSETVLI::insertVSETVLI(MachineBasicBlock &MBB, MachineInstr &MI,
     return;
   }
 
+  /*
+  // ----------------------- //
+  // -- Replace with v0.8 -- //
   if (Info.hasAVLImm()) {
     BuildMI(MBB, MI, DL, TII->get(RISCV::PseudoVSETIVLI))
         .addReg(RISCV::X0, RegState::Define | RegState::Dead)
@@ -608,6 +624,8 @@ void RISCVInsertVSETVLI::insertVSETVLI(MachineBasicBlock &MBB, MachineInstr &MI,
         .addImm(Info.encodeVTYPE());
     return;
   }
+  // ----------------------- //
+  */
 
   Register AVLReg = Info.getAVLReg();
   if (AVLReg == RISCV::NoRegister) {
@@ -623,9 +641,11 @@ void RISCVInsertVSETVLI::insertVSETVLI(MachineBasicBlock &MBB, MachineInstr &MI,
       return;
     }
     // Otherwise use an AVL of 0 to avoid depending on previous vl.
-    BuildMI(MBB, MI, DL, TII->get(RISCV::PseudoVSETIVLI))
+    Register AVLReg = MRI->createVirtualRegister(&RISCV::GPRRegClass);
+    ((RISCVInstrInfo *)TII)->movImm(MBB, MachineBasicBlock::instr_iterator(MI), DL, AVLReg, 0);
+    BuildMI(MBB, MI, DL, TII->get(RISCV::PseudoVSETVLI))
         .addReg(RISCV::X0, RegState::Define | RegState::Dead)
-        .addImm(0)
+        .addReg(AVLReg)
         .addImm(Info.encodeVTYPE());
     return;
   }
@@ -652,16 +672,19 @@ void RISCVInsertVSETVLI::insertVSETVLI(MachineBasicBlock &MBB, MachineInstr &MI,
 // VSETIVLI instruction.
 static VSETVLIInfo getInfoForVSETVLI(const MachineInstr &MI) {
   VSETVLIInfo NewInfo;
-  if (MI.getOpcode() == RISCV::PseudoVSETIVLI) {
-    NewInfo.setAVLImm(MI.getOperand(1).getImm());
-  } else {
+  // ----------------------- //
+  // -- Replace with v0.8 -- //
+  //if (MI.getOpcode() == RISCV::PseudoVSETIVLI) {
+  //  NewInfo.setAVLImm(MI.getOperand(1).getImm());
+  //} else {
+  // ----------------------- //
     assert(MI.getOpcode() == RISCV::PseudoVSETVLI ||
            MI.getOpcode() == RISCV::PseudoVSETVLIX0);
     Register AVLReg = MI.getOperand(1).getReg();
     assert((AVLReg != RISCV::X0 || MI.getOperand(0).getReg() != RISCV::X0) &&
            "Can't handle X0, X0 vsetvli yet");
     NewInfo.setAVLReg(AVLReg);
-  }
+  //}
   NewInfo.setVTYPE(MI.getOperand(2).getImm());
 
   return NewInfo;
@@ -706,12 +729,15 @@ bool canSkipVSETVLIForLoadStore(const MachineInstr &MI,
   case RISCV::PseudoVLE8_V_M4_MASK:
   case RISCV::PseudoVLE8_V_M8:
   case RISCV::PseudoVLE8_V_M8_MASK:
-  case RISCV::PseudoVLE8_V_MF2:
-  case RISCV::PseudoVLE8_V_MF2_MASK:
-  case RISCV::PseudoVLE8_V_MF4:
-  case RISCV::PseudoVLE8_V_MF4_MASK:
-  case RISCV::PseudoVLE8_V_MF8:
-  case RISCV::PseudoVLE8_V_MF8_MASK:
+  // ----------------------- //
+  // -- Replace with v0.8 -- //
+  //case RISCV::PseudoVLE8_V_MF2:
+  //case RISCV::PseudoVLE8_V_MF2_MASK:
+  //case RISCV::PseudoVLE8_V_MF4:
+  //case RISCV::PseudoVLE8_V_MF4_MASK:
+  //case RISCV::PseudoVLE8_V_MF8:
+  //case RISCV::PseudoVLE8_V_MF8_MASK:
+  // ----------------------- //
   case RISCV::PseudoVLSE8_V_M1:
   case RISCV::PseudoVLSE8_V_M1_MASK:
   case RISCV::PseudoVLSE8_V_M2:
@@ -720,12 +746,15 @@ bool canSkipVSETVLIForLoadStore(const MachineInstr &MI,
   case RISCV::PseudoVLSE8_V_M4_MASK:
   case RISCV::PseudoVLSE8_V_M8:
   case RISCV::PseudoVLSE8_V_M8_MASK:
-  case RISCV::PseudoVLSE8_V_MF2:
-  case RISCV::PseudoVLSE8_V_MF2_MASK:
-  case RISCV::PseudoVLSE8_V_MF4:
-  case RISCV::PseudoVLSE8_V_MF4_MASK:
-  case RISCV::PseudoVLSE8_V_MF8:
-  case RISCV::PseudoVLSE8_V_MF8_MASK:
+  // ----------------------- //
+  // -- Replace with v0.8 -- //
+  //case RISCV::PseudoVLSE8_V_MF2:
+  //case RISCV::PseudoVLSE8_V_MF2_MASK:
+  //case RISCV::PseudoVLSE8_V_MF4:
+  //case RISCV::PseudoVLSE8_V_MF4_MASK:
+  //case RISCV::PseudoVLSE8_V_MF8:
+  //case RISCV::PseudoVLSE8_V_MF8_MASK:
+  // ----------------------- //
   case RISCV::PseudoVSE8_V_M1:
   case RISCV::PseudoVSE8_V_M1_MASK:
   case RISCV::PseudoVSE8_V_M2:
@@ -734,12 +763,15 @@ bool canSkipVSETVLIForLoadStore(const MachineInstr &MI,
   case RISCV::PseudoVSE8_V_M4_MASK:
   case RISCV::PseudoVSE8_V_M8:
   case RISCV::PseudoVSE8_V_M8_MASK:
-  case RISCV::PseudoVSE8_V_MF2:
-  case RISCV::PseudoVSE8_V_MF2_MASK:
-  case RISCV::PseudoVSE8_V_MF4:
-  case RISCV::PseudoVSE8_V_MF4_MASK:
-  case RISCV::PseudoVSE8_V_MF8:
-  case RISCV::PseudoVSE8_V_MF8_MASK:
+  // ----------------------- //
+  // -- Replace with v0.8 -- //
+  //case RISCV::PseudoVSE8_V_MF2:
+  //case RISCV::PseudoVSE8_V_MF2_MASK:
+  //case RISCV::PseudoVSE8_V_MF4:
+  //case RISCV::PseudoVSE8_V_MF4_MASK:
+  //case RISCV::PseudoVSE8_V_MF8:
+  //case RISCV::PseudoVSE8_V_MF8_MASK:
+  // ----------------------- //
   case RISCV::PseudoVSSE8_V_M1:
   case RISCV::PseudoVSSE8_V_M1_MASK:
   case RISCV::PseudoVSSE8_V_M2:
@@ -748,12 +780,15 @@ bool canSkipVSETVLIForLoadStore(const MachineInstr &MI,
   case RISCV::PseudoVSSE8_V_M4_MASK:
   case RISCV::PseudoVSSE8_V_M8:
   case RISCV::PseudoVSSE8_V_M8_MASK:
-  case RISCV::PseudoVSSE8_V_MF2:
-  case RISCV::PseudoVSSE8_V_MF2_MASK:
-  case RISCV::PseudoVSSE8_V_MF4:
-  case RISCV::PseudoVSSE8_V_MF4_MASK:
-  case RISCV::PseudoVSSE8_V_MF8:
-  case RISCV::PseudoVSSE8_V_MF8_MASK:
+  // ----------------------- //
+  // -- Replace with v0.8 -- //
+  //case RISCV::PseudoVSSE8_V_MF2:
+  //case RISCV::PseudoVSSE8_V_MF2_MASK:
+  //case RISCV::PseudoVSSE8_V_MF4:
+  //case RISCV::PseudoVSSE8_V_MF4_MASK:
+  //case RISCV::PseudoVSSE8_V_MF8:
+  //case RISCV::PseudoVSSE8_V_MF8_MASK:
+  // ----------------------- //
     EEW = 8;
     break;
   case RISCV::PseudoVLE16_V_M1:
@@ -764,10 +799,12 @@ bool canSkipVSETVLIForLoadStore(const MachineInstr &MI,
   case RISCV::PseudoVLE16_V_M4_MASK:
   case RISCV::PseudoVLE16_V_M8:
   case RISCV::PseudoVLE16_V_M8_MASK:
-  case RISCV::PseudoVLE16_V_MF2:
-  case RISCV::PseudoVLE16_V_MF2_MASK:
-  case RISCV::PseudoVLE16_V_MF4:
-  case RISCV::PseudoVLE16_V_MF4_MASK:
+  // ----------------------- //
+  // -- Replace with v0.8 -- //
+  //case RISCV::PseudoVLE16_V_MF2:
+  //case RISCV::PseudoVLE16_V_MF2_MASK:
+  //case RISCV::PseudoVLE16_V_MF4:
+  //case RISCV::PseudoVLE16_V_MF4_MASK:
   case RISCV::PseudoVLSE16_V_M1:
   case RISCV::PseudoVLSE16_V_M1_MASK:
   case RISCV::PseudoVLSE16_V_M2:
@@ -776,10 +813,12 @@ bool canSkipVSETVLIForLoadStore(const MachineInstr &MI,
   case RISCV::PseudoVLSE16_V_M4_MASK:
   case RISCV::PseudoVLSE16_V_M8:
   case RISCV::PseudoVLSE16_V_M8_MASK:
-  case RISCV::PseudoVLSE16_V_MF2:
-  case RISCV::PseudoVLSE16_V_MF2_MASK:
-  case RISCV::PseudoVLSE16_V_MF4:
-  case RISCV::PseudoVLSE16_V_MF4_MASK:
+  // ----------------------- //
+  // -- Replace with v0.8 -- //
+  //case RISCV::PseudoVLSE16_V_MF2:
+  //case RISCV::PseudoVLSE16_V_MF2_MASK:
+  //case RISCV::PseudoVLSE16_V_MF4:
+  //case RISCV::PseudoVLSE16_V_MF4_MASK:
   case RISCV::PseudoVSE16_V_M1:
   case RISCV::PseudoVSE16_V_M1_MASK:
   case RISCV::PseudoVSE16_V_M2:
@@ -788,10 +827,12 @@ bool canSkipVSETVLIForLoadStore(const MachineInstr &MI,
   case RISCV::PseudoVSE16_V_M4_MASK:
   case RISCV::PseudoVSE16_V_M8:
   case RISCV::PseudoVSE16_V_M8_MASK:
-  case RISCV::PseudoVSE16_V_MF2:
-  case RISCV::PseudoVSE16_V_MF2_MASK:
-  case RISCV::PseudoVSE16_V_MF4:
-  case RISCV::PseudoVSE16_V_MF4_MASK:
+  // ----------------------- //
+  // -- Replace with v0.8 -- //
+  //case RISCV::PseudoVSE16_V_MF2:
+  //case RISCV::PseudoVSE16_V_MF2_MASK:
+  //case RISCV::PseudoVSE16_V_MF4:
+  //case RISCV::PseudoVSE16_V_MF4_MASK:
   case RISCV::PseudoVSSE16_V_M1:
   case RISCV::PseudoVSSE16_V_M1_MASK:
   case RISCV::PseudoVSSE16_V_M2:
@@ -800,10 +841,12 @@ bool canSkipVSETVLIForLoadStore(const MachineInstr &MI,
   case RISCV::PseudoVSSE16_V_M4_MASK:
   case RISCV::PseudoVSSE16_V_M8:
   case RISCV::PseudoVSSE16_V_M8_MASK:
-  case RISCV::PseudoVSSE16_V_MF2:
-  case RISCV::PseudoVSSE16_V_MF2_MASK:
-  case RISCV::PseudoVSSE16_V_MF4:
-  case RISCV::PseudoVSSE16_V_MF4_MASK:
+  // ----------------------- //
+  // -- Replace with v0.8 -- //
+  //case RISCV::PseudoVSSE16_V_MF2:
+  //case RISCV::PseudoVSSE16_V_MF2_MASK:
+  //case RISCV::PseudoVSSE16_V_MF4:
+  //case RISCV::PseudoVSSE16_V_MF4_MASK:
     EEW = 16;
     break;
   case RISCV::PseudoVLE32_V_M1:
@@ -814,8 +857,10 @@ bool canSkipVSETVLIForLoadStore(const MachineInstr &MI,
   case RISCV::PseudoVLE32_V_M4_MASK:
   case RISCV::PseudoVLE32_V_M8:
   case RISCV::PseudoVLE32_V_M8_MASK:
-  case RISCV::PseudoVLE32_V_MF2:
-  case RISCV::PseudoVLE32_V_MF2_MASK:
+  // ----------------------- //
+  // -- Replace with v0.8 -- //
+  //case RISCV::PseudoVLE32_V_MF2:
+  //case RISCV::PseudoVLE32_V_MF2_MASK:
   case RISCV::PseudoVLSE32_V_M1:
   case RISCV::PseudoVLSE32_V_M1_MASK:
   case RISCV::PseudoVLSE32_V_M2:
@@ -824,8 +869,10 @@ bool canSkipVSETVLIForLoadStore(const MachineInstr &MI,
   case RISCV::PseudoVLSE32_V_M4_MASK:
   case RISCV::PseudoVLSE32_V_M8:
   case RISCV::PseudoVLSE32_V_M8_MASK:
-  case RISCV::PseudoVLSE32_V_MF2:
-  case RISCV::PseudoVLSE32_V_MF2_MASK:
+  // ----------------------- //
+  // -- Replace with v0.8 -- //
+  //case RISCV::PseudoVLSE32_V_MF2:
+  //case RISCV::PseudoVLSE32_V_MF2_MASK:
   case RISCV::PseudoVSE32_V_M1:
   case RISCV::PseudoVSE32_V_M1_MASK:
   case RISCV::PseudoVSE32_V_M2:
@@ -834,8 +881,10 @@ bool canSkipVSETVLIForLoadStore(const MachineInstr &MI,
   case RISCV::PseudoVSE32_V_M4_MASK:
   case RISCV::PseudoVSE32_V_M8:
   case RISCV::PseudoVSE32_V_M8_MASK:
-  case RISCV::PseudoVSE32_V_MF2:
-  case RISCV::PseudoVSE32_V_MF2_MASK:
+  // ----------------------- //
+  // -- Replace with v0.8 -- //
+  //case RISCV::PseudoVSE32_V_MF2:
+  //case RISCV::PseudoVSE32_V_MF2_MASK:
   case RISCV::PseudoVSSE32_V_M1:
   case RISCV::PseudoVSSE32_V_M1_MASK:
   case RISCV::PseudoVSSE32_V_M2:
@@ -844,8 +893,10 @@ bool canSkipVSETVLIForLoadStore(const MachineInstr &MI,
   case RISCV::PseudoVSSE32_V_M4_MASK:
   case RISCV::PseudoVSSE32_V_M8:
   case RISCV::PseudoVSSE32_V_M8_MASK:
-  case RISCV::PseudoVSSE32_V_MF2:
-  case RISCV::PseudoVSSE32_V_MF2_MASK:
+  // ----------------------- //
+  // -- Replace with v0.8 -- //
+  //case RISCV::PseudoVSSE32_V_MF2:
+  //case RISCV::PseudoVSSE32_V_MF2_MASK:
     EEW = 32;
     break;
   case RISCV::PseudoVLE64_V_M1:
