@@ -367,13 +367,22 @@ inline static bool isValidSEW(unsigned SEW) {
   return isPowerOf2_32(SEW) && SEW >= 8 && SEW <= 1024;
 }
 
+// ----------------------- //
+// -- Replace with v0.8 -- //
 // Is this a LMUL value that can be encoded into the VTYPE format.
-inline static bool isValidLMUL(unsigned LMUL, bool Fractional) {
-  return isPowerOf2_32(LMUL) && LMUL <= 8 && (!Fractional || LMUL != 1);
+//inline static bool isValidLMUL(unsigned LMUL, bool Fractional) {
+//  return isPowerOf2_32(LMUL) && LMUL <= 8 && (!Fractional || LMUL != 1);
+inline static bool isValidLMUL(unsigned LMUL) {
+  return isPowerOf2_32(LMUL) && LMUL <= 8;
 }
+// ----------------------- //
 
-unsigned encodeVTYPE(RISCVII::VLMUL VLMUL, unsigned SEW, bool TailAgnostic,
-                     bool MaskAgnostic);
+unsigned encodeVTYPE(RISCVII::VLMUL VLMUL, unsigned SEW
+// ----------------------- //
+// -- Replace with v0.8 -- //
+//                     , bool TailAgnostic, bool MaskAgnostic
+// ----------------------- //
+                     );
 
 inline static RISCVII::VLMUL getVLMUL(unsigned VType) {
   unsigned VLMUL = VType & 0x7;
@@ -381,12 +390,23 @@ inline static RISCVII::VLMUL getVLMUL(unsigned VType) {
 }
 
 // Decode VLMUL into 1,2,4,8 and fractional indicator.
-std::pair<unsigned, bool> decodeVLMUL(RISCVII::VLMUL VLMUL);
+// ----------------------- //
+// -- Replace with v0.8 -- //
+//std::pair<unsigned, bool> decodeVLMUL(RISCVII::VLMUL VLMUL);
+unsigned decodeVLMUL(RISCVII::VLMUL VLMUL);
+// ----------------------- //
 
-inline static RISCVII::VLMUL encodeLMUL(unsigned LMUL, bool Fractional) {
-  assert(isValidLMUL(LMUL, Fractional) && "Unsupported LMUL");
+  // ----------------------- //
+  // -- Replace with v0.8 -- //
+//inline static RISCVII::VLMUL encodeLMUL(unsigned LMUL, bool Fractional) {
+inline static RISCVII::VLMUL encodeLMUL(unsigned LMUL) {
+  //assert(isValidLMUL(LMUL, Fractional) && "Unsupported LMUL");
+  //unsigned LmulLog2 = Log2_32(LMUL);
+  //return static_cast<RISCVII::VLMUL>(Fractional ? 8 - LmulLog2 : LmulLog2);
+  assert(isValidLMUL(LMUL));
   unsigned LmulLog2 = Log2_32(LMUL);
-  return static_cast<RISCVII::VLMUL>(Fractional ? 8 - LmulLog2 : LmulLog2);
+  return static_cast<RISCVII::VLMUL>(LmulLog2);
+  // ----------------------- //
 }
 
 inline static unsigned decodeVSEW(unsigned VSEW) {

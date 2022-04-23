@@ -1748,38 +1748,55 @@ OperandMatchResultTy RISCVAsmParser::parseVTypeI(OperandVector &Operands) {
     Name = VTypeIElements[2].getIdentifier();
     if (!Name.consume_front("m"))
       goto MatchFail;
+    // ----------------------- //
+    // -- Replace with v0.8 -- //
     // "m" or "mf"
-    bool Fractional = Name.consume_front("f");
+    //bool Fractional = Name.consume_front("f");
+    // ----------------------- //
     unsigned Lmul;
     if (Name.getAsInteger(10, Lmul))
       goto MatchFail;
-    if (!RISCVVType::isValidLMUL(Lmul, Fractional))
+    // ----------------------- //
+    // -- Replace with v0.8 -- //
+    //if (!RISCVVType::isValidLMUL(Lmul, Fractional))
+    //  goto MatchFail;
+    if (!RISCVVType::isValidLMUL(Lmul))
       goto MatchFail;
+    // ----------------------- //
 
+    // ----------------------- //
+    // -- Replace with v0.8 -- //
     // ta or tu
-    Name = VTypeIElements[4].getIdentifier();
-    bool TailAgnostic;
-    if (Name == "ta")
-      TailAgnostic = true;
-    else if (Name == "tu")
-      TailAgnostic = false;
-    else
-      goto MatchFail;
+    //Name = VTypeIElements[4].getIdentifier();
+    //bool TailAgnostic;
+    //if (Name == "ta")
+    //  TailAgnostic = true;
+    //else if (Name == "tu")
+    //  TailAgnostic = false;
+    //else
+    //  goto MatchFail;
 
-    // ma or mu
-    Name = VTypeIElements[6].getIdentifier();
-    bool MaskAgnostic;
-    if (Name == "ma")
-      MaskAgnostic = true;
-    else if (Name == "mu")
-      MaskAgnostic = false;
-    else
-      goto MatchFail;
+    //// ma or mu
+    //Name = VTypeIElements[6].getIdentifier();
+    //bool MaskAgnostic;
+    //if (Name == "ma")
+    //  MaskAgnostic = true;
+    //else if (Name == "mu")
+    //  MaskAgnostic = false;
+    //else
+    //  goto MatchFail;
 
-    RISCVII::VLMUL VLMUL = RISCVVType::encodeLMUL(Lmul, Fractional);
+    //RISCVII::VLMUL VLMUL = RISCVVType::encodeLMUL(Lmul, Fractional);
+    RISCVII::VLMUL VLMUL = RISCVVType::encodeLMUL(Lmul);
+    // ----------------------- //
 
+    // ----------------------- //
+    // -- Replace with v0.8 -- //
+    //unsigned VTypeI =
+    //    RISCVVType::encodeVTYPE(VLMUL, Sew, TailAgnostic, MaskAgnostic);
     unsigned VTypeI =
-        RISCVVType::encodeVTYPE(VLMUL, Sew, TailAgnostic, MaskAgnostic);
+        RISCVVType::encodeVTYPE(VLMUL, Sew);
+    // ----------------------- //
     Operands.push_back(RISCVOperand::createVType(VTypeI, S, isRV64()));
     return MatchOperand_Success;
   }

@@ -148,7 +148,11 @@ public:
   unsigned encodeVTYPE() const {
     assert(isValid() && !isUnknown() && !SEWLMULRatioOnly &&
            "Can't encode VTYPE for uninitialized or unknown");
-    return RISCVVType::encodeVTYPE(VLMul, SEW, TailAgnostic, MaskAgnostic);
+    // ----------------------- //
+    // -- Replace with v0.8 -- //
+    //return RISCVVType::encodeVTYPE(VLMul, SEW, TailAgnostic, MaskAgnostic);
+    return RISCVVType::encodeVTYPE(VLMul, SEW);
+    // ----------------------- //
   }
 
   bool hasSEWLMULRatioOnly() const { return SEWLMULRatioOnly; }
@@ -177,11 +181,17 @@ public:
 
   static unsigned getSEWLMULRatio(unsigned SEW, RISCVII::VLMUL VLMul) {
     unsigned LMul;
-    bool Fractional;
-    std::tie(LMul, Fractional) = RISCVVType::decodeVLMUL(VLMul);
-
+    // ----------------------- //
+    // -- Replace with v0.8 -- //
+    //bool Fractional;
+    //std::tie(LMul, Fractional) = RISCVVType::decodeVLMUL(VLMul);
+    //
     // Convert LMul to a fixed point value with 3 fractional bits.
-    LMul = Fractional ? (8 / LMul) : (LMul * 8);
+    //LMul = Fractional ? (8 / LMul) : (LMul * 8);
+
+    LMul = RISCVVType::decodeVLMUL(VLMul);
+    LMul = (LMul * 8);
+    // ----------------------- //
 
     assert(SEW >= 8 && "Unexpected SEW value");
     return (SEW * 8) / LMul;
