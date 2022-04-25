@@ -573,12 +573,11 @@ void RISCVDAGToDAGISel::selectVSETVLI(SDNode *Node) {
   if (VLMax) {
     VLOperand = CurDAG->getRegister(RISCV::X0, XLenVT);
     Opcode = RISCV::PseudoVSETVLIX0;
+  } else {
+    VLOperand = Node->getOperand(IntNoOffset + 1);
 /*
 // ----------------------- //
 // -- Replace with v0.8 -- //
-  } else {
-    VLOperand = Node->getOperand(IntNoOffset + 1);
-
     if (auto *C = dyn_cast<ConstantSDNode>(VLOperand)) {
       uint64_t AVL = C->getZExtValue();
       if (isUInt<5>(AVL)) {
