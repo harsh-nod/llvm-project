@@ -42,21 +42,30 @@ namespace {
 class VSETVLIInfo {
   union {
     Register AVLReg;
-    unsigned AVLImm;
+    // ----------------------- //
+    // -- Replace with v0.8 -- //
+    //unsigned AVLImm;
+    // ----------------------- //
   };
 
   enum : uint8_t {
     Uninitialized,
     AVLIsReg,
-    AVLIsImm,
+    // ----------------------- //
+    // -- Replace with v0.8 -- //
+    //AVLIsImm,
+    // ----------------------- //
     Unknown,
   } State = Uninitialized;
 
   // Fields from VTYPE.
   RISCVII::VLMUL VLMul = RISCVII::LMUL_1;
   uint8_t SEW = 0;
-  uint8_t TailAgnostic : 1;
-  uint8_t MaskAgnostic : 1;
+  // ----------------------- //
+  // -- Replace with v0.8 -- //
+  //uint8_t TailAgnostic : 1;
+  //uint8_t MaskAgnostic : 1;
+  // ----------------------- //
   uint8_t MaskRegOp : 1;
   uint8_t StoreOp : 1;
   uint8_t ScalarMovOp : 1;
@@ -64,7 +73,12 @@ class VSETVLIInfo {
 
 public:
   VSETVLIInfo()
-      : AVLImm(0), TailAgnostic(false), MaskAgnostic(false), MaskRegOp(false),
+      :
+        // ----------------------- //
+        // -- Replace with v0.8 -- //
+        //AVLImm(0), TailAgnostic(false), MaskAgnostic(false),
+        // ----------------------- //
+        MaskRegOp(false),
         StoreOp(false), ScalarMovOp(false), SEWLMULRatioOnly(false) {}
 
   static VSETVLIInfo getUnknown() {
@@ -82,21 +96,29 @@ public:
     State = AVLIsReg;
   }
 
-  void setAVLImm(unsigned Imm) {
-    AVLImm = Imm;
-    State = AVLIsImm;
-  }
+  // ----------------------- //
+  // -- Replace with v0.8 -- //
+  //void setAVLImm(unsigned Imm) {
+  //  AVLImm = Imm;
+  //  State = AVLIsImm;
+  //}
 
-  bool hasAVLImm() const { return State == AVLIsImm; }
+  //bool hasAVLImm() const { return State == AVLIsImm; }
+  bool hasAVLImm() const { return false; }
+  // ----------------------- //
   bool hasAVLReg() const { return State == AVLIsReg; }
   Register getAVLReg() const {
     assert(hasAVLReg());
     return AVLReg;
   }
-  unsigned getAVLImm() const {
-    assert(hasAVLImm());
-    return AVLImm;
-  }
+  // ----------------------- //
+  // -- Replace with v0.8 -- //
+  //unsigned getAVLImm() const {
+  //  assert(hasAVLImm());
+  //  return AVLImm;
+  //}
+  unsigned getAVLImm() const { return 1; }
+  // ----------------------- //
   bool hasZeroAVL() const {
     if (hasAVLImm())
       return getAVLImm() == 0;
@@ -135,14 +157,22 @@ public:
     //MaskAgnostic = RISCVVType::isMaskAgnostic(VType);
     // ----------------------- //
   }
-  void setVTYPE(RISCVII::VLMUL L, unsigned S, bool TA, bool MA, bool MRO,
+  // ----------------------- //
+  // -- Replace with v0.8 -- //
+  //void setVTYPE(RISCVII::VLMUL L, unsigned S, bool TA, bool MA, bool MRO,
+  //              bool IsStore, bool IsScalarMovOp) {
+  void setVTYPE(RISCVII::VLMUL L, unsigned S, bool MRO,
                 bool IsStore, bool IsScalarMovOp) {
+  // ----------------------- //
     assert(isValid() && !isUnknown() &&
            "Can't set VTYPE for uninitialized or unknown");
     VLMul = L;
     SEW = S;
-    TailAgnostic = TA;
-    MaskAgnostic = MA;
+    // ----------------------- //
+    // -- Replace with v0.8 -- //
+    //TailAgnostic = TA;
+    //MaskAgnostic = MA;
+    // ----------------------- //
     MaskRegOp = MRO;
     StoreOp = IsStore;
     ScalarMovOp = IsScalarMovOp;
@@ -177,9 +207,13 @@ public:
            "Can't compare VTYPE in unknown state");
     assert(!SEWLMULRatioOnly && !Other.SEWLMULRatioOnly &&
            "Can't compare when only LMUL/SEW ratio is valid.");
-    return std::tie(VLMul, SEW, TailAgnostic, MaskAgnostic) ==
-           std::tie(Other.VLMul, Other.SEW, Other.TailAgnostic,
-                    Other.MaskAgnostic);
+    // ----------------------- //
+    // -- Replace with v0.8 -- //
+    //return std::tie(VLMul, SEW, TailAgnostic, MaskAgnostic) ==
+    //       std::tie(Other.VLMul, Other.SEW, Other.TailAgnostic,
+    //                Other.MaskAgnostic);
+    return std::tie(VLMul, SEW) == std::tie(Other.VLMul, Other.SEW);
+    // ----------------------- //
   }
 
   static unsigned getSEWLMULRatio(unsigned SEW, RISCVII::VLMUL VLMul) {
@@ -220,8 +254,12 @@ public:
            "Can't compare invalid VSETVLIInfos");
     assert(!isUnknown() && !Other.isUnknown() &&
            "Can't compare VTYPE in unknown state");
-    return TailAgnostic == Other.TailAgnostic &&
-           MaskAgnostic == Other.MaskAgnostic;
+    // ----------------------- //
+    // -- Replace with v0.8 -- //
+    //return TailAgnostic == Other.TailAgnostic &&
+    //       MaskAgnostic == Other.MaskAgnostic;
+    return true;
+    // ----------------------- //
   }
 
   bool hasCompatibleVTYPE(const VSETVLIInfo &InstrInfo, bool Strict) const {
@@ -236,10 +274,15 @@ public:
     // FIXME: Mask reg operations are probably ok if "this" VLMAX is larger
     // than "InstrInfo".
     // FIXME: The policy bits can probably be ignored for mask reg operations.
-    if (InstrInfo.MaskRegOp && hasSameVLMAX(InstrInfo) &&
-        TailAgnostic == InstrInfo.TailAgnostic &&
-        MaskAgnostic == InstrInfo.MaskAgnostic)
+    // ----------------------- //
+    // -- Replace with v0.8 -- //
+    //if (InstrInfo.MaskRegOp && hasSameVLMAX(InstrInfo) &&
+    //    TailAgnostic == InstrInfo.TailAgnostic &&
+    //    MaskAgnostic == InstrInfo.MaskAgnostic)
+    //  return true;
+    if (InstrInfo.MaskRegOp && hasSameVLMAX(InstrInfo))
       return true;
+    // ----------------------- //
 
     return false;
   }
@@ -312,9 +355,14 @@ public:
       return false;
 
     // Stores can ignore the tail and mask policies.
-    if (!InstrInfo.StoreOp && (TailAgnostic != InstrInfo.TailAgnostic ||
-                               MaskAgnostic != InstrInfo.MaskAgnostic))
+    // ----------------------- //
+    // -- Replace with v0.8 -- //
+    //if (!InstrInfo.StoreOp && (TailAgnostic != InstrInfo.TailAgnostic ||
+    //                           MaskAgnostic != InstrInfo.MaskAgnostic))
+    //  return false;
+    if (!InstrInfo.StoreOp)
       return false;
+    // ----------------------- //
 
     return getSEWLMULRatio() == getSEWLMULRatio(EEW, InstrInfo.VLMul);
   }
@@ -598,14 +646,22 @@ static VSETVLIInfo computeInfoForInstr(const MachineInstr &MI, uint64_t TSFlags,
       if (Imm == RISCV::VLMaxSentinel)
         InstrInfo.setAVLReg(RISCV::X0);
       else
-        InstrInfo.setAVLImm(Imm);
+        // ----------------------- //
+        // -- Replace with v0.8 -- //
+        //InstrInfo.setAVLImm(Imm);
+        assert(0 && "Immediate support removed");
+        // ----------------------- //
     } else {
       InstrInfo.setAVLReg(VLOp.getReg());
     }
   } else
     InstrInfo.setAVLReg(RISCV::NoRegister);
-  InstrInfo.setVTYPE(VLMul, SEW, TailAgnostic, MaskAgnostic, MaskRegOp, StoreOp,
-                     ScalarMovOp);
+  // ----------------------- //
+  // -- Replace with v0.8 -- //
+  //InstrInfo.setVTYPE(VLMul, SEW, TailAgnostic, MaskAgnostic, MaskRegOp, StoreOp,
+  //                   ScalarMovOp);
+  InstrInfo.setVTYPE(VLMul, SEW, MaskRegOp, StoreOp, ScalarMovOp);
+  // ----------------------- //
 
   return InstrInfo;
 }
