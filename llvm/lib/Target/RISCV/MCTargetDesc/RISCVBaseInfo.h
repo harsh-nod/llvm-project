@@ -385,7 +385,7 @@ unsigned encodeVTYPE(RISCVII::VLMUL VLMUL, unsigned SEW
                      );
 
 inline static RISCVII::VLMUL getVLMUL(unsigned VType) {
-  unsigned VLMUL = VType & 0x7;
+  unsigned VLMUL = VType & 0x3;
   return static_cast<RISCVII::VLMUL>(VLMUL);
 }
 
@@ -420,7 +420,7 @@ inline static unsigned encodeSEW(unsigned SEW) {
 }
 
 inline static unsigned getSEW(unsigned VType) {
-  unsigned VSEW = (VType >> 3) & 0x7;
+  unsigned VSEW = (VType >> 2) & 0x7;
   return decodeVSEW(VSEW);
 }
 
