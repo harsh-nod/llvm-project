@@ -1360,9 +1360,14 @@ std::string RISCVInstrInfo::createMIROperandComment(
 
   // Print the full VType operand of vsetvli/vsetivli instructions, and the SEW
   // operand of vector codegen pseudos.
-  if ((MI.getOpcode() == RISCV::VSETVLI || MI.getOpcode() == RISCV::VSETIVLI ||
+  if ((MI.getOpcode() == RISCV::VSETVLI ||
+
+    // ----------------------- //
+    // -- Replace with v0.8 -- //
+    //   MI.getOpcode() == RISCV::VSETIVLI ||
+    //   MI.getOpcode() == RISCV::PseudoVSETIVLI ||
+    // ----------------------- //
        MI.getOpcode() == RISCV::PseudoVSETVLI ||
-       MI.getOpcode() == RISCV::PseudoVSETIVLI ||
        MI.getOpcode() == RISCV::PseudoVSETVLIX0) &&
       OpIdx == 2) {
     unsigned Imm = MI.getOperand(OpIdx).getImm();
