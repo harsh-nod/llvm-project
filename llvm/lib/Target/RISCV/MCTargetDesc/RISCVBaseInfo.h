@@ -111,9 +111,6 @@ enum VLMUL : uint8_t {
   LMUL_4,
   LMUL_8,
   LMUL_RESERVED,
-  LMUL_F8,
-  LMUL_F4,
-  LMUL_F2
 };
 
 enum {

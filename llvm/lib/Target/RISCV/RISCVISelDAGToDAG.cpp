@@ -254,9 +254,12 @@ static SDValue createTuple(SelectionDAG &CurDAG, ArrayRef<SDValue> Regs,
   switch (LMUL) {
   default:
     llvm_unreachable("Invalid LMUL.");
-  case RISCVII::VLMUL::LMUL_F8:
-  case RISCVII::VLMUL::LMUL_F4:
-  case RISCVII::VLMUL::LMUL_F2:
+  // ----------------------- //
+  // -- Replace with v0.8 -- //
+  //case RISCVII::VLMUL::LMUL_F8:
+  //case RISCVII::VLMUL::LMUL_F4:
+  //case RISCVII::VLMUL::LMUL_F2:
+  // ----------------------- //
   case RISCVII::VLMUL::LMUL_1:
     return createM1Tuple(CurDAG, Regs, NF);
   case RISCVII::VLMUL::LMUL_2:
@@ -1593,10 +1596,14 @@ void RISCVDAGToDAGISel::Select(SDNode *Node) {
     if (Idx != 0)
       break;
 
-    RISCVII::VLMUL SubVecLMUL = RISCVTargetLowering::getLMUL(SubVecContainerVT);
-    bool IsSubVecPartReg = SubVecLMUL == RISCVII::VLMUL::LMUL_F2 ||
-                           SubVecLMUL == RISCVII::VLMUL::LMUL_F4 ||
-                           SubVecLMUL == RISCVII::VLMUL::LMUL_F8;
+    // ----------------------- //
+    // -- Replace with v0.8 -- //
+    //RISCVII::VLMUL SubVecLMUL = RISCVTargetLowering::getLMUL(SubVecContainerVT);
+    //bool IsSubVecPartReg = SubVecLMUL == RISCVII::VLMUL::LMUL_F2 ||
+    //                       SubVecLMUL == RISCVII::VLMUL::LMUL_F4 ||
+    //                       SubVecLMUL == RISCVII::VLMUL::LMUL_F8;
+    bool IsSubVecPartReg = false;
+    // ----------------------- //
     (void)IsSubVecPartReg; // Silence unused variable warning without asserts.
     assert((!IsSubVecPartReg || V.isUndef()) &&
            "Expecting lowering to have created legal INSERT_SUBVECTORs when "
