@@ -198,7 +198,7 @@ let vm = 1 in {
 // vs<nf>r.v vd, (rs1)
 class VWholeStore<bits<3> nf, string opcodestr, RegisterClass VRC>
     : RVInstVSU<nf, SUMOPUnitStrideWholeReg,
-                LSWidth64.Value, (outs), (ins VRC:$vs3, GPR:$rs1),
+                0b000, (outs), (ins VRC:$vs3, GPR:$rs1),
                 opcodestr, "$vs3, (${rs1})"> {
   let Uses = [];
 }
