@@ -21,18 +21,18 @@ def OPIVX : RISCVVFormat<0b100>;
 def OPFVF : RISCVVFormat<0b101>;
 def OPMVX : RISCVVFormat<0b110>;
 
-class RISCVMOP<bits<2> val> {
-  bits<2> Value = val;
+class RISCVMOP<bits<3> val> {
+  bits<3> Value = val;
 }
-def MOPLDUnitStride   : RISCVMOP<0b00>;
-def MOPLDIndexedUnord : RISCVMOP<0b01>;
-def MOPLDStrided      : RISCVMOP<0b10>;
-def MOPLDIndexedOrder : RISCVMOP<0b11>;
+def MOPLDUnitStride   : RISCVMOP<0b000>;
+def MOPLDIndexedUnord : RISCVMOP<0b001>;
+def MOPLDStrided      : RISCVMOP<0b010>;
+def MOPLDIndexedOrder : RISCVMOP<0b011>;
 
-def MOPSTUnitStride   : RISCVMOP<0b00>;
-def MOPSTIndexedUnord : RISCVMOP<0b01>;
-def MOPSTStrided      : RISCVMOP<0b10>;
-def MOPSTIndexedOrder : RISCVMOP<0b11>;
+def MOPSTUnitStride   : RISCVMOP<0b000>;
+def MOPSTIndexedUnord : RISCVMOP<0b001>;
+def MOPSTStrided      : RISCVMOP<0b010>;
+def MOPSTIndexedOrder : RISCVMOP<0b011>;
 
 class RISCVLSUMOP<bits<5> val> {
   bits<5> Value = val;
@@ -201,7 +201,7 @@ class RVInstV<bits<6> funct6, bits<5> vs1, RISCVVFormat opv, dag outs,
   let RVVConstraint = VMConstraint;
 }
 
-class RVInstVLU<bits<3> nf, bit mew, RISCVLSUMOP lumop,
+class RVInstVLU<bits<3> nf,  RISCVLSUMOP lumop,
                 bits<3> width, dag outs, dag ins, string opcodestr,
                 string argstr>
     : RVInst<outs, ins, opcodestr, argstr, [], InstFormatR> {
@@ -210,8 +210,8 @@ class RVInstVLU<bits<3> nf, bit mew, RISCVLSUMOP lumop,
   bit vm;
 
   let Inst{31-29} = nf;
-  let Inst{28} = mew;
-  let Inst{27-26} = MOPLDUnitStride.Value;
+  
+  let Inst{28-26} = MOPLDUnitStride.Value;
   let Inst{25} = vm;
   let Inst{24-20} = lumop.Value;
   let Inst{19-15} = rs1;
@@ -223,7 +223,7 @@ class RVInstVLU<bits<3> nf, bit mew, RISCVLSUMOP lumop,
   let RVVConstraint = VMConstraint;
 }
 
-class RVInstVLS<bits<3> nf, bit mew, bits<3> width,
+class RVInstVLS<bits<3> nf,  bits<3> width,
                 dag outs, dag ins, string opcodestr, string argstr>
     : RVInst<outs, ins, opcodestr, argstr, [], InstFormatR> {
   bits<5> rs2;
@@ -232,8 +232,8 @@ class RVInstVLS<bits<3> nf, bit mew, bits<3> width,
   bit vm;
 
   let Inst{31-29} = nf;
-  let Inst{28} = mew;
-  let Inst{27-26} = MOPLDStrided.Value;
+  
+  let Inst{28-26} = MOPLDStrided.Value;
   let Inst{25} = vm;
   let Inst{24-20} = rs2;
   let Inst{19-15} = rs1;
@@ -245,7 +245,7 @@ class RVInstVLS<bits<3> nf, bit mew, bits<3> width,
   let RVVConstraint = VMConstraint;
 }
 
-class RVInstVLX<bits<3> nf, bit mew, RISCVMOP mop, bits<3> width,
+class RVInstVLX<bits<3> nf,  RISCVMOP mop, bits<3> width,
                 dag outs, dag ins, string opcodestr, string argstr>
     : RVInst<outs, ins, opcodestr, argstr, [], InstFormatR> {
   bits<5> vs2;
@@ -254,8 +254,8 @@ class RVInstVLX<bits<3> nf, bit mew, RISCVMOP mop, bits<3> width,
   bit vm;
 
   let Inst{31-29} = nf;
-  let Inst{28} = mew;
-  let Inst{27-26} = mop.Value;
+  
+  let Inst{28-26} = mop.Value;
   let Inst{25} = vm;
   let Inst{24-20} = vs2;
   let Inst{19-15} = rs1;
@@ -267,7 +267,7 @@ class RVInstVLX<bits<3> nf, bit mew, RISCVMOP mop, bits<3> width,
   let RVVConstraint = VMConstraint;
 }
 
-class RVInstVSU<bits<3> nf, bit mew, RISCVLSUMOP sumop,
+class RVInstVSU<bits<3> nf,  RISCVLSUMOP sumop,
                 bits<3> width, dag outs, dag ins, string opcodestr,
                 string argstr>
     : RVInst<outs, ins, opcodestr, argstr, [], InstFormatR> {
@@ -276,8 +276,8 @@ class RVInstVSU<bits<3> nf, bit mew, RISCVLSUMOP sumop,
   bit vm;
 
   let Inst{31-29} = nf;
-  let Inst{28} = mew;
-  let Inst{27-26} = MOPSTUnitStride.Value;
+  
+  let Inst{28-26} = MOPSTUnitStride.Value;
   let Inst{25} = vm;
   let Inst{24-20} = sumop.Value;
   let Inst{19-15} = rs1;
@@ -288,7 +288,7 @@ class RVInstVSU<bits<3> nf, bit mew, RISCVLSUMOP sumop,
   let Uses = [VTYPE, VL];
 }
 
-class RVInstVSS<bits<3> nf, bit mew, bits<3> width,
+class RVInstVSS<bits<3> nf,  bits<3> width,
                 dag outs, dag ins, string opcodestr, string argstr>
     : RVInst<outs, ins, opcodestr, argstr, [], InstFormatR> {
   bits<5> rs2;
@@ -297,8 +297,8 @@ class RVInstVSS<bits<3> nf, bit mew, bits<3> width,
   bit vm;
 
   let Inst{31-29} = nf;
-  let Inst{28} = mew;
-  let Inst{27-26} = MOPSTStrided.Value;
+  
+  let Inst{28-26} = MOPSTStrided.Value;
   let Inst{25} = vm;
   let Inst{24-20} = rs2;
   let Inst{19-15} = rs1;
@@ -309,7 +309,7 @@ class RVInstVSS<bits<3> nf, bit mew, bits<3> width,
   let Uses = [VTYPE, VL];
 }
 
-class RVInstVSX<bits<3> nf, bit mew, RISCVMOP mop, bits<3> width,
+class RVInstVSX<bits<3> nf,  RISCVMOP mop, bits<3> width,
                 dag outs, dag ins, string opcodestr, string argstr>
     : RVInst<outs, ins, opcodestr, argstr, [], InstFormatR> {
   bits<5> vs2;
@@ -318,8 +318,8 @@ class RVInstVSX<bits<3> nf, bit mew, RISCVMOP mop, bits<3> width,
   bit vm;
 
   let Inst{31-29} = nf;
-  let Inst{28} = mew;
-  let Inst{27-26} = mop.Value;
+  
+  let Inst{28-26} = mop.Value;
   let Inst{25} = vm;
   let Inst{24-20} = vs2;
   let Inst{19-15} = rs1;
@@ -329,3 +329,4 @@ class RVInstVSX<bits<3> nf, bit mew, RISCVMOP mop, bits<3> width,
 
   let Uses = [VTYPE, VL];
 }
+

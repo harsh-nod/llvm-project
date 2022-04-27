@@ -132,7 +132,7 @@ unsigned RISCVVType::encodeVTYPE(RISCVII::VLMUL VLMUL, unsigned SEW,
   assert(isValidSEW(SEW) && "Invalid SEW");
   unsigned VLMULBits = static_cast<unsigned>(VLMUL);
   unsigned VSEWBits = encodeSEW(SEW);
-  unsigned VTypeI = (VSEWBits << 3) | (VLMULBits & 0x7);
+  unsigned VTypeI = (VSEWBits << 2) | (VLMULBits & 0x3);
   if (TailAgnostic)
     VTypeI |= 0x40;
   if (MaskAgnostic)
@@ -172,14 +172,15 @@ void RISCVVType::printVType(unsigned VType, raw_ostream &OS) {
   OS << LMul;
 
   if (isTailAgnostic(VType))
-    OS << ", ta";
+    ;
   else
-    OS << ", tu";
+    ;
 
   if (isMaskAgnostic(VType))
-    OS << ", ma";
+    ;
   else
-    OS << ", mu";
+    ;
 }
 
 } // namespace llvm
+

@@ -87,7 +87,7 @@ public:
     State = AVLIsImm;
   }
 
-  bool hasAVLImm() const { return State == AVLIsImm; }
+  bool hasAVLImm() const { return false; }
   bool hasAVLReg() const { return State == AVLIsReg; }
   Register getAVLReg() const {
     assert(hasAVLReg());
@@ -623,9 +623,11 @@ void RISCVInsertVSETVLI::insertVSETVLI(MachineBasicBlock &MBB, MachineInstr &MI,
       return;
     }
     // Otherwise use an AVL of 0 to avoid depending on previous vl.
-    BuildMI(MBB, MI, DL, TII->get(RISCV::PseudoVSETIVLI))
+    Register AVLReg = MRI->createVirtualRegister(&RISCV::GPRRegClass);
+    ((RISCVInstrInfo *)TII)->movImm(MBB, MachineBasicBlock::instr_iterator(MI), DL, AVLReg, 0);
+    BuildMI(MBB, MI, DL, TII->get(RISCV::PseudoVSETVLI))
         .addReg(RISCV::X0, RegState::Define | RegState::Dead)
-        .addImm(0)
+        .addReg(AVLReg)
         .addImm(Info.encodeVTYPE());
     return;
   }
@@ -1181,3 +1183,4 @@ bool RISCVInsertVSETVLI::runOnMachineFunction(MachineFunction &MF) {
 FunctionPass *llvm::createRISCVInsertVSETVLIPass() {
   return new RISCVInsertVSETVLI();
 }
+

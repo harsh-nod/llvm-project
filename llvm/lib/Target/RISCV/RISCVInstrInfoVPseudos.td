@@ -49,7 +49,7 @@ defvar TAIL_AGNOSTIC = 1;
 // This class describes information associated to the LMUL.
 class LMULInfo<int lmul, int oct, VReg regclass, VReg wregclass,
                VReg f2regclass, VReg f4regclass, VReg f8regclass, string mx> {
-  bits<3> value = lmul; // This is encoded as the vlmul field of vtype.
+  bits<2> value = lmul; // This is encoded as the vlmul field of vtype.
   VReg vrclass = regclass;
   VReg wvrclass = wregclass;
   VReg f8vrclass = f8regclass;
@@ -65,9 +65,9 @@ def V_M2  : LMULInfo<0b001, 16, VRM2,        VRM4,   VR,   VR, VR, "M2">;
 def V_M4  : LMULInfo<0b010, 32, VRM4,        VRM8, VRM2,   VR, VR, "M4">;
 def V_M8  : LMULInfo<0b011, 64, VRM8,/*NoVReg*/VR, VRM4, VRM2, VR, "M8">;
 
-def V_MF8 : LMULInfo<0b101, 1, VR, VR,/*NoVReg*/VR,/*NoVReg*/VR,/*NoVReg*/VR, "MF8">;
-def V_MF4 : LMULInfo<0b110, 2, VR, VR,          VR,/*NoVReg*/VR,/*NoVReg*/VR, "MF4">;
-def V_MF2 : LMULInfo<0b111, 4, VR, VR,          VR,          VR,/*NoVReg*/VR, "MF2">;
+def V_MF8 : LMULInfo<0b01, 1, VR, VR,/*NoVReg*/VR,/*NoVReg*/VR,/*NoVReg*/VR, "MF8">;
+def V_MF4 : LMULInfo<0b10, 2, VR, VR,          VR,/*NoVReg*/VR,/*NoVReg*/VR, "MF4">;
+def V_MF2 : LMULInfo<0b11, 4, VR, VR,          VR,          VR,/*NoVReg*/VR, "MF2">;
 
 // Used to iterate over all possible LMULs.
 defvar MxList = [V_MF8, V_MF4, V_MF2, V_M1, V_M2, V_M4, V_M8];
@@ -437,13 +437,13 @@ def RISCVMaskedPseudosTable : GenericTable {
   let PrimaryKeyName = "getMaskedPseudoInfo";
 }
 
-class RISCVVLE<bit M, bit TU, bit Str, bit F, bits<3> S, bits<3> L> {
+class RISCVVLE<bit M, bit TU, bit Str, bit F, bits<3> S, bits<2> L> {
   bits<1> Masked = M;
   bits<1> IsTU = TU;
   bits<1> Strided = Str;
   bits<1> FF = F;
   bits<3> Log2SEW = S;
-  bits<3> LMUL = L;
+  bits<2> LMUL = L;
   Pseudo Pseudo = !cast<Pseudo>(NAME);
 }
 
@@ -455,11 +455,11 @@ def RISCVVLETable : GenericTable {
   let PrimaryKeyName = "getVLEPseudo";
 }
 
-class RISCVVSE<bit M, bit Str, bits<3> S, bits<3> L> {
+class RISCVVSE<bit M, bit Str, bits<3> S, bits<2> L> {
   bits<1> Masked = M;
   bits<1> Strided = Str;
   bits<3> Log2SEW = S;
-  bits<3> LMUL = L;
+  bits<2> LMUL = L;
   Pseudo Pseudo = !cast<Pseudo>(NAME);
 }
 
@@ -471,19 +471,19 @@ def RISCVVSETable : GenericTable {
   let PrimaryKeyName = "getVSEPseudo";
 }
 
-class RISCVVLX_VSX<bit M, bit TU, bit O, bits<3> S, bits<3> L, bits<3> IL> {
+class RISCVVLX_VSX<bit M, bit TU, bit O, bits<3> S, bits<2> L, bits<2> IL> {
   bits<1> Masked = M;
   bits<1> IsTU = TU;
   bits<1> Ordered = O;
   bits<3> Log2SEW = S;
-  bits<3> LMUL = L;
-  bits<3> IndexLMUL = IL;
+  bits<2> LMUL = L;
+  bits<2> IndexLMUL = IL;
   Pseudo Pseudo = !cast<Pseudo>(NAME);
 }
 
-class RISCVVLX<bit M, bit TU, bit O, bits<3> S, bits<3> L, bits<3> IL> :
+class RISCVVLX<bit M, bit TU, bit O, bits<3> S, bits<2> L, bits<2> IL> :
   RISCVVLX_VSX<M, TU, O, S, L, IL>;
-class RISCVVSX<bit M, bit O, bits<3> S, bits<3> L, bits<3> IL> :
+class RISCVVSX<bit M, bit O, bits<3> S, bits<2> L, bits<2> IL> :
   RISCVVLX_VSX<M, /*TU*/0, O, S, L, IL>;
 
 class RISCVVLX_VSXTable : GenericTable {
@@ -502,13 +502,13 @@ def RISCVVSXTable : RISCVVLX_VSXTable {
   let PrimaryKeyName = "getVSXPseudo";
 }
 
-class RISCVVLSEG<bits<4> N, bit M, bit Str, bit F, bits<3> S, bits<3> L> {
+class RISCVVLSEG<bits<4> N, bit M, bit Str, bit F, bits<3> S, bits<2> L> {
   bits<4> NF = N;
   bits<1> Masked = M;
   bits<1> Strided = Str;
   bits<1> FF = F;
   bits<3> Log2SEW = S;
-  bits<3> LMUL = L;
+  bits<2> LMUL = L;
   Pseudo Pseudo = !cast<Pseudo>(NAME);
 }
 
@@ -520,13 +520,13 @@ def RISCVVLSEGTable : GenericTable {
   let PrimaryKeyName = "getVLSEGPseudo";
 }
 
-class RISCVVLXSEG<bits<4> N, bit M, bit O, bits<3> S, bits<3> L, bits<3> IL> {
+class RISCVVLXSEG<bits<4> N, bit M, bit O, bits<3> S, bits<2> L, bits<2> IL> {
   bits<4> NF = N;
   bits<1> Masked = M;
   bits<1> Ordered = O;
   bits<3> Log2SEW = S;
-  bits<3> LMUL = L;
-  bits<3> IndexLMUL = IL;
+  bits<2> LMUL = L;
+  bits<2> IndexLMUL = IL;
   Pseudo Pseudo = !cast<Pseudo>(NAME);
 }
 
@@ -538,12 +538,12 @@ def RISCVVLXSEGTable : GenericTable {
   let PrimaryKeyName = "getVLXSEGPseudo";
 }
 
-class RISCVVSSEG<bits<4> N, bit M, bit Str, bits<3> S, bits<3> L> {
+class RISCVVSSEG<bits<4> N, bit M, bit Str, bits<3> S, bits<2> L> {
   bits<4> NF = N;
   bits<1> Masked = M;
   bits<1> Strided = Str;
   bits<3> Log2SEW = S;
-  bits<3> LMUL = L;
+  bits<2> LMUL = L;
   Pseudo Pseudo = !cast<Pseudo>(NAME);
 }
 
@@ -555,13 +555,13 @@ def RISCVVSSEGTable : GenericTable {
   let PrimaryKeyName = "getVSSEGPseudo";
 }
 
-class RISCVVSXSEG<bits<4> N, bit M, bit O, bits<3> S, bits<3> L, bits<3> IL> {
+class RISCVVSXSEG<bits<4> N, bit M, bit O, bits<3> S, bits<2> L, bits<2> IL> {
   bits<4> NF = N;
   bits<1> Masked = M;
   bits<1> Ordered = O;
   bits<3> Log2SEW = S;
-  bits<3> LMUL = L;
-  bits<3> IndexLMUL = IL;
+  bits<2> LMUL = L;
+  bits<2> IndexLMUL = IL;
   Pseudo Pseudo = !cast<Pseudo>(NAME);
 }
 
@@ -738,7 +738,7 @@ class VPseudoSLoadMask<VReg RetClass, int EEW>:
   let BaseInstr = !cast<Instruction>(PseudoToVInst<NAME>.VInst);
 }
 
-class VPseudoILoadNoMask<VReg RetClass, VReg IdxClass, int EEW, bits<3> LMUL,
+class VPseudoILoadNoMask<VReg RetClass, VReg IdxClass, int EEW, bits<2> LMUL,
                          bit Ordered, bit EarlyClobber>:
       Pseudo<(outs RetClass:$rd),
              (ins GPR:$rs1, IdxClass:$rs2, AVL:$vl,
@@ -755,7 +755,7 @@ class VPseudoILoadNoMask<VReg RetClass, VReg IdxClass, int EEW, bits<3> LMUL,
   let BaseInstr = !cast<Instruction>(PseudoToVInst<NAME>.VInst);
 }
 
-class VPseudoILoadNoMaskTU<VReg RetClass, VReg IdxClass, int EEW, bits<3> LMUL,
+class VPseudoILoadNoMaskTU<VReg RetClass, VReg IdxClass, int EEW, bits<2> LMUL,
                            bit Ordered, bit EarlyClobber>:
       Pseudo<(outs RetClass:$rd),
              (ins RetClass:$dest, GPR:$rs1, IdxClass:$rs2, AVL:$vl,
@@ -773,7 +773,7 @@ class VPseudoILoadNoMaskTU<VReg RetClass, VReg IdxClass, int EEW, bits<3> LMUL,
   let BaseInstr = !cast<Instruction>(PseudoToVInst<NAME>.VInst);
 }
 
-class VPseudoILoadMask<VReg RetClass, VReg IdxClass, int EEW, bits<3> LMUL,
+class VPseudoILoadMask<VReg RetClass, VReg IdxClass, int EEW, bits<2> LMUL,
                        bit Ordered, bit EarlyClobber>:
       Pseudo<(outs GetVRegNoV0<RetClass>.R:$rd),
               (ins GetVRegNoV0<RetClass>.R:$merge,
@@ -1106,7 +1106,7 @@ class VPseudoTiedBinaryNoMaskTU<VReg RetClass,
   let BaseInstr = !cast<Instruction>(PseudoToVInst<NAME>.VInst);
 }
 
-class VPseudoIStoreNoMask<VReg StClass, VReg IdxClass, int EEW, bits<3> LMUL,
+class VPseudoIStoreNoMask<VReg StClass, VReg IdxClass, int EEW, bits<2> LMUL,
                           bit Ordered>:
       Pseudo<(outs),
               (ins StClass:$rd, GPR:$rs1, IdxClass:$rs2, AVL:$vl, ixlenimm:$sew),[]>,
@@ -1121,7 +1121,7 @@ class VPseudoIStoreNoMask<VReg StClass, VReg IdxClass, int EEW, bits<3> LMUL,
   let BaseInstr = !cast<Instruction>(PseudoToVInst<NAME>.VInst);
 }
 
-class VPseudoIStoreMask<VReg StClass, VReg IdxClass, int EEW, bits<3> LMUL,
+class VPseudoIStoreMask<VReg StClass, VReg IdxClass, int EEW, bits<2> LMUL,
                         bit Ordered>:
       Pseudo<(outs),
               (ins StClass:$rd, GPR:$rs1, IdxClass:$rs2, VMaskOp:$vm, AVL:$vl, ixlenimm:$sew),[]>,
@@ -1373,7 +1373,7 @@ class VPseudoSSegLoadMask<VReg RetClass, int EEW, bits<4> NF>:
   let BaseInstr = !cast<Instruction>(PseudoToVInst<NAME>.VInst);
 }
 
-class VPseudoISegLoadNoMask<VReg RetClass, VReg IdxClass, int EEW, bits<3> LMUL,
+class VPseudoISegLoadNoMask<VReg RetClass, VReg IdxClass, int EEW, bits<2> LMUL,
                             bits<4> NF, bit Ordered>:
       Pseudo<(outs RetClass:$rd),
              (ins GPR:$rs1, IdxClass:$offset, AVL:$vl, ixlenimm:$sew),[]>,
@@ -1391,7 +1391,7 @@ class VPseudoISegLoadNoMask<VReg RetClass, VReg IdxClass, int EEW, bits<3> LMUL,
   let BaseInstr = !cast<Instruction>(PseudoToVInst<NAME>.VInst);
 }
 
-class VPseudoISegLoadMask<VReg RetClass, VReg IdxClass, int EEW, bits<3> LMUL,
+class VPseudoISegLoadMask<VReg RetClass, VReg IdxClass, int EEW, bits<2> LMUL,
                           bits<4> NF, bit Ordered>:
       Pseudo<(outs GetVRegNoV0<RetClass>.R:$rd),
              (ins GetVRegNoV0<RetClass>.R:$merge, GPR:$rs1,
@@ -1469,7 +1469,7 @@ class VPseudoSSegStoreMask<VReg ValClass, int EEW, bits<4> NF>:
   let BaseInstr = !cast<Instruction>(PseudoToVInst<NAME>.VInst);
 }
 
-class VPseudoISegStoreNoMask<VReg ValClass, VReg IdxClass, int EEW, bits<3> LMUL,
+class VPseudoISegStoreNoMask<VReg ValClass, VReg IdxClass, int EEW, bits<2> LMUL,
                              bits<4> NF, bit Ordered>:
       Pseudo<(outs),
              (ins ValClass:$rd, GPR:$rs1, IdxClass: $index,
@@ -1485,7 +1485,7 @@ class VPseudoISegStoreNoMask<VReg ValClass, VReg IdxClass, int EEW, bits<3> LMUL
   let BaseInstr = !cast<Instruction>(PseudoToVInst<NAME>.VInst);
 }
 
-class VPseudoISegStoreMask<VReg ValClass, VReg IdxClass, int EEW, bits<3> LMUL,
+class VPseudoISegStoreMask<VReg ValClass, VReg IdxClass, int EEW, bits<2> LMUL,
                            bits<4> NF, bit Ordered>:
       Pseudo<(outs),
              (ins ValClass:$rd, GPR:$rs1, IdxClass: $index,
@@ -5512,3 +5512,4 @@ let Predicates = [HasVInstructionsAnyF] in {
 // Include the non-intrinsic ISel patterns
 include "RISCVInstrInfoVVLPatterns.td"
 include "RISCVInstrInfoVSDPatterns.td"
+
