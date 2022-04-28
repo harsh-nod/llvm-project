@@ -166,11 +166,12 @@ void RISCVVType::printVType(unsigned VType, raw_ostream &OS) {
   std::tie(LMul, Fractional) = decodeVLMUL(getVLMUL(VType));
 
   if (Fractional)
-    OS << ", mf";
+    OS << ", m1";
   else
-    OS << ", m";
-  OS << LMul;
+    OS << ", m" << LMul;
+  //OS << LMul;
 
+  /*
   if (isTailAgnostic(VType))
     OS << ", ta";
   else
@@ -180,6 +181,7 @@ void RISCVVType::printVType(unsigned VType, raw_ostream &OS) {
     OS << ", ma";
   else
     OS << ", mu";
+    */
 }
 
 } // namespace llvm

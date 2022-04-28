@@ -98,13 +98,13 @@ public:
     return AVLImm;
   }
   bool hasZeroAVL() const {
-    if (hasAVLImm())
-      return getAVLImm() == 0;
+    //if (hasAVLImm())
+    //  return getAVLImm() == 0;
     return false;
   }
   bool hasNonZeroAVL() const {
-    if (hasAVLImm())
-      return getAVLImm() > 0;
+    //if (hasAVLImm())
+    //  return getAVLImm() > 0;
     if (hasAVLReg())
       return getAVLReg() == RISCV::X0;
     return false;
@@ -602,9 +602,15 @@ void RISCVInsertVSETVLI::insertVSETVLI(MachineBasicBlock &MBB, MachineInstr &MI,
   }
 
   if (Info.hasAVLImm()) {
-    BuildMI(MBB, MI, DL, TII->get(RISCV::PseudoVSETIVLI))
+    //BuildMI(MBB, MI, DL, TII->get(RISCV::PseudoVSETIVLI))
+    //    .addReg(RISCV::X0, RegState::Define | RegState::Dead)
+    //    .addImm(Info.getAVLImm())
+    //    .addImm(Info.encodeVTYPE());
+    Register AVLReg = MRI->createVirtualRegister(&RISCV::GPRRegClass);
+    ((RISCVInstrInfo *)TII)->movImm(MBB, MachineBasicBlock::instr_iterator(MI), DL, AVLReg, Info.getAVLImm());
+    BuildMI(MBB, MI, DL, TII->get(RISCV::PseudoVSETVLI))
         .addReg(RISCV::X0, RegState::Define | RegState::Dead)
-        .addImm(Info.getAVLImm())
+        .addReg(AVLReg)
         .addImm(Info.encodeVTYPE());
     return;
   }
@@ -623,9 +629,15 @@ void RISCVInsertVSETVLI::insertVSETVLI(MachineBasicBlock &MBB, MachineInstr &MI,
       return;
     }
     // Otherwise use an AVL of 0 to avoid depending on previous vl.
-    BuildMI(MBB, MI, DL, TII->get(RISCV::PseudoVSETIVLI))
+    //BuildMI(MBB, MI, DL, TII->get(RISCV::PseudoVSETIVLI))
+    //    .addReg(RISCV::X0, RegState::Define | RegState::Dead)
+    //    .addImm(0)
+    //    .addImm(Info.encodeVTYPE());
+    Register AVLReg = MRI->createVirtualRegister(&RISCV::GPRRegClass);
+    ((RISCVInstrInfo *)TII)->movImm(MBB, MachineBasicBlock::instr_iterator(MI), DL, AVLReg, Info.getAVLImm());
+    BuildMI(MBB, MI, DL, TII->get(RISCV::PseudoVSETVLI))
         .addReg(RISCV::X0, RegState::Define | RegState::Dead)
-        .addImm(0)
+        .addReg(AVLReg)
         .addImm(Info.encodeVTYPE());
     return;
   }

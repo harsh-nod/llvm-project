@@ -572,18 +572,18 @@ void RISCVDAGToDAGISel::selectVSETVLI(SDNode *Node) {
   } else {
     VLOperand = Node->getOperand(IntNoOffset + 1);
 
-    if (auto *C = dyn_cast<ConstantSDNode>(VLOperand)) {
-      uint64_t AVL = C->getZExtValue();
-      if (isUInt<5>(AVL)) {
-        SDValue VLImm = CurDAG->getTargetConstant(AVL, DL, XLenVT);
-        SmallVector<SDValue, 3> Ops = {VLImm, VTypeIOp};
-        if (HasChain)
-          Ops.push_back(Node->getOperand(0));
-        ReplaceNode(
-            Node, CurDAG->getMachineNode(RISCV::PseudoVSETIVLI, DL, VTs, Ops));
-        return;
-      }
-    }
+    //if (auto *C = dyn_cast<ConstantSDNode>(VLOperand)) {
+    //  uint64_t AVL = C->getZExtValue();
+    //  if (isUInt<5>(AVL)) {
+    //    SDValue VLImm = CurDAG->getTargetConstant(AVL, DL, XLenVT);
+    //    SmallVector<SDValue, 3> Ops = {VLImm, VTypeIOp};
+    //    if (HasChain)
+    //      Ops.push_back(Node->getOperand(0));
+    //    ReplaceNode(
+    //        Node, CurDAG->getMachineNode(RISCV::PseudoVSETIVLI, DL, VTs, Ops));
+    //    return;
+    //  }
+    //}
   }
 
   SmallVector<SDValue, 3> Ops = {VLOperand, VTypeIOp};
