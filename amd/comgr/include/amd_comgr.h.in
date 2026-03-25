@@ -237,6 +237,12 @@ extern "C" {
  */
 #define AMD_COMGR_VERSION_3_1
 
+/**
+ * The function was introduced or changed in version 3.2 of the interface
+ * and has the symbol version string of ``"@amd_comgr_NAME@_3.2"``.
+ */
+#define AMD_COMGR_VERSION_3_2
+
 /** @} */
 
 /**
@@ -2670,6 +2676,100 @@ amd_comgr_map_elf_virtual_address_to_code_object_offset(
     uint64_t *code_object_offset,
     uint64_t *slice_size,
     bool *nobits) AMD_COMGR_VERSION_2_7;
+
+/** @} */
+
+/** \defgroup hotswap HotSwap ISA Rewriting
+ *  @{
+ *
+ * @brief APIs for load-time ISA rewriting of AMDGPU code objects.
+ *
+ * These APIs use LLVM MC internally to disassemble, patch, and reassemble
+ * GPU instruction streams within ELF code objects. They are designed to be
+ * called by the HSA runtime loader to adapt code objects for different GPU
+ * steppings or ISA families without recompilation.
+ */
+
+/**
+ * @brief Flags controlling which hotswap operations to apply.
+ */
+typedef enum amd_comgr_hotswap_flags_s {
+  AMD_COMGR_HOTSWAP_FLAG_NONE = 0x0,
+  AMD_COMGR_HOTSWAP_FLAG_B0_TO_A0 = 0x1,
+  AMD_COMGR_HOTSWAP_FLAG_RETARGET = 0x2,
+  AMD_COMGR_HOTSWAP_FLAG_TRANSPILE = 0x4,
+  AMD_COMGR_HOTSWAP_FLAG_REWRITE_RULES = 0x8,
+} amd_comgr_hotswap_flags_t;
+
+/**
+ * @brief Statistics from a hotswap rewrite operation.
+ */
+typedef struct amd_comgr_hotswap_result_s {
+  int status;
+  uint32_t rules_matched;
+  uint32_t trampolines_added;
+  uint32_t transpile_passthrough;
+  uint32_t transpile_renamed;
+  uint32_t transpile_waitcnt;
+  uint32_t transpile_unsupported;
+} amd_comgr_hotswap_result_t;
+
+/**
+ * @brief Rewrite an in-memory ELF code object for a target ISA.
+ *
+ * Applies ISA instruction rewriting to the code object based on the
+ * requested flags. The input ELF buffer is not modified; a new buffer
+ * is allocated and returned in @p out_elf/@p out_elf_size. The caller
+ * must free the output buffer with @c free().
+ *
+ * @param[in] elf_data Pointer to the input ELF code object.
+ * @param[in] elf_size Size of the input ELF in bytes.
+ * @param[in] source_isa Source ISA string (e.g. "amdgcn-amd-amdhsa--gfx1250").
+ *   May be NULL when not needed (e.g. B0-to-A0 same-ISA patching).
+ * @param[in] target_isa Target ISA string (e.g. "amdgcn-amd-amdhsa--gfx1250").
+ * @param[in] flags Bitwise OR of @c amd_comgr_hotswap_flags_t values.
+ * @param[in] rules_json JSON string containing rewrite rules, or NULL if
+ *   @c AMD_COMGR_HOTSWAP_FLAG_REWRITE_RULES is not set.
+ * @param[out] out_elf On success, set to a newly allocated buffer containing
+ *   the rewritten ELF. Caller must @c free() this buffer.
+ * @param[out] out_elf_size On success, set to the size of the output ELF.
+ * @param[out] result On success, filled with operation statistics.
+ *
+ * @retval ::AMD_COMGR_STATUS_SUCCESS The rewrite completed successfully.
+ * @retval ::AMD_COMGR_STATUS_ERROR An internal error occurred.
+ * @retval ::AMD_COMGR_STATUS_ERROR_INVALID_ARGUMENT An argument is invalid.
+ */
+amd_comgr_status_t AMD_COMGR_API
+amd_comgr_hotswap_rewrite(
+    const void *elf_data,
+    size_t elf_size,
+    const char *source_isa,
+    const char *target_isa,
+    uint32_t flags,
+    const char *rules_json,
+    void **out_elf,
+    size_t *out_elf_size,
+    amd_comgr_hotswap_result_t *result) AMD_COMGR_VERSION_3_2;
+
+/**
+ * @brief Check if a cross-family ISA transpile is needed.
+ *
+ * Returns whether the source and target ISAs belong to different ISA
+ * families (e.g. RDNA vs CDNA) requiring full instruction transpilation
+ * rather than simple retargeting.
+ *
+ * @param[in] source_isa Source ISA string.
+ * @param[in] target_isa Target ISA string.
+ * @param[out] needs_transpile Set to true if transpilation is required.
+ *
+ * @retval ::AMD_COMGR_STATUS_SUCCESS The function executed successfully.
+ * @retval ::AMD_COMGR_STATUS_ERROR_INVALID_ARGUMENT An argument is invalid.
+ */
+amd_comgr_status_t AMD_COMGR_API
+amd_comgr_hotswap_needs_transpile(
+    const char *source_isa,
+    const char *target_isa,
+    bool *needs_transpile) AMD_COMGR_VERSION_3_2;
 
 /** @} */
 
