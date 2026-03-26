@@ -240,6 +240,8 @@ static bool ParseElfInfo(const uint8_t *elf, size_t elf_size, ElfInfo &info) {
     if (shstrtab && sec.name_idx < shstrtab_size)
       sec.name = shstrtab + sec.name_idx;
 
+    if (sec.offset + sec.size > elf_size) continue;
+
     if (sec.name == ".text") {
       info.text_section_idx = i;
       info.text_idx = i;
@@ -313,6 +315,7 @@ static std::string FindKernelAtOffset(const ElfInfo &elf_info,
 static bool ApplyByteReplace(const RewriteRule &rule, uint64_t inst_offset,
                              uint32_t inst_size, uint8_t *text,
                              uint64_t text_size) {
+  if (inst_offset + inst_size > text_size) return false;
   if (rule.replace_bytes.size() > inst_size) return false;
   std::memcpy(text + inst_offset, rule.replace_bytes.data(),
               rule.replace_bytes.size());
@@ -397,6 +400,8 @@ static uint8_t *GrowElfWithTrampolines(const uint8_t *elf, size_t elf_size,
   for (auto &t : trampolines)
     tramp_total += t.bytes.size();
   if (tramp_total == 0)
+    return nullptr;
+  if (tramp_total > SIZE_MAX - elf_size)
     return nullptr;
 
   size_t new_elf_size = elf_size + tramp_total;
@@ -1469,7 +1474,7 @@ static Trampoline BuildTrampoline(const std::vector<std::string> &asm_lines,
   uint64_t branch_back_to = original_offset + original_size;
 
   uint8_t branch_bytes[4];
-  bool is_gfx12 = cpu.find("gfx12") == 0;
+  bool is_gfx12 = !(cpu.find("gfx9") == 0 || cpu.find("gfx10") == 0);
   if (!EncodeSBranch(branch_back_from, branch_back_to, branch_bytes,
                      is_gfx12)) {
     result.bytes.clear();
@@ -1799,6 +1804,17 @@ static CFG BuildCFG(const std::vector<InternalDecodedInst> &decoded) {
       if (i + 1 < decoded.size())
         bb_starts.insert(decoded[i + 1].offset);
     }
+
+    if (di.mnemonic == "s_call_b64" || di.mnemonic.find("s_call") == 0) {
+      int64_t imm = GetBranchImm(di.inst);
+      if (imm != INT64_MIN) {
+        uint64_t target = di.offset + 4 + static_cast<int64_t>(imm) * 4;
+        if (target < text_end)
+          bb_starts.insert(target);
+      }
+      if (i + 1 < decoded.size())
+        bb_starts.insert(decoded[i + 1].offset);
+    }
   }
 
   std::vector<uint64_t> sorted_starts(bb_starts.begin(), bb_starts.end());
@@ -1849,6 +1865,16 @@ static CFG BuildCFG(const std::vector<InternalDecodedInst> &decoded) {
         if (ft_it != cfg.offset_to_block.end())
           bb.successors.push_back(ft_it->second);
       }
+    } else if (last.mnemonic == "s_call_b64" || last.mnemonic.find("s_call") == 0) {
+      int64_t imm = GetBranchImm(last.inst);
+      uint64_t target = last.offset + 4 + (imm * 4);
+      auto tgt_it = cfg.offset_to_block.find(target);
+      if (tgt_it != cfg.offset_to_block.end())
+        bb.successors.push_back(tgt_it->second);
+      uint64_t fallthrough = last.offset + last.size;
+      auto ft_it = cfg.offset_to_block.find(fallthrough);
+      if (ft_it != cfg.offset_to_block.end())
+        bb.successors.push_back(ft_it->second);
     } else {
       if (bi + 1 < static_cast<int>(cfg.blocks.size()))
         bb.successors.push_back(bi + 1);
@@ -2374,7 +2400,9 @@ ApplyGfx1250B0toA0Rules(std::vector<InternalDecodedInst> &decoded,
           int s0 = alloc_p8.Alloc(), s1 = alloc_p8.Alloc();
           int s2 = alloc_p8.Alloc(), s3 = alloc_p8.Alloc();
           if (s0 < 0 || s1 < 0 || s2 < 0 || s3 < 0) {
-            s0 = 252; s1 = 253; s2 = 254; s3 = 255;
+            std::cerr << "hotswap: B0->A0 @0x" << std::hex << di.offset
+                      << ": scratch allocation failed, skipping patch" << std::dec << "\n";
+            continue;
           }
           std::string sv0 = "v" + std::to_string(s0);
           std::string sv1 = "v" + std::to_string(s1);
@@ -2574,7 +2602,11 @@ ApplyGfx1250B0toA0Rules(std::vector<InternalDecodedInst> &decoded,
             int kd_vgprs_p9 = GetKernelVgprCount(elf_data, elf_size, elf_info, kernel_p9);
             ScratchAllocator alloc_p9(liveness.live_before[idx], kd_vgprs_p9);
             int p9s0 = alloc_p9.Alloc(), p9s1 = alloc_p9.Alloc();
-            if (p9s0 < 0 || p9s1 < 0) { p9s0 = 252; p9s1 = 253; }
+            if (p9s0 < 0 || p9s1 < 0) {
+              std::cerr << "hotswap: B0->A0 @0x" << std::hex << di.offset
+                        << ": scratch allocation failed, skipping patch" << std::dec << "\n";
+              continue;
+            }
             std::string p9sv0 = "v" + std::to_string(p9s0);
             std::string p9sv1 = "v" + std::to_string(p9s1);
             for (int v : {p9s0, p9s1}) {
@@ -3131,7 +3163,7 @@ static const MnemonicMapping kDSMappings[] = {
 static const MnemonicMapping kSMEMMappings[] = {
     {"s_load_b32", "s_load_dword"},
     {"s_load_b64", "s_load_dwordx2"},
-    {"s_load_b96", "s_load_dwordx4"},
+    {"s_load_b96", "s_load_dwordx3"},
     {"s_load_b128", "s_load_dwordx4"},
     {"s_load_b256", "s_load_dwordx8"},
     {"s_load_b512", "s_load_dwordx16"},
@@ -3362,7 +3394,7 @@ static std::vector<std::string> WidenExecOperation(const std::string& line, bool
         if (vcc_pos != std::string::npos)
           src.replace(vcc_pos, 6, "vcc");
 
-        if (dst[0] == 's' && std::isdigit(dst[1])) {
+        if (dst[0] == 's' && dst.size() > 1 && std::isdigit(dst[1])) {
           int reg_num = std::stoi(dst.substr(1));
           std::string src32 = src;
           if (src32 == "vcc") src32 = "vcc_lo";
@@ -3929,11 +3961,11 @@ static std::vector<std::string> TranslateInstruction(const std::string& asm_line
     if (result.empty()) {
       std::string new_line = line;
       size_t mpos = new_line.find("s_load_b96");
-      new_line.replace(mpos, 10, "s_load_dwordx4");
+      new_line.replace(mpos, 10, "s_load_dwordx3");
       std::smatch m2;
       if (std::regex_search(new_line, m2, reg_range)) {
         int lo2 = std::stoi(m2[1]);
-        std::string wider = "s[" + std::to_string(lo2) + ":" + std::to_string(lo2 + 3) + "]";
+        std::string wider = "s[" + std::to_string(lo2) + ":" + std::to_string(lo2 + 2) + "]";
         new_line = new_line.substr(0, m2.position()) + wider +
                    new_line.substr(m2.position() + m2.length());
       }
@@ -5929,7 +5961,7 @@ RewriteWithRules(const void *elf_data, size_t elf_size,
                             tramp_offset, llvm_state.cpu, llvm_state);
         if (tramp.bytes.empty()) break;
         uint8_t branch_bytes[4];
-        bool is_gfx12 = llvm_state.cpu.find("gfx12") == 0;
+        bool is_gfx12 = !(llvm_state.cpu.find("gfx9") == 0 || llvm_state.cpu.find("gfx10") == 0);
         if (!EncodeSBranch(inst.offset, tramp_offset, branch_bytes, is_gfx12))
           break;
         std::memcpy(text + inst.offset, branch_bytes, 4);
@@ -6091,6 +6123,7 @@ amd_comgr_status_t AMD_COMGR_API amd_comgr_hotswap_rewrite(
 
   *out_elf = allocated_elf;
   *out_elf_size = current_size;
+  result->status = 0;
   return AMD_COMGR_STATUS_SUCCESS;
 }
 
