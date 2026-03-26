@@ -2965,3 +2965,130 @@ amd_comgr_status_t AMD_COMGR_API amd_comgr_hotswap_needs_transpile(
       NeedsTranspileImpl(std::string(source_isa), std::string(target_isa));
   return AMD_COMGR_STATUS_SUCCESS;
 }
+
+// ── Test-only entry points for dataflow analysis ─────────────────────────────
+
+extern "C" __attribute__((visibility("default")))
+int amd_comgr_test_defuse(const char *asm_text, const char *cpu,
+                          int *out_defs, int *out_def_count,
+                          int *out_uses, int *out_use_count,
+                          int max_regs) {
+  if (!asm_text || !cpu || !out_defs || !out_def_count ||
+      !out_uses || !out_use_count || max_regs <= 0)
+    return -1;
+
+  std::string isa = std::string("amdgcn-amd-amdhsa--") + cpu;
+  LLVMState &state = InitLLVMCached(isa);
+  if (!state.valid) return -1;
+
+  auto bytes = AssembleSingleInst(std::string(asm_text), state);
+  if (bytes.empty()) return -1;
+
+  std::vector<InternalDecodedInst> decoded;
+  if (!DecodeTextSection(bytes.data(), bytes.size(), state, decoded))
+    return -1;
+  if (decoded.empty()) return -1;
+
+  RegDefUse du = GetInstRegDefUse(decoded[0].inst, *state.MCII, *state.MRI);
+
+  int dc = 0;
+  for (int d : du.defs) {
+    if (dc < max_regs) out_defs[dc] = d;
+    dc++;
+  }
+  *out_def_count = dc;
+
+  int uc = 0;
+  for (int u : du.uses) {
+    if (uc < max_regs) out_uses[uc] = u;
+    uc++;
+  }
+  *out_use_count = uc;
+
+  return dc;
+}
+
+extern "C" __attribute__((visibility("default")))
+int amd_comgr_test_cfg(const char **asm_lines, int num_lines, const char *cpu,
+                       uint64_t *out_bb_starts, int *out_bb_succ_counts,
+                       int max_blocks) {
+  if (!asm_lines || num_lines <= 0 || !cpu || max_blocks <= 0)
+    return -1;
+
+  std::string isa = std::string("amdgcn-amd-amdhsa--") + cpu;
+  LLVMState &state = InitLLVMCached(isa);
+  if (!state.valid) return -1;
+
+  std::vector<uint8_t> all_bytes;
+  for (int i = 0; i < num_lines; i++) {
+    auto bytes = AssembleSingleInst(std::string(asm_lines[i]), state);
+    if (bytes.empty()) return -1;
+    all_bytes.insert(all_bytes.end(), bytes.begin(), bytes.end());
+  }
+
+  std::vector<InternalDecodedInst> decoded;
+  if (!DecodeTextSection(all_bytes.data(), all_bytes.size(), state, decoded))
+    return -1;
+
+  CFG cfg = BuildCFG(decoded);
+  int n = static_cast<int>(cfg.blocks.size());
+
+  for (int i = 0; i < n && i < max_blocks; i++) {
+    if (out_bb_starts) out_bb_starts[i] = cfg.blocks[i].start_offset;
+    if (out_bb_succ_counts)
+      out_bb_succ_counts[i] = static_cast<int>(cfg.blocks[i].successors.size());
+  }
+
+  return n;
+}
+
+extern "C" __attribute__((visibility("default")))
+int amd_comgr_test_liveness(const char **asm_lines, int num_lines,
+                            const char *cpu, int inst_index,
+                            int *out_live, int max_regs) {
+  if (!asm_lines || num_lines <= 0 || !cpu || inst_index < 0 || max_regs <= 0)
+    return -1;
+
+  std::string isa = std::string("amdgcn-amd-amdhsa--") + cpu;
+  LLVMState &state = InitLLVMCached(isa);
+  if (!state.valid) return -1;
+
+  std::vector<uint8_t> all_bytes;
+  for (int i = 0; i < num_lines; i++) {
+    auto bytes = AssembleSingleInst(std::string(asm_lines[i]), state);
+    if (bytes.empty()) return -1;
+    all_bytes.insert(all_bytes.end(), bytes.begin(), bytes.end());
+  }
+
+  std::vector<InternalDecodedInst> decoded;
+  if (!DecodeTextSection(all_bytes.data(), all_bytes.size(), state, decoded))
+    return -1;
+
+  if (inst_index >= static_cast<int>(decoded.size())) return -1;
+
+  CFG cfg = BuildCFG(decoded);
+  LivenessInfo liveness =
+      ComputeLiveness(decoded, cfg, *state.MCII, *state.MRI);
+
+  const auto &live_set = liveness.live_before[inst_index];
+  int count = 0;
+  for (int v : live_set) {
+    if (count < max_regs) out_live[count] = v;
+    count++;
+  }
+
+  return count;
+}
+
+extern "C" __attribute__((visibility("default")))
+int amd_comgr_test_scratch_alloc(const int *live_vgprs, int num_live,
+                                 int kd_allocated_vgprs) {
+  if (num_live < 0 || kd_allocated_vgprs <= 0) return -1;
+
+  std::set<int> live;
+  for (int i = 0; i < num_live; i++)
+    live.insert(live_vgprs[i]);
+
+  ScratchAllocator alloc(live, kd_allocated_vgprs);
+  return alloc.Alloc();
+}

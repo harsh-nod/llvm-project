@@ -99,4 +99,8 @@ global: amd_comgr_action_info_set_vfs;
 @amd_comgr_NAME@_3.2 {
 global: amd_comgr_hotswap_rewrite;
         amd_comgr_hotswap_needs_transpile;
+        amd_comgr_test_defuse;
+        amd_comgr_test_cfg;
+        amd_comgr_test_liveness;
+        amd_comgr_test_scratch_alloc;
 } @amd_comgr_NAME@3.1;
