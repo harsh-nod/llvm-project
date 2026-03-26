@@ -1197,15 +1197,372 @@ ValidateWmmaCoexecHazards(const std::vector<InternalDecodedInst> &decoded,
   return hazards;
 }
 
+// ── Per-point VGPR liveness analysis ─────────────────────────────────────────
+
+struct RegDefUse {
+  std::set<int> defs;
+  std::set<int> uses;
+};
+
+static RegDefUse GetInstRegDefUse(const llvm::MCInst &inst,
+                                  const llvm::MCInstrInfo &MCII,
+                                  const llvm::MCRegisterInfo &MRI) {
+  RegDefUse du;
+  const llvm::MCInstrDesc &desc = MCII.get(inst.getOpcode());
+
+  auto addVgprRange = [&](unsigned reg, std::set<int> &out) {
+    auto [base, count] = GetVgprRange(reg, MRI);
+    if (base >= 0) {
+      for (int v = base; v < base + count; ++v)
+        out.insert(v);
+    }
+  };
+
+  unsigned num_defs = desc.getNumDefs();
+  for (unsigned i = 0; i < inst.getNumOperands(); ++i) {
+    const auto &op = inst.getOperand(i);
+    if (!op.isReg()) continue;
+    if (i < num_defs)
+      addVgprRange(op.getReg(), du.defs);
+    else
+      addVgprRange(op.getReg(), du.uses);
+  }
+
+#if LLVM_VERSION_MAJOR >= 16
+  for (llvm::MCPhysReg r : desc.implicit_defs())
+    addVgprRange(r, du.defs);
+  for (llvm::MCPhysReg r : desc.implicit_uses())
+    addVgprRange(r, du.uses);
+#else
+  if (const llvm::MCPhysReg *p = desc.getImplicitDefs())
+    for (; *p; ++p) addVgprRange(*p, du.defs);
+  if (const llvm::MCPhysReg *p = desc.getImplicitUses())
+    for (; *p; ++p) addVgprRange(*p, du.uses);
+#endif
+
+  return du;
+}
+
+// ── CFG construction ─────────────────────────────────────────────────────────
+
+struct BasicBlock {
+  uint64_t start_offset = 0;
+  uint64_t end_offset = 0;
+  std::vector<size_t> inst_indices;
+  std::vector<int> successors;
+  std::vector<int> predecessors;
+};
+
+struct CFG {
+  std::vector<BasicBlock> blocks;
+  std::map<uint64_t, int> offset_to_block;
+};
+
+static bool IsBranchMnemonic(const std::string &mnem) {
+  return mnem == "s_branch";
+}
+
+static bool IsCBranchMnemonic(const std::string &mnem) {
+  return mnem.find("s_cbranch") == 0;
+}
+
+static int64_t GetBranchImm(const llvm::MCInst &inst) {
+  for (unsigned i = 0; i < inst.getNumOperands(); ++i) {
+    if (inst.getOperand(i).isImm())
+      return inst.getOperand(i).getImm();
+  }
+  return 0;
+}
+
+static CFG BuildCFG(const std::vector<InternalDecodedInst> &decoded) {
+  CFG cfg;
+  if (decoded.empty()) return cfg;
+
+  std::set<uint64_t> bb_starts;
+  bb_starts.insert(decoded[0].offset);
+
+  uint64_t text_end = decoded.back().offset + decoded.back().size;
+
+  for (size_t i = 0; i < decoded.size(); ++i) {
+    const auto &di = decoded[i];
+    bool is_branch = IsBranchMnemonic(di.mnemonic);
+    bool is_cbranch = IsCBranchMnemonic(di.mnemonic);
+
+    if (is_branch || is_cbranch) {
+      int64_t imm = GetBranchImm(di.inst);
+      uint64_t target = di.offset + 4 + (imm * 4);
+      if (target < text_end)
+        bb_starts.insert(target);
+      if (i + 1 < decoded.size())
+        bb_starts.insert(decoded[i + 1].offset);
+    }
+    if (di.mnemonic == "s_endpgm" ||
+        di.mnemonic.find("s_setpc") == 0 ||
+        di.mnemonic.find("s_swappc") == 0) {
+      if (i + 1 < decoded.size())
+        bb_starts.insert(decoded[i + 1].offset);
+    }
+  }
+
+  std::vector<uint64_t> sorted_starts(bb_starts.begin(), bb_starts.end());
+  std::sort(sorted_starts.begin(), sorted_starts.end());
+
+  for (int i = 0; i < static_cast<int>(sorted_starts.size()); ++i)
+    cfg.offset_to_block[sorted_starts[i]] = i;
+
+  cfg.blocks.resize(sorted_starts.size());
+  for (size_t i = 0; i < sorted_starts.size(); ++i)
+    cfg.blocks[i].start_offset = sorted_starts[i];
+
+  int current_block = -1;
+  for (size_t i = 0; i < decoded.size(); ++i) {
+    auto it = cfg.offset_to_block.find(decoded[i].offset);
+    if (it != cfg.offset_to_block.end())
+      current_block = it->second;
+    if (current_block >= 0 &&
+        current_block < static_cast<int>(cfg.blocks.size())) {
+      cfg.blocks[current_block].inst_indices.push_back(i);
+      cfg.blocks[current_block].end_offset =
+          decoded[i].offset + decoded[i].size;
+    }
+  }
+
+  for (int bi = 0; bi < static_cast<int>(cfg.blocks.size()); ++bi) {
+    auto &bb = cfg.blocks[bi];
+    if (bb.inst_indices.empty()) continue;
+
+    size_t last_idx = bb.inst_indices.back();
+    const auto &last = decoded[last_idx];
+
+    if (last.mnemonic == "s_endpgm") {
+      /* no successors */
+    } else if (last.mnemonic.find("s_setpc") == 0 ||
+               last.mnemonic.find("s_swappc") == 0) {
+      /* conservative: unknown targets */
+    } else if (IsBranchMnemonic(last.mnemonic) ||
+               IsCBranchMnemonic(last.mnemonic)) {
+      int64_t imm = GetBranchImm(last.inst);
+      uint64_t target = last.offset + 4 + (imm * 4);
+      auto tgt_it = cfg.offset_to_block.find(target);
+      if (tgt_it != cfg.offset_to_block.end())
+        bb.successors.push_back(tgt_it->second);
+      if (IsCBranchMnemonic(last.mnemonic)) {
+        uint64_t fallthrough = last.offset + last.size;
+        auto ft_it = cfg.offset_to_block.find(fallthrough);
+        if (ft_it != cfg.offset_to_block.end())
+          bb.successors.push_back(ft_it->second);
+      }
+    } else {
+      if (bi + 1 < static_cast<int>(cfg.blocks.size()))
+        bb.successors.push_back(bi + 1);
+    }
+  }
+
+  for (int bi = 0; bi < static_cast<int>(cfg.blocks.size()); ++bi) {
+    for (int succ : cfg.blocks[bi].successors) {
+      if (succ >= 0 && succ < static_cast<int>(cfg.blocks.size()))
+        cfg.blocks[succ].predecessors.push_back(bi);
+    }
+  }
+
+  return cfg;
+}
+
+// ── Backward liveness analysis ───────────────────────────────────────────────
+
+struct LivenessInfo {
+  std::vector<std::set<int>> live_before;
+  std::vector<std::set<int>> live_after;
+};
+
+static LivenessInfo ComputeLiveness(
+    const std::vector<InternalDecodedInst> &decoded,
+    const CFG &cfg,
+    const llvm::MCInstrInfo &MCII,
+    const llvm::MCRegisterInfo &MRI) {
+  size_t n_inst = decoded.size();
+  LivenessInfo info;
+  info.live_before.resize(n_inst);
+  info.live_after.resize(n_inst);
+
+  size_t n_blocks = cfg.blocks.size();
+  if (n_blocks == 0) return info;
+
+  std::vector<std::set<int>> bb_live_in(n_blocks);
+  std::vector<std::set<int>> bb_live_out(n_blocks);
+
+  bool changed = true;
+  int max_iters = 200;
+  while (changed && max_iters-- > 0) {
+    changed = false;
+    for (int bi = static_cast<int>(n_blocks) - 1; bi >= 0; --bi) {
+      const auto &bb = cfg.blocks[bi];
+      if (bb.inst_indices.empty()) continue;
+
+      std::set<int> new_live_out;
+      size_t last_idx = bb.inst_indices.back();
+      const auto &last = decoded[last_idx];
+      if (last.mnemonic.find("s_setpc") == 0 ||
+          last.mnemonic.find("s_swappc") == 0) {
+        for (int v = 0; v < 256; ++v)
+          new_live_out.insert(v);
+      } else {
+        for (int succ : bb.successors) {
+          if (succ >= 0 && succ < static_cast<int>(n_blocks))
+            new_live_out.insert(bb_live_in[succ].begin(),
+                                bb_live_in[succ].end());
+        }
+      }
+
+      std::set<int> live = new_live_out;
+      for (int ii = static_cast<int>(bb.inst_indices.size()) - 1;
+           ii >= 0; --ii) {
+        size_t inst_idx = bb.inst_indices[ii];
+        RegDefUse du = GetInstRegDefUse(decoded[inst_idx].inst, MCII, MRI);
+        for (int d : du.defs) live.erase(d);
+        live.insert(du.uses.begin(), du.uses.end());
+      }
+
+      if (live != bb_live_in[bi]) {
+        bb_live_in[bi] = std::move(live);
+        changed = true;
+      }
+      if (new_live_out != bb_live_out[bi]) {
+        bb_live_out[bi] = std::move(new_live_out);
+        changed = true;
+      }
+    }
+  }
+
+  for (int bi = 0; bi < static_cast<int>(n_blocks); ++bi) {
+    const auto &bb = cfg.blocks[bi];
+    if (bb.inst_indices.empty()) continue;
+
+    std::set<int> live = bb_live_out[bi];
+    for (int ii = static_cast<int>(bb.inst_indices.size()) - 1;
+         ii >= 0; --ii) {
+      size_t inst_idx = bb.inst_indices[ii];
+      info.live_after[inst_idx] = live;
+      RegDefUse du = GetInstRegDefUse(decoded[inst_idx].inst, MCII, MRI);
+      for (int d : du.defs) live.erase(d);
+      live.insert(du.uses.begin(), du.uses.end());
+      info.live_before[inst_idx] = live;
+    }
+  }
+
+  return info;
+}
+
+// ── Scratch register allocator ───────────────────────────────────────────────
+
+struct ScratchAllocator {
+  std::set<int> live_at_point;
+  int kd_allocated_vgprs;
+  int next_above_kd;
+  int extra_allocated = 0;
+
+  ScratchAllocator(const std::set<int> &live, int kd_vgprs)
+      : live_at_point(live), kd_allocated_vgprs(kd_vgprs),
+        next_above_kd(kd_vgprs) {}
+
+  int Alloc() {
+    for (int v = kd_allocated_vgprs - 1; v >= 0; --v) {
+      if (live_at_point.find(v) == live_at_point.end()) {
+        live_at_point.insert(v);
+        return v;
+      }
+    }
+    if (next_above_kd >= 256) return -1;
+    int v = next_above_kd++;
+    extra_allocated++;
+    live_at_point.insert(v);
+    return v;
+  }
+
+  int ExtraVgprsNeeded() const { return extra_allocated; }
+};
+
+struct ScratchPatchInfo {
+  uint64_t offset;
+  std::set<int> scratch_regs;
+};
+
+static int GetKernelVgprCount(const uint8_t *elf_data, size_t elf_size,
+                              const ElfInfo &elf_info,
+                              const std::string &kernel_name) {
+  std::string kd_name = kernel_name + ".kd";
+  for (const auto &sym : elf_info.symbols) {
+    if (sym.name != kd_name) continue;
+    if (sym.shndx >= elf_info.sections.size()) continue;
+    const auto &sec = elf_info.sections[sym.shndx];
+    uint64_t kd_file_offset = sec.offset + sym.value;
+    if (kd_file_offset + 64 > elf_size) continue;
+    uint32_t rsrc1;
+    std::memcpy(&rsrc1, elf_data + kd_file_offset + 48, 4);
+    uint32_t granulated = rsrc1 & 0x3F;
+    return static_cast<int>((granulated + 1) * 8);
+  }
+  return 256;
+}
+
+// ── Post-patch verification ──────────────────────────────────────────────────
+
+static void VerifyPatchCorrectness(
+    const uint8_t *text, uint64_t text_size,
+    const LLVMState &llvm_state,
+    const std::vector<ScratchPatchInfo> &scratch_patches) {
+  if (scratch_patches.empty()) return;
+
+  std::vector<InternalDecodedInst> decoded;
+  if (!DecodeTextSection(text, text_size, llvm_state, decoded)) return;
+
+  CFG cfg = BuildCFG(decoded);
+  LivenessInfo liveness = ComputeLiveness(decoded, cfg,
+                                          *llvm_state.MCII, *llvm_state.MRI);
+
+  std::map<uint64_t, size_t> offset_to_idx;
+  for (size_t i = 0; i < decoded.size(); ++i)
+    offset_to_idx[decoded[i].offset] = i;
+
+  for (const auto &sp : scratch_patches) {
+    auto it = offset_to_idx.find(sp.offset);
+    if (it == offset_to_idx.end()) continue;
+    size_t idx = it->second;
+    if (idx >= liveness.live_before.size()) continue;
+
+    for (int reg : sp.scratch_regs) {
+      if (liveness.live_before[idx].count(reg)) {
+        std::cerr << "hotswap: WARNING: scratch v" << reg
+                  << " is live at patch point 0x" << std::hex << sp.offset
+                  << std::dec << " in post-patch verification\n";
+      }
+    }
+  }
+}
+
 // ── ApplyGfx1250B0toA0Rules ─────────────────────────────────────────────────
 
 static uint32_t
 ApplyGfx1250B0toA0Rules(std::vector<InternalDecodedInst> &decoded,
                         uint8_t *text, uint64_t text_size,
                         const LLVMState &llvm_state,
-                        std::vector<Trampoline> &out_trampolines) {
+                        std::vector<Trampoline> &out_trampolines,
+                        uint8_t *elf_data, size_t elf_size,
+                        const ElfInfo &elf_info,
+                        std::vector<ScratchPatchInfo> &out_scratch_patches) {
   uint32_t patched = 0;
   std::vector<NopSled> nop_sleds = BuildNopSledMap(decoded);
+
+  CFG cfg = BuildCFG(decoded);
+  LivenessInfo liveness = ComputeLiveness(decoded, cfg,
+                                          *llvm_state.MCII, *llvm_state.MRI);
+
+  struct KernelPatchStats {
+    int extra_vgprs = 0;
+    int scratch_reused = 0;
+    int scratch_above_kd = 0;
+  };
+  std::map<std::string, KernelPatchStats> kernel_stats;
 
   for (size_t idx = 0; idx < decoded.size(); ++idx) {
     auto &di = decoded[idx];
@@ -1514,6 +1871,29 @@ ApplyGfx1250B0toA0Rules(std::vector<InternalDecodedInst> &decoded,
         auto [src_base, src_count] = GetOperandVgprRange(di.inst, 1, *llvm_state.MRI);
 
         if (dst_base >= 0 && src_base >= 0) {
+          std::string kernel_p8 = FindKernelAtOffset(elf_info, di.offset);
+          int kd_vgprs_p8 = GetKernelVgprCount(elf_data, elf_size, elf_info, kernel_p8);
+          ScratchAllocator alloc_p8(liveness.live_before[idx], kd_vgprs_p8);
+          int s0 = alloc_p8.Alloc(), s1 = alloc_p8.Alloc();
+          int s2 = alloc_p8.Alloc(), s3 = alloc_p8.Alloc();
+          if (s0 < 0 || s1 < 0 || s2 < 0 || s3 < 0) {
+            s0 = 252; s1 = 253; s2 = 254; s3 = 255;
+          }
+          std::string sv0 = "v" + std::to_string(s0);
+          std::string sv1 = "v" + std::to_string(s1);
+          std::string sv2 = "v" + std::to_string(s2);
+          std::string sv3 = "v" + std::to_string(s3);
+          for (int v : {s0, s1, s2, s3}) {
+            if (v < kd_vgprs_p8)
+              kernel_stats[kernel_p8].scratch_reused++;
+            else
+              kernel_stats[kernel_p8].scratch_above_kd++;
+          }
+          kernel_stats[kernel_p8].extra_vgprs =
+              std::max(kernel_stats[kernel_p8].extra_vgprs,
+                       alloc_p8.ExtraVgprsNeeded());
+          out_scratch_patches.push_back({di.offset, {s0, s1, s2, s3}});
+
           std::string dst = FormatVgprRange(dst_base, dst_count);
           std::string src = "v" + std::to_string(src_base);
           std::vector<std::string> emu_lines;
@@ -1522,61 +1902,61 @@ ApplyGfx1250B0toA0Rules(std::vector<InternalDecodedInst> &decoded,
             int opsel = (dw0 >> 11) & 0x3;
             int byte_offset = opsel * 8;
             emu_lines = {
-              "v_bfe_u32 v252, " + src + ", " + std::to_string(byte_offset) + ", 8",
-              "v_bfe_u32 v253, v252, 0, 3",
-              "v_bfe_u32 v254, v252, 3, 5",
-              "v_bfe_u32 v255, v252, 7, 1",
-              "v_lshlrev_b32 v253, 20, v253",
-              "v_add_nc_u32 v254, 112, v254",
-              "v_lshlrev_b32 v254, 23, v254",
-              "v_lshlrev_b32 v255, 31, v255",
-              "v_or3_b32 " + dst + ", v253, v254, v255",
+              "v_bfe_u32 " + sv0 + ", " + src + ", " + std::to_string(byte_offset) + ", 8",
+              "v_bfe_u32 " + sv1 + ", " + sv0 + ", 0, 3",
+              "v_bfe_u32 " + sv2 + ", " + sv0 + ", 3, 5",
+              "v_bfe_u32 " + sv3 + ", " + sv0 + ", 7, 1",
+              "v_lshlrev_b32 " + sv1 + ", 20, " + sv1,
+              "v_add_nc_u32 " + sv2 + ", 112, " + sv2,
+              "v_lshlrev_b32 " + sv2 + ", 23, " + sv2,
+              "v_lshlrev_b32 " + sv3 + ", 31, " + sv3,
+              "v_or3_b32 " + dst + ", " + sv1 + ", " + sv2 + ", " + sv3,
             };
           } else if (di.mnemonic == "v_cvt_pk_fp8_f32") {
             auto [src2_base, src2_count] = GetOperandVgprRange(di.inst, 2, *llvm_state.MRI);
             std::string src2 = (src2_base >= 0) ? ("v" + std::to_string(src2_base)) : src;
             emu_lines = {
-              "v_bfe_u32 v252, " + src + ", 23, 8",
-              "v_bfe_u32 v253, " + src + ", 20, 3",
-              "v_lshrrev_b32 v254, 31, " + src,
-              "v_sub_nc_u32 v252, v252, 112",
-              "v_bfe_u32 v255, " + src + ", 19, 1",
-              "v_add_nc_u32 v253, v253, v255",
-              "v_max_i32 v252, v252, 0",
-              "v_min_i32 v252, v252, 31",
-              "v_lshlrev_b32 v252, 3, v252",
-              "v_or_b32 v252, v252, v253",
-              "v_lshlrev_b32 v254, 7, v254",
-              "v_or_b32 v252, v252, v254",
-              "v_bfe_u32 v253, " + src2 + ", 23, 8",
-              "v_bfe_u32 v254, " + src2 + ", 20, 3",
-              "v_lshrrev_b32 v255, 31, " + src2,
-              "v_sub_nc_u32 v253, v253, 112",
+              "v_bfe_u32 " + sv0 + ", " + src + ", 23, 8",
+              "v_bfe_u32 " + sv1 + ", " + src + ", 20, 3",
+              "v_lshrrev_b32 " + sv2 + ", 31, " + src,
+              "v_sub_nc_u32 " + sv0 + ", " + sv0 + ", 112",
+              "v_bfe_u32 " + sv3 + ", " + src + ", 19, 1",
+              "v_add_nc_u32 " + sv1 + ", " + sv1 + ", " + sv3,
+              "v_max_i32 " + sv0 + ", " + sv0 + ", 0",
+              "v_min_i32 " + sv0 + ", " + sv0 + ", 31",
+              "v_lshlrev_b32 " + sv0 + ", 3, " + sv0,
+              "v_or_b32 " + sv0 + ", " + sv0 + ", " + sv1,
+              "v_lshlrev_b32 " + sv2 + ", 7, " + sv2,
+              "v_or_b32 " + sv0 + ", " + sv0 + ", " + sv2,
+              "v_bfe_u32 " + sv1 + ", " + src2 + ", 23, 8",
+              "v_bfe_u32 " + sv2 + ", " + src2 + ", 20, 3",
+              "v_lshrrev_b32 " + sv3 + ", 31, " + src2,
+              "v_sub_nc_u32 " + sv1 + ", " + sv1 + ", 112",
               "v_bfe_u32 " + dst + ", " + src2 + ", 19, 1",
-              "v_add_nc_u32 v254, v254, " + dst,
-              "v_max_i32 v253, v253, 0",
-              "v_min_i32 v253, v253, 31",
-              "v_lshlrev_b32 v253, 3, v253",
-              "v_or_b32 v253, v253, v254",
-              "v_lshlrev_b32 v255, 7, v255",
-              "v_or_b32 v253, v253, v255",
-              "v_lshlrev_b32 v253, 8, v253",
-              "v_or_b32 " + dst + ", v252, v253",
+              "v_add_nc_u32 " + sv2 + ", " + sv2 + ", " + dst,
+              "v_max_i32 " + sv1 + ", " + sv1 + ", 0",
+              "v_min_i32 " + sv1 + ", " + sv1 + ", 31",
+              "v_lshlrev_b32 " + sv1 + ", 3, " + sv1,
+              "v_or_b32 " + sv1 + ", " + sv1 + ", " + sv2,
+              "v_lshlrev_b32 " + sv3 + ", 7, " + sv3,
+              "v_or_b32 " + sv1 + ", " + sv1 + ", " + sv3,
+              "v_lshlrev_b32 " + sv1 + ", 8, " + sv1,
+              "v_or_b32 " + dst + ", " + sv0 + ", " + sv1,
             };
           } else {
             emu_lines = {
-              "v_bfe_u32 v252, " + src + ", 23, 8",
-              "v_bfe_u32 v253, " + src + ", 20, 3",
-              "v_lshrrev_b32 v254, 31, " + src,
-              "v_sub_nc_u32 v252, v252, 112",
-              "v_bfe_u32 v255, " + src + ", 19, 1",
-              "v_add_nc_u32 v253, v253, v255",
-              "v_max_i32 v252, v252, 0",
-              "v_min_i32 v252, v252, 31",
-              "v_lshlrev_b32 v252, 3, v252",
-              "v_or_b32 v252, v252, v253",
-              "v_lshlrev_b32 v254, 7, v254",
-              "v_or_b32 " + dst + ", v252, v254",
+              "v_bfe_u32 " + sv0 + ", " + src + ", 23, 8",
+              "v_bfe_u32 " + sv1 + ", " + src + ", 20, 3",
+              "v_lshrrev_b32 " + sv2 + ", 31, " + src,
+              "v_sub_nc_u32 " + sv0 + ", " + sv0 + ", 112",
+              "v_bfe_u32 " + sv3 + ", " + src + ", 19, 1",
+              "v_add_nc_u32 " + sv1 + ", " + sv1 + ", " + sv3,
+              "v_max_i32 " + sv0 + ", " + sv0 + ", 0",
+              "v_min_i32 " + sv0 + ", " + sv0 + ", 31",
+              "v_lshlrev_b32 " + sv0 + ", 3, " + sv0,
+              "v_or_b32 " + sv0 + ", " + sv0 + ", " + sv1,
+              "v_lshlrev_b32 " + sv2 + ", 7, " + sv2,
+              "v_or_b32 " + dst + ", " + sv0 + ", " + sv2,
             };
           }
 
@@ -1693,14 +2073,32 @@ ApplyGfx1250B0toA0Rules(std::vector<InternalDecodedInst> &decoded,
           int sb_base = extractBase(sb_str);
 
           if (sa_base >= 0 && sb_base >= 0) {
-            std::string repack_sa = "v_perm_b32 v252, v" + std::to_string(sa_base) +
+            std::string kernel_p9 = FindKernelAtOffset(elf_info, di.offset);
+            int kd_vgprs_p9 = GetKernelVgprCount(elf_data, elf_size, elf_info, kernel_p9);
+            ScratchAllocator alloc_p9(liveness.live_before[idx], kd_vgprs_p9);
+            int p9s0 = alloc_p9.Alloc(), p9s1 = alloc_p9.Alloc();
+            if (p9s0 < 0 || p9s1 < 0) { p9s0 = 252; p9s1 = 253; }
+            std::string p9sv0 = "v" + std::to_string(p9s0);
+            std::string p9sv1 = "v" + std::to_string(p9s1);
+            for (int v : {p9s0, p9s1}) {
+              if (v < kd_vgprs_p9)
+                kernel_stats[kernel_p9].scratch_reused++;
+              else
+                kernel_stats[kernel_p9].scratch_above_kd++;
+            }
+            kernel_stats[kernel_p9].extra_vgprs =
+                std::max(kernel_stats[kernel_p9].extra_vgprs,
+                         alloc_p9.ExtraVgprsNeeded());
+            out_scratch_patches.push_back({di.offset, {p9s0, p9s1}});
+
+            std::string repack_sa = "v_perm_b32 " + p9sv0 + ", v" + std::to_string(sa_base) +
                 ", v" + std::to_string(sa_base) + ", 0x05010400";
-            std::string repack_sb = "v_perm_b32 v253, v" + std::to_string(sb_base) +
+            std::string repack_sb = "v_perm_b32 " + p9sv1 + ", v" + std::to_string(sb_base) +
                 ", v" + std::to_string(sb_base) + ", 0x05010400";
 
             std::string wmma_asm = "v_wmma_scale_f32_16x16x128_f8f6f4 "
                 + d_str + ", " + a_str + ", " + b_str + ", "
-                + d_str + ", v252, v253" + modifiers;
+                + d_str + ", " + p9sv0 + ", " + p9sv1 + modifiers;
 
             std::string all_asm = repack_sa + "\n" + repack_sb + "\n" + wmma_asm;
             auto enc = AssembleSingleInst(all_asm, llvm_state);
@@ -1830,6 +2228,22 @@ ApplyGfx1250B0toA0Rules(std::vector<InternalDecodedInst> &decoded,
         }
       }
     }
+  }
+
+  for (const auto &kv : kernel_stats) {
+    const std::string &kname = kv.first;
+    const auto &stats = kv.second;
+    if (kname.empty()) continue;
+    int vgprs_before = GetKernelVgprCount(elf_data, elf_size, elf_info, kname);
+    if (stats.extra_vgprs > 0)
+      UpdateKernelDescriptor(elf_data, elf_size, elf_info, kname,
+                             stats.extra_vgprs, 0);
+    int vgprs_after = GetKernelVgprCount(elf_data, elf_size, elf_info, kname);
+    std::cerr << "hotswap: liveness: kernel " << kname
+              << ": vgprs_before=" << vgprs_before
+              << ", vgprs_after=" << vgprs_after
+              << ", scratch_reused=" << stats.scratch_reused
+              << ", scratch_above_kd=" << stats.scratch_above_kd << "\n";
   }
 
   return patched;
@@ -1965,8 +2379,11 @@ RetargetCodeObjectB0A0Grow(const void *elf_data, size_t elf_size,
     return AMD_COMGR_STATUS_ERROR;
 
   std::vector<Trampoline> deferred;
+  std::vector<ScratchPatchInfo> scratch_patches;
   uint32_t count = ApplyGfx1250B0toA0Rules(decoded, text, elf_info.text_size,
-                                           llvm_state, deferred);
+                                           llvm_state, deferred,
+                                           buf.data(), buf.size(), elf_info,
+                                           scratch_patches);
   result->rules_matched = count;
 
   if (!deferred.empty()) {
@@ -2004,6 +2421,17 @@ RetargetCodeObjectB0A0Grow(const void *elf_data, size_t elf_size,
     std::memcpy(out, buf.data(), elf_size);
     *out_data = out;
     *out_size = elf_size;
+  }
+
+  if (!scratch_patches.empty()) {
+    ElfInfo verify_elf_info;
+    const uint8_t *verify_elf = static_cast<const uint8_t *>(*out_data);
+    if (ParseElfInfo(verify_elf, *out_size, verify_elf_info) &&
+        verify_elf_info.text_size > 0) {
+      VerifyPatchCorrectness(verify_elf + verify_elf_info.text_offset,
+                             verify_elf_info.text_size,
+                             llvm_state, scratch_patches);
+    }
   }
 
   return AMD_COMGR_STATUS_SUCCESS;
