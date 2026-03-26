@@ -1,0 +1,367 @@
+// comgr-hotswap-liveness.h — CFG construction, backward liveness, scratch allocation
+// Included inside the anonymous namespace of comgr-hotswap.cpp.
+// Not a standalone compilation unit.
+
+// ── Per-point VGPR liveness analysis ─────────────────────────────────────────
+
+struct RegDefUse {
+  std::set<int> defs;
+  std::set<int> uses;
+};
+
+static RegDefUse GetInstRegDefUse(const llvm::MCInst &inst,
+                                  const llvm::MCInstrInfo &MCII,
+                                  const llvm::MCRegisterInfo &MRI) {
+  RegDefUse du;
+  const llvm::MCInstrDesc &desc = MCII.get(inst.getOpcode());
+
+  auto addVgprRange = [&](unsigned reg, std::set<int> &out) {
+    auto [base, count] = GetVgprRange(reg, MRI);
+    if (base >= 0) {
+      for (int v = base; v < base + count; ++v)
+        out.insert(v);
+    }
+  };
+
+  unsigned num_defs = desc.getNumDefs();
+  for (unsigned i = 0; i < inst.getNumOperands(); ++i) {
+    const auto &op = inst.getOperand(i);
+    if (!op.isReg()) continue;
+    if (i < num_defs)
+      addVgprRange(op.getReg(), du.defs);
+    else
+      addVgprRange(op.getReg(), du.uses);
+  }
+
+#if LLVM_VERSION_MAJOR >= 16
+  for (llvm::MCPhysReg r : desc.implicit_defs())
+    addVgprRange(r, du.defs);
+  for (llvm::MCPhysReg r : desc.implicit_uses())
+    addVgprRange(r, du.uses);
+#else
+  if (const llvm::MCPhysReg *p = desc.getImplicitDefs())
+    for (; *p; ++p) addVgprRange(*p, du.defs);
+  if (const llvm::MCPhysReg *p = desc.getImplicitUses())
+    for (; *p; ++p) addVgprRange(*p, du.uses);
+#endif
+
+  return du;
+}
+
+// ── CFG construction ─────────────────────────────────────────────────────────
+
+struct BasicBlock {
+  uint64_t start_offset = 0;
+  uint64_t end_offset = 0;
+  std::vector<size_t> inst_indices;
+  std::vector<int> successors;
+  std::vector<int> predecessors;
+};
+
+struct CFG {
+  std::vector<BasicBlock> blocks;
+  std::map<uint64_t, int> offset_to_block;
+};
+
+static bool IsBranchMnemonic(const std::string &mnem) {
+  return mnem == "s_branch";
+}
+
+static bool IsCBranchMnemonic(const std::string &mnem) {
+  return mnem.find("s_cbranch") == 0;
+}
+
+static int64_t GetBranchImm(const llvm::MCInst &inst) {
+  for (unsigned i = 0; i < inst.getNumOperands(); ++i) {
+    if (inst.getOperand(i).isImm())
+      return inst.getOperand(i).getImm();
+  }
+  return 0;
+}
+
+static CFG BuildCFG(const std::vector<InternalDecodedInst> &decoded) {
+  CFG cfg;
+  if (decoded.empty()) return cfg;
+
+  std::set<uint64_t> bb_starts;
+  bb_starts.insert(decoded[0].offset);
+
+  uint64_t text_end = decoded.back().offset + decoded.back().size;
+
+  for (size_t i = 0; i < decoded.size(); ++i) {
+    const auto &di = decoded[i];
+    bool is_branch = IsBranchMnemonic(di.mnemonic);
+    bool is_cbranch = IsCBranchMnemonic(di.mnemonic);
+
+    if (is_branch || is_cbranch) {
+      int64_t imm = GetBranchImm(di.inst);
+      uint64_t target = di.offset + 4 + (imm * 4);
+      if (target < text_end)
+        bb_starts.insert(target);
+      if (i + 1 < decoded.size())
+        bb_starts.insert(decoded[i + 1].offset);
+    }
+    if (di.mnemonic == "s_endpgm" ||
+        di.mnemonic.find("s_setpc") == 0 ||
+        di.mnemonic.find("s_swappc") == 0) {
+      if (i + 1 < decoded.size())
+        bb_starts.insert(decoded[i + 1].offset);
+    }
+
+    if (di.mnemonic == "s_call_b64" || di.mnemonic.find("s_call") == 0) {
+      int64_t imm = GetBranchImm(di.inst);
+      if (imm != INT64_MIN) {
+        uint64_t target = di.offset + 4 + static_cast<int64_t>(imm) * 4;
+        if (target < text_end)
+          bb_starts.insert(target);
+      }
+      if (i + 1 < decoded.size())
+        bb_starts.insert(decoded[i + 1].offset);
+    }
+  }
+
+  std::vector<uint64_t> sorted_starts(bb_starts.begin(), bb_starts.end());
+  std::sort(sorted_starts.begin(), sorted_starts.end());
+
+  for (int i = 0; i < static_cast<int>(sorted_starts.size()); ++i)
+    cfg.offset_to_block[sorted_starts[i]] = i;
+
+  cfg.blocks.resize(sorted_starts.size());
+  for (size_t i = 0; i < sorted_starts.size(); ++i)
+    cfg.blocks[i].start_offset = sorted_starts[i];
+
+  int current_block = -1;
+  for (size_t i = 0; i < decoded.size(); ++i) {
+    auto it = cfg.offset_to_block.find(decoded[i].offset);
+    if (it != cfg.offset_to_block.end())
+      current_block = it->second;
+    if (current_block >= 0 &&
+        current_block < static_cast<int>(cfg.blocks.size())) {
+      cfg.blocks[current_block].inst_indices.push_back(i);
+      cfg.blocks[current_block].end_offset =
+          decoded[i].offset + decoded[i].size;
+    }
+  }
+
+  for (int bi = 0; bi < static_cast<int>(cfg.blocks.size()); ++bi) {
+    auto &bb = cfg.blocks[bi];
+    if (bb.inst_indices.empty()) continue;
+
+    size_t last_idx = bb.inst_indices.back();
+    const auto &last = decoded[last_idx];
+
+    if (last.mnemonic == "s_endpgm") {
+      /* no successors */
+    } else if (last.mnemonic.find("s_setpc") == 0 ||
+               last.mnemonic.find("s_swappc") == 0) {
+      /* conservative: unknown targets */
+    } else if (IsBranchMnemonic(last.mnemonic) ||
+               IsCBranchMnemonic(last.mnemonic)) {
+      int64_t imm = GetBranchImm(last.inst);
+      uint64_t target = last.offset + 4 + (imm * 4);
+      auto tgt_it = cfg.offset_to_block.find(target);
+      if (tgt_it != cfg.offset_to_block.end())
+        bb.successors.push_back(tgt_it->second);
+      if (IsCBranchMnemonic(last.mnemonic)) {
+        uint64_t fallthrough = last.offset + last.size;
+        auto ft_it = cfg.offset_to_block.find(fallthrough);
+        if (ft_it != cfg.offset_to_block.end())
+          bb.successors.push_back(ft_it->second);
+      }
+    } else if (last.mnemonic == "s_call_b64" || last.mnemonic.find("s_call") == 0) {
+      int64_t imm = GetBranchImm(last.inst);
+      uint64_t target = last.offset + 4 + (imm * 4);
+      auto tgt_it = cfg.offset_to_block.find(target);
+      if (tgt_it != cfg.offset_to_block.end())
+        bb.successors.push_back(tgt_it->second);
+      uint64_t fallthrough = last.offset + last.size;
+      auto ft_it = cfg.offset_to_block.find(fallthrough);
+      if (ft_it != cfg.offset_to_block.end())
+        bb.successors.push_back(ft_it->second);
+    } else {
+      if (bi + 1 < static_cast<int>(cfg.blocks.size()))
+        bb.successors.push_back(bi + 1);
+    }
+  }
+
+  for (int bi = 0; bi < static_cast<int>(cfg.blocks.size()); ++bi) {
+    for (int succ : cfg.blocks[bi].successors) {
+      if (succ >= 0 && succ < static_cast<int>(cfg.blocks.size()))
+        cfg.blocks[succ].predecessors.push_back(bi);
+    }
+  }
+
+  return cfg;
+}
+
+// ── Backward liveness analysis ───────────────────────────────────────────────
+
+struct LivenessInfo {
+  std::vector<std::set<int>> live_before;
+  std::vector<std::set<int>> live_after;
+};
+
+static LivenessInfo ComputeLiveness(
+    const std::vector<InternalDecodedInst> &decoded,
+    const CFG &cfg,
+    const llvm::MCInstrInfo &MCII,
+    const llvm::MCRegisterInfo &MRI) {
+  size_t n_inst = decoded.size();
+  LivenessInfo info;
+  info.live_before.resize(n_inst);
+  info.live_after.resize(n_inst);
+
+  size_t n_blocks = cfg.blocks.size();
+  if (n_blocks == 0) return info;
+
+  std::vector<std::set<int>> bb_live_in(n_blocks);
+  std::vector<std::set<int>> bb_live_out(n_blocks);
+
+  bool changed = true;
+  int max_iters = 200;
+  while (changed && max_iters-- > 0) {
+    changed = false;
+    for (int bi = static_cast<int>(n_blocks) - 1; bi >= 0; --bi) {
+      const auto &bb = cfg.blocks[bi];
+      if (bb.inst_indices.empty()) continue;
+
+      std::set<int> new_live_out;
+      size_t last_idx = bb.inst_indices.back();
+      const auto &last = decoded[last_idx];
+      if (last.mnemonic.find("s_setpc") == 0 ||
+          last.mnemonic.find("s_swappc") == 0) {
+        for (int v = 0; v < 256; ++v)
+          new_live_out.insert(v);
+      } else {
+        for (int succ : bb.successors) {
+          if (succ >= 0 && succ < static_cast<int>(n_blocks))
+            new_live_out.insert(bb_live_in[succ].begin(),
+                                bb_live_in[succ].end());
+        }
+      }
+
+      std::set<int> live = new_live_out;
+      for (int ii = static_cast<int>(bb.inst_indices.size()) - 1;
+           ii >= 0; --ii) {
+        size_t inst_idx = bb.inst_indices[ii];
+        RegDefUse du = GetInstRegDefUse(decoded[inst_idx].inst, MCII, MRI);
+        for (int d : du.defs) live.erase(d);
+        live.insert(du.uses.begin(), du.uses.end());
+      }
+
+      if (live != bb_live_in[bi]) {
+        bb_live_in[bi] = std::move(live);
+        changed = true;
+      }
+      if (new_live_out != bb_live_out[bi]) {
+        bb_live_out[bi] = std::move(new_live_out);
+        changed = true;
+      }
+    }
+  }
+
+  for (int bi = 0; bi < static_cast<int>(n_blocks); ++bi) {
+    const auto &bb = cfg.blocks[bi];
+    if (bb.inst_indices.empty()) continue;
+
+    std::set<int> live = bb_live_out[bi];
+    for (int ii = static_cast<int>(bb.inst_indices.size()) - 1;
+         ii >= 0; --ii) {
+      size_t inst_idx = bb.inst_indices[ii];
+      info.live_after[inst_idx] = live;
+      RegDefUse du = GetInstRegDefUse(decoded[inst_idx].inst, MCII, MRI);
+      for (int d : du.defs) live.erase(d);
+      live.insert(du.uses.begin(), du.uses.end());
+      info.live_before[inst_idx] = live;
+    }
+  }
+
+  return info;
+}
+
+// ── Scratch register allocator ───────────────────────────────────────────────
+
+struct ScratchAllocator {
+  std::set<int> live_at_point;
+  int kd_allocated_vgprs;
+  int next_above_kd;
+  int extra_allocated = 0;
+
+  ScratchAllocator(const std::set<int> &live, int kd_vgprs)
+      : live_at_point(live), kd_allocated_vgprs(kd_vgprs),
+        next_above_kd(kd_vgprs) {}
+
+  int Alloc() {
+    for (int v = kd_allocated_vgprs - 1; v >= 0; --v) {
+      if (live_at_point.find(v) == live_at_point.end()) {
+        live_at_point.insert(v);
+        return v;
+      }
+    }
+    if (next_above_kd >= 256) return -1;
+    int v = next_above_kd++;
+    extra_allocated++;
+    live_at_point.insert(v);
+    return v;
+  }
+
+  int ExtraVgprsNeeded() const { return extra_allocated; }
+};
+
+struct ScratchPatchInfo {
+  uint64_t offset;
+  std::set<int> scratch_regs;
+};
+
+static int GetKernelVgprCount(const uint8_t *elf_data, size_t elf_size,
+                              const ElfInfo &elf_info,
+                              const std::string &kernel_name) {
+  std::string kd_name = kernel_name + ".kd";
+  for (const auto &sym : elf_info.symbols) {
+    if (sym.name != kd_name) continue;
+    if (sym.shndx >= elf_info.sections.size()) continue;
+    const auto &sec = elf_info.sections[sym.shndx];
+    uint64_t kd_file_offset = sec.offset + sym.value;
+    if (kd_file_offset + 64 > elf_size) continue;
+    uint32_t rsrc1;
+    std::memcpy(&rsrc1, elf_data + kd_file_offset + 48, 4);
+    uint32_t granulated = rsrc1 & 0x3F;
+    return static_cast<int>((granulated + 1) * 8);
+  }
+  return 256;
+}
+
+// ── Post-patch verification ──────────────────────────────────────────────────
+
+static void VerifyPatchCorrectness(
+    const uint8_t *text, uint64_t text_size,
+    const LLVMState &llvm_state,
+    const std::vector<ScratchPatchInfo> &scratch_patches) {
+  if (scratch_patches.empty()) return;
+
+  std::vector<InternalDecodedInst> decoded;
+  if (!DecodeTextSection(text, text_size, llvm_state, decoded)) return;
+
+  CFG cfg = BuildCFG(decoded);
+  LivenessInfo liveness = ComputeLiveness(decoded, cfg,
+                                          *llvm_state.MCII, *llvm_state.MRI);
+
+  std::map<uint64_t, size_t> offset_to_idx;
+  for (size_t i = 0; i < decoded.size(); ++i)
+    offset_to_idx[decoded[i].offset] = i;
+
+  for (const auto &sp : scratch_patches) {
+    auto it = offset_to_idx.find(sp.offset);
+    if (it == offset_to_idx.end()) continue;
+    size_t idx = it->second;
+    if (idx >= liveness.live_before.size()) continue;
+
+    for (int reg : sp.scratch_regs) {
+      if (liveness.live_before[idx].count(reg)) {
+        std::cerr << "hotswap: WARNING: scratch v" << reg
+                  << " is live at patch point 0x" << std::hex << sp.offset
+                  << std::dec << " in post-patch verification\n";
+      }
+    }
+  }
+}
