@@ -321,7 +321,7 @@ static bool MatchRule(const RewriteRule &rule, const InternalDecodedInst &inst,
       return false;
     for (size_t i = 0; i < rule.operands.size(); ++i) {
       auto &match = rule.operands[i];
-      auto &operand = inst.inst.getOperand(i);
+      auto &operand = inst.inst.getOperand(static_cast<unsigned>(i));
       switch (match.kind) {
       case OperandMatch::Kind::Wildcard:
         break;
@@ -340,7 +340,8 @@ static bool MatchRule(const RewriteRule &rule, const InternalDecodedInst &inst,
 
 // ── VGPR introspection ───────────────────────────────────────────────────────
 
-static int GetVgprNum(unsigned reg, const llvm::MCRegisterInfo &MRI) {
+static int __attribute__((unused))
+GetVgprNum(unsigned reg, const llvm::MCRegisterInfo &MRI) {
   const char *name = MRI.getName(reg);
   if (!name) return -1;
   std::string rname(name);

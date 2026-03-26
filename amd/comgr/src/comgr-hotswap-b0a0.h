@@ -247,6 +247,7 @@ static std::vector<WmmaHazard>
 ValidateWmmaCoexecHazards(const std::vector<InternalDecodedInst> &decoded,
                            const uint8_t *text,
                            const LLVMState &llvm_state) {
+  (void)text;
   std::vector<WmmaHazard> hazards;
   int wmma_scanned = 0;
 
@@ -307,6 +308,715 @@ ValidateWmmaCoexecHazards(const std::vector<InternalDecodedInst> &decoded,
   return hazards;
 }
 
+// ── Per-patch types ──────────────────────────────────────────────────────────
+
+struct KernelPatchStats {
+  int extra_vgprs = 0;
+  int scratch_reused = 0;
+  int scratch_above_kd = 0;
+};
+
+struct PatchContext {
+  std::vector<InternalDecodedInst> &decoded;
+  uint8_t *text;
+  uint64_t text_size;
+  const LLVMState &llvm_state;
+  std::vector<Trampoline> &out_trampolines;
+  std::vector<NopSled> &nop_sleds;
+  uint8_t *elf_data;
+  size_t elf_size;
+  const ElfInfo &elf_info;
+  const LivenessInfo &liveness;
+  std::map<std::string, KernelPatchStats> &kernel_stats;
+  std::vector<ScratchPatchInfo> &out_scratch_patches;
+};
+
+// ── Per-patch functions ─────────────────────────────────────────────────────
+
+static bool ApplyPatch1_ClusterLoad(PatchContext &ctx, size_t idx) {
+  auto &di = ctx.decoded[idx];
+  for (size_t swap_i = 0; swap_i < kClusterLoadSwapsSize; ++swap_i) {
+    const auto &swap = kClusterLoadSwaps[swap_i];
+    if (di.mnemonic == swap.first) {
+      RewriteRule rule;
+      rule.replace_mnemonic = swap.second;
+      rule.preserve_operands = true;
+      if (ApplyMnemonicSwap(rule, di, ctx.text, ctx.llvm_state)) {
+        di.mnemonic = swap.second;
+        return true;
+      }
+      return false;
+    }
+  }
+  return false;
+}
+
+static bool ApplyPatch2_Ds2Addr(PatchContext &ctx, size_t idx) {
+  auto &di = ctx.decoded[idx];
+  for (size_t swap_i = 0; swap_i < kDs2AddrSwapsSize; ++swap_i) {
+    const auto &swap = kDs2AddrSwaps[swap_i];
+    if (di.mnemonic == swap.first) {
+      if (di.mnemonic.find("stride64") == std::string::npos) return false;
+      std::string inst_str = PrintInst(di, ctx.llvm_state);
+      if (inst_str.empty()) return false;
+      std::vector<std::string> asm_lines =
+          ExpandDs2AddrAsm(inst_str, swap.first, swap.second);
+      if (asm_lines.size() != 2) return false;
+      auto bytes0 = AssembleSingleInst(asm_lines[0], ctx.llvm_state);
+      auto bytes1 = AssembleSingleInst(asm_lines[1], ctx.llvm_state);
+      if (bytes0.empty() || bytes1.empty()) return false;
+
+      uint64_t tramp_offset = ctx.text_size;
+      for (auto &t : ctx.out_trampolines)
+        tramp_offset += t.bytes.size();
+
+      Trampoline tramp;
+      tramp.original_offset = di.offset;
+      tramp.original_size = di.size;
+      tramp.bytes.insert(tramp.bytes.end(), bytes0.begin(), bytes0.end());
+      tramp.bytes.insert(tramp.bytes.end(), bytes1.begin(), bytes1.end());
+
+      uint8_t br_back[4];
+      if (!EncodeSBranch(tramp_offset + tramp.bytes.size(),
+                         di.offset + di.size, br_back, true))
+        return false;
+      tramp.bytes.insert(tramp.bytes.end(), br_back, br_back + 4);
+      ctx.out_trampolines.push_back(std::move(tramp));
+      di.mnemonic = "<replaced>";
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool ApplyPatch3_SClause(PatchContext &ctx, size_t idx) {
+  auto &di = ctx.decoded[idx];
+  if (di.mnemonic != "s_clause") return false;
+  RewriteRule rule;
+  rule.replace_bytes = {0x00, 0x00, 0x80, 0xBF};
+  if (ApplyByteReplace(rule, di.offset, di.size, ctx.text, ctx.text_size)) {
+    di.mnemonic = "s_nop";
+    return true;
+  }
+  return false;
+}
+
+static bool ApplyPatch4_TensorLoadToLds(PatchContext &ctx, size_t idx) {
+  auto &di = ctx.decoded[idx];
+  if (di.mnemonic != "tensor_load_to_lds") return false;
+  if (idx > 0 && ctx.decoded[idx - 1].mnemonic == "s_pack_hh_b32_b16")
+    return false;
+  std::string inst_str = PrintInst(di, ctx.llvm_state);
+  if (inst_str.empty()) return false;
+
+  size_t first_comma = inst_str.find(',');
+  if (first_comma == std::string::npos) return false;
+  std::string after = inst_str.substr(first_comma + 1);
+
+  size_t s_pos = after.find("s[");
+  if (s_pos == std::string::npos) {
+    s_pos = after.find_first_of("s");
+    if (s_pos == std::string::npos) return false;
+  }
+
+  std::string base_sreg;
+  size_t bracket_pos = after.find('[', s_pos);
+  if (bracket_pos != std::string::npos && bracket_pos == s_pos + 1) {
+    size_t colon = after.find(':', bracket_pos);
+    if (colon != std::string::npos) {
+      std::string num =
+          after.substr(bracket_pos + 1, colon - bracket_pos - 1);
+      base_sreg = "s" + num;
+    }
+  } else {
+    size_t num_start = s_pos + 1;
+    size_t num_end = num_start;
+    while (num_end < after.size() && after[num_end] >= '0' &&
+           after[num_end] <= '9')
+      num_end++;
+    if (num_end > num_start)
+      base_sreg = "s" + after.substr(num_start, num_end - num_start);
+  }
+  if (base_sreg.empty()) return false;
+
+  std::string pack_asm =
+      "s_pack_hh_b32_b16 " + base_sreg + ", 0, " + base_sreg;
+  auto pack_bytes = AssembleSingleInst(pack_asm, ctx.llvm_state);
+  if (pack_bytes.empty() || pack_bytes.size() != 4) return false;
+
+  NopSled *sled = FindNearestSled(ctx.nop_sleds, di.offset, 20);
+  if (sled) {
+    uint64_t tp = sled->write_pos;
+    std::memcpy(ctx.text + tp, pack_bytes.data(), 4);
+    std::memcpy(ctx.text + tp + 4, ctx.text + di.offset, di.size);
+    uint8_t br_back[4];
+    if (!EncodeSBranch(tp + 4 + di.size, di.offset + di.size, br_back, true))
+      return false;
+    std::memcpy(ctx.text + tp + 4 + di.size, br_back, 4);
+    uint8_t br_fwd[4];
+    if (!EncodeSBranch(di.offset, tp, br_fwd, true)) return false;
+    std::memcpy(ctx.text + di.offset, br_fwd, 4);
+    for (uint32_t i = 4; i < di.size; i += 4) {
+      uint8_t nop[4];
+      EncodeSNop(nop);
+      std::memcpy(ctx.text + di.offset + i, nop, 4);
+    }
+    sled->write_pos += 4 + di.size + 4;
+  } else {
+    Trampoline t;
+    t.original_offset = di.offset;
+    t.original_size = di.size;
+    t.bytes.resize(4 + di.size + 4);
+    std::memcpy(t.bytes.data(), pack_bytes.data(), 4);
+    std::memcpy(t.bytes.data() + 4, ctx.text + di.offset, di.size);
+    uint8_t placeholder[4] = {0};
+    std::memcpy(t.bytes.data() + 4 + di.size, placeholder, 4);
+    ctx.out_trampolines.push_back(std::move(t));
+  }
+  di.mnemonic = "<replaced>";
+  return true;
+}
+
+static uint32_t ApplyPatch5_WmmaHazard(PatchContext &ctx) {
+  uint32_t patched = 0;
+  auto hazards = ValidateWmmaCoexecHazards(ctx.decoded, ctx.text, ctx.llvm_state);
+  if (hazards.empty()) return 0;
+  auto vnop_bytes = AssembleSingleInst("v_nop", ctx.llvm_state);
+  if (vnop_bytes.empty() || vnop_bytes.size() != 4) return 0;
+  for (auto &h : hazards) {
+    const auto &valu = ctx.decoded[h.valu_idx];
+    uint32_t valu_size = valu.size;
+    uint32_t nop_bytes_count = h.deficit * 4;
+    uint32_t tramp_size = nop_bytes_count + valu_size + 4;
+
+    NopSled *sled = FindNearestSled(ctx.nop_sleds, valu.offset, tramp_size);
+    if (sled) {
+      uint64_t tp = sled->write_pos;
+      for (int n = 0; n < h.deficit; ++n)
+        std::memcpy(ctx.text + tp + n * 4, vnop_bytes.data(), 4);
+      std::memcpy(ctx.text + tp + nop_bytes_count, ctx.text + valu.offset,
+                  valu_size);
+      uint8_t br_back[4];
+      if (!EncodeSBranch(tp + nop_bytes_count + valu_size,
+                         valu.offset + valu_size, br_back, true))
+        continue;
+      std::memcpy(ctx.text + tp + nop_bytes_count + valu_size, br_back, 4);
+      uint8_t br_fwd[4];
+      if (!EncodeSBranch(valu.offset, tp, br_fwd, true)) continue;
+      std::memcpy(ctx.text + valu.offset, br_fwd, 4);
+      for (uint32_t i = 4; i < valu_size; i += 4) {
+        uint8_t nop[4];
+        EncodeSNop(nop);
+        std::memcpy(ctx.text + valu.offset + i, nop, 4);
+      }
+      sled->write_pos += tramp_size;
+      ++patched;
+    } else {
+      Trampoline t;
+      t.original_offset = valu.offset;
+      t.original_size = valu_size;
+      t.bytes.resize(tramp_size);
+      for (int n = 0; n < h.deficit; ++n)
+        std::memcpy(t.bytes.data() + n * 4, vnop_bytes.data(), 4);
+      std::memcpy(t.bytes.data() + nop_bytes_count,
+                  ctx.text + valu.offset, valu_size);
+      uint8_t placeholder[4] = {0};
+      std::memcpy(t.bytes.data() + nop_bytes_count + valu_size,
+                  placeholder, 4);
+      ctx.out_trampolines.push_back(std::move(t));
+      ++patched;
+    }
+  }
+  return patched;
+}
+
+static bool ApplyPatch6_Fp8WmmaSplit(PatchContext &ctx, size_t idx) {
+  auto &di = ctx.decoded[idx];
+  if (di.mnemonic.find("16x16x128") == std::string::npos ||
+      (di.mnemonic.find("_fp8") == std::string::npos &&
+       di.mnemonic.find("_bf8") == std::string::npos) ||
+      di.mnemonic.find("f8f6f4") != std::string::npos)
+    return false;
+
+  auto [d_base, d_count] =
+      GetOperandVgprRange(di.inst, 0, *ctx.llvm_state.MRI);
+  auto [a_base, a_count] =
+      GetOperandVgprRange(di.inst, 1, *ctx.llvm_state.MRI);
+  auto [b_base, b_count] =
+      GetOperandVgprRange(di.inst, 2, *ctx.llvm_state.MRI);
+  if (d_base < 0 || a_base < 0 || b_base < 0 || a_count < 16 ||
+      b_count < 16)
+    return false;
+
+  std::string mnem64 = di.mnemonic;
+  size_t pos128 = mnem64.find("16x16x128");
+  if (pos128 != std::string::npos)
+    mnem64.replace(pos128, 9, "16x16x64");
+  std::string asm1 =
+      mnem64 + " " + FormatVgprRange(d_base, d_count) + ", " +
+      FormatVgprRange(a_base, 8) + ", " + FormatVgprRange(b_base, 8) +
+      ", " + FormatVgprRange(d_base, d_count);
+  std::string asm2 =
+      mnem64 + " " + FormatVgprRange(d_base, d_count) + ", " +
+      FormatVgprRange(a_base + 8, 8) + ", " +
+      FormatVgprRange(b_base + 8, 8) + ", " +
+      FormatVgprRange(d_base, d_count);
+  auto enc1 = AssembleSingleInst(asm1, ctx.llvm_state);
+  auto enc2 = AssembleSingleInst(asm2, ctx.llvm_state);
+  if (enc1.empty() || enc2.empty()) return false;
+
+  uint32_t tramp_size = static_cast<uint32_t>(enc1.size() + enc2.size() + 4);
+
+  NopSled *sled = FindNearestSled(ctx.nop_sleds, di.offset, tramp_size);
+  if (sled) {
+    uint64_t tp = sled->write_pos;
+    std::memcpy(ctx.text + tp, enc1.data(), enc1.size());
+    std::memcpy(ctx.text + tp + enc1.size(), enc2.data(), enc2.size());
+    uint8_t br_back[4];
+    if (EncodeSBranch(tp + enc1.size() + enc2.size(),
+                      di.offset + di.size, br_back, true)) {
+      std::memcpy(ctx.text + tp + enc1.size() + enc2.size(), br_back, 4);
+      uint8_t br_fwd[4];
+      if (EncodeSBranch(di.offset, tp, br_fwd, true)) {
+        std::memcpy(ctx.text + di.offset, br_fwd, 4);
+        for (uint32_t i = 4; i < di.size; i += 4) {
+          uint8_t nop[4]; EncodeSNop(nop);
+          std::memcpy(ctx.text + di.offset + i, nop, 4);
+        }
+        sled->write_pos += tramp_size;
+        std::cerr << "hotswap: B0->A0 @0x" << std::hex << di.offset
+                  << ": " << di.mnemonic << " -> 2x " << mnem64
+                  << " via sled @0x" << tp << std::dec << "\n";
+        di.mnemonic = "<replaced>";
+        return true;
+      }
+    }
+  }
+  Trampoline t;
+  t.original_offset = di.offset;
+  t.original_size = di.size;
+  t.bytes.resize(tramp_size);
+  std::memcpy(t.bytes.data(), enc1.data(), enc1.size());
+  std::memcpy(t.bytes.data() + enc1.size(), enc2.data(), enc2.size());
+  uint8_t placeholder[4] = {0};
+  std::memcpy(t.bytes.data() + enc1.size() + enc2.size(), placeholder, 4);
+  ctx.out_trampolines.push_back(std::move(t));
+  std::cerr << "hotswap: B0->A0 @0x" << std::hex << di.offset
+            << ": " << di.mnemonic << " -> 2x " << mnem64
+            << " deferred for ELF growth" << std::dec << "\n";
+  di.mnemonic = "<replaced>";
+  return true;
+}
+
+static bool ApplyPatch7_F4WmmaSplit(PatchContext &ctx, size_t idx) {
+  auto &di = ctx.decoded[idx];
+  if (di.mnemonic.find("32x16x128_f4") == std::string::npos ||
+      di.mnemonic.find("v_wmma") != 0)
+    return false;
+
+  bool is_scaled = (di.mnemonic.find("_scale_") != std::string::npos ||
+                    di.mnemonic.find("_scale16_") != std::string::npos);
+  if (is_scaled) return false;
+
+  auto [d_base, d_count] = GetOperandVgprRange(di.inst, 0, *ctx.llvm_state.MRI);
+  auto [a_base, a_count] = GetOperandVgprRange(di.inst, 1, *ctx.llvm_state.MRI);
+  auto [b_base, b_count] = GetOperandVgprRange(di.inst, 2, *ctx.llvm_state.MRI);
+
+  if (d_base < 0 || a_base < 0 || b_base < 0 || d_count < 16)
+    return false;
+
+  std::string asm1 = "v_wmma_f32_16x16x128_f8f6f4 "
+      + FormatVgprRange(d_base, 8) + ", "
+      + FormatVgprRange(a_base, 8) + ", "
+      + FormatVgprRange(b_base, b_count) + ", "
+      + FormatVgprRange(d_base, 8)
+      + " matrix_a_fmt:MATRIX_FMT_FP4 matrix_b_fmt:MATRIX_FMT_FP4";
+  std::string asm2 = "v_wmma_f32_16x16x128_f8f6f4 "
+      + FormatVgprRange(d_base + 8, 8) + ", "
+      + FormatVgprRange(a_base + 8, 8) + ", "
+      + FormatVgprRange(b_base, b_count) + ", "
+      + FormatVgprRange(d_base + 8, 8)
+      + " matrix_a_fmt:MATRIX_FMT_FP4 matrix_b_fmt:MATRIX_FMT_FP4";
+
+  auto enc1 = AssembleSingleInst(asm1, ctx.llvm_state);
+  auto enc2 = AssembleSingleInst(asm2, ctx.llvm_state);
+
+  if (enc1.empty() || enc2.empty()) return false;
+
+  uint32_t tramp_size =
+      static_cast<uint32_t>(enc1.size() + enc2.size() + 4);
+
+  NopSled *sled = FindNearestSled(ctx.nop_sleds, di.offset, tramp_size);
+  if (sled) {
+    uint64_t tp = sled->write_pos;
+    std::memcpy(ctx.text + tp, enc1.data(), enc1.size());
+    std::memcpy(ctx.text + tp + enc1.size(), enc2.data(), enc2.size());
+    uint8_t br_back[4];
+    if (EncodeSBranch(tp + enc1.size() + enc2.size(),
+                      di.offset + di.size, br_back, true)) {
+      std::memcpy(ctx.text + tp + enc1.size() + enc2.size(), br_back, 4);
+      uint8_t br_fwd[4];
+      if (EncodeSBranch(di.offset, tp, br_fwd, true)) {
+        std::memcpy(ctx.text + di.offset, br_fwd, 4);
+        for (uint32_t i = 4; i < di.size; i += 4) {
+          uint8_t nop[4]; EncodeSNop(nop);
+          std::memcpy(ctx.text + di.offset + i, nop, 4);
+        }
+        sled->write_pos += tramp_size;
+        std::cerr << "hotswap: B0->A0 @0x" << std::hex << di.offset
+                  << ": " << di.mnemonic
+                  << " -> 2x v_wmma_f32_16x16x128_f8f6f4 via sled @0x"
+                  << tp << std::dec << "\n";
+        di.mnemonic = "<replaced>";
+        return true;
+      }
+    }
+  }
+  Trampoline t;
+  t.original_offset = di.offset;
+  t.original_size = di.size;
+  t.bytes.resize(tramp_size);
+  std::memcpy(t.bytes.data(), enc1.data(), enc1.size());
+  std::memcpy(t.bytes.data() + enc1.size(), enc2.data(), enc2.size());
+  uint8_t placeholder[4] = {0};
+  std::memcpy(t.bytes.data() + enc1.size() + enc2.size(), placeholder, 4);
+  ctx.out_trampolines.push_back(std::move(t));
+  std::cerr << "hotswap: B0->A0 @0x" << std::hex << di.offset
+            << ": " << di.mnemonic << " deferred for ELF growth"
+            << std::dec << "\n";
+  di.mnemonic = "<replaced>";
+  return true;
+}
+
+static bool ApplyPatch8_E5M3CvtEmulation(PatchContext &ctx, size_t idx) {
+  auto &di = ctx.decoded[idx];
+  if (!((di.mnemonic.find("v_cvt_f32_fp8") == 0 ||
+         di.mnemonic.find("v_cvt_pk_fp8_f32") == 0 ||
+         di.mnemonic.find("v_cvt_sr_fp8_f32") == 0) && di.size >= 8))
+    return false;
+
+  uint32_t dw0;
+  std::memcpy(&dw0, ctx.text + di.offset, 4);
+  bool has_clamp = (dw0 >> 15) & 1;
+  if (!has_clamp) return false;
+
+  auto [dst_base, dst_count] = GetOperandVgprRange(di.inst, 0, *ctx.llvm_state.MRI);
+  auto [src_base, src_count] = GetOperandVgprRange(di.inst, 1, *ctx.llvm_state.MRI);
+
+  if (dst_base < 0 || src_base < 0) return false;
+
+  std::string kernel = FindKernelAtOffset(ctx.elf_info, di.offset);
+  int kd_vgprs = GetKernelVgprCount(ctx.elf_data, ctx.elf_size, ctx.elf_info, kernel);
+  ScratchAllocator alloc(ctx.liveness.live_before[idx], kd_vgprs);
+  int s0 = alloc.Alloc(), s1 = alloc.Alloc();
+  int s2 = alloc.Alloc(), s3 = alloc.Alloc();
+  if (s0 < 0 || s1 < 0 || s2 < 0 || s3 < 0) {
+    std::cerr << "hotswap: B0->A0 @0x" << std::hex << di.offset
+              << ": scratch allocation failed, skipping patch" << std::dec << "\n";
+    return false;
+  }
+  std::string sv0 = "v" + std::to_string(s0);
+  std::string sv1 = "v" + std::to_string(s1);
+  std::string sv2 = "v" + std::to_string(s2);
+  std::string sv3 = "v" + std::to_string(s3);
+  for (int v : {s0, s1, s2, s3}) {
+    if (v < kd_vgprs)
+      ctx.kernel_stats[kernel].scratch_reused++;
+    else
+      ctx.kernel_stats[kernel].scratch_above_kd++;
+  }
+  ctx.kernel_stats[kernel].extra_vgprs =
+      std::max(ctx.kernel_stats[kernel].extra_vgprs,
+               alloc.ExtraVgprsNeeded());
+  ctx.out_scratch_patches.push_back({di.offset, {s0, s1, s2, s3}});
+
+  std::string dst = FormatVgprRange(dst_base, dst_count);
+  std::string src = "v" + std::to_string(src_base);
+  std::vector<std::string> emu_lines;
+
+  if (di.mnemonic == "v_cvt_f32_fp8") {
+    int opsel = (dw0 >> 11) & 0x3;
+    int byte_offset = opsel * 8;
+    emu_lines = {
+      "v_bfe_u32 " + sv0 + ", " + src + ", " + std::to_string(byte_offset) + ", 8",
+      "v_bfe_u32 " + sv1 + ", " + sv0 + ", 0, 3",
+      "v_bfe_u32 " + sv2 + ", " + sv0 + ", 3, 5",
+      "v_bfe_u32 " + sv3 + ", " + sv0 + ", 7, 1",
+      "v_lshlrev_b32 " + sv1 + ", 20, " + sv1,
+      "v_add_nc_u32 " + sv2 + ", 112, " + sv2,
+      "v_lshlrev_b32 " + sv2 + ", 23, " + sv2,
+      "v_lshlrev_b32 " + sv3 + ", 31, " + sv3,
+      "v_or3_b32 " + dst + ", " + sv1 + ", " + sv2 + ", " + sv3,
+    };
+  } else if (di.mnemonic == "v_cvt_pk_fp8_f32") {
+    auto [src2_base, src2_count] = GetOperandVgprRange(di.inst, 2, *ctx.llvm_state.MRI);
+    std::string src2 = (src2_base >= 0) ? ("v" + std::to_string(src2_base)) : src;
+    emu_lines = {
+      "v_bfe_u32 " + sv0 + ", " + src + ", 23, 8",
+      "v_bfe_u32 " + sv1 + ", " + src + ", 20, 3",
+      "v_lshrrev_b32 " + sv2 + ", 31, " + src,
+      "v_sub_nc_u32 " + sv0 + ", " + sv0 + ", 112",
+      "v_bfe_u32 " + sv3 + ", " + src + ", 19, 1",
+      "v_add_nc_u32 " + sv1 + ", " + sv1 + ", " + sv3,
+      "v_max_i32 " + sv0 + ", " + sv0 + ", 0",
+      "v_min_i32 " + sv0 + ", " + sv0 + ", 31",
+      "v_lshlrev_b32 " + sv0 + ", 3, " + sv0,
+      "v_or_b32 " + sv0 + ", " + sv0 + ", " + sv1,
+      "v_lshlrev_b32 " + sv2 + ", 7, " + sv2,
+      "v_or_b32 " + sv0 + ", " + sv0 + ", " + sv2,
+      "v_bfe_u32 " + sv1 + ", " + src2 + ", 23, 8",
+      "v_bfe_u32 " + sv2 + ", " + src2 + ", 20, 3",
+      "v_lshrrev_b32 " + sv3 + ", 31, " + src2,
+      "v_sub_nc_u32 " + sv1 + ", " + sv1 + ", 112",
+      "v_bfe_u32 " + dst + ", " + src2 + ", 19, 1",
+      "v_add_nc_u32 " + sv2 + ", " + sv2 + ", " + dst,
+      "v_max_i32 " + sv1 + ", " + sv1 + ", 0",
+      "v_min_i32 " + sv1 + ", " + sv1 + ", 31",
+      "v_lshlrev_b32 " + sv1 + ", 3, " + sv1,
+      "v_or_b32 " + sv1 + ", " + sv1 + ", " + sv2,
+      "v_lshlrev_b32 " + sv3 + ", 7, " + sv3,
+      "v_or_b32 " + sv1 + ", " + sv1 + ", " + sv3,
+      "v_lshlrev_b32 " + sv1 + ", 8, " + sv1,
+      "v_or_b32 " + dst + ", " + sv0 + ", " + sv1,
+    };
+  } else {
+    emu_lines = {
+      "v_bfe_u32 " + sv0 + ", " + src + ", 23, 8",
+      "v_bfe_u32 " + sv1 + ", " + src + ", 20, 3",
+      "v_lshrrev_b32 " + sv2 + ", 31, " + src,
+      "v_sub_nc_u32 " + sv0 + ", " + sv0 + ", 112",
+      "v_bfe_u32 " + sv3 + ", " + src + ", 19, 1",
+      "v_add_nc_u32 " + sv1 + ", " + sv1 + ", " + sv3,
+      "v_max_i32 " + sv0 + ", " + sv0 + ", 0",
+      "v_min_i32 " + sv0 + ", " + sv0 + ", 31",
+      "v_lshlrev_b32 " + sv0 + ", 3, " + sv0,
+      "v_or_b32 " + sv0 + ", " + sv0 + ", " + sv1,
+      "v_lshlrev_b32 " + sv2 + ", 7, " + sv2,
+      "v_or_b32 " + dst + ", " + sv0 + ", " + sv2,
+    };
+  }
+
+  std::string joined;
+  for (const auto &line : emu_lines) {
+    if (!joined.empty()) joined += "\n";
+    joined += line;
+  }
+  auto enc = AssembleSingleInst(joined, ctx.llvm_state);
+  if (enc.empty()) return false;
+
+  uint32_t tramp_size = static_cast<uint32_t>(enc.size() + 4);
+
+  NopSled *sled = FindNearestSled(ctx.nop_sleds, di.offset, tramp_size);
+  if (sled) {
+    uint64_t tp = sled->write_pos;
+    std::memcpy(ctx.text + tp, enc.data(), enc.size());
+    uint8_t br_back[4];
+    if (EncodeSBranch(tp + enc.size(), di.offset + di.size, br_back, true)) {
+      std::memcpy(ctx.text + tp + enc.size(), br_back, 4);
+      uint8_t br_fwd[4];
+      if (EncodeSBranch(di.offset, tp, br_fwd, true)) {
+        std::memcpy(ctx.text + di.offset, br_fwd, 4);
+        for (uint32_t i = 4; i < di.size; i += 4) {
+          uint8_t nop[4]; EncodeSNop(nop);
+          std::memcpy(ctx.text + di.offset + i, nop, 4);
+        }
+        sled->write_pos += tramp_size;
+        std::cerr << "hotswap: B0->A0 @0x" << std::hex << di.offset
+                  << ": " << di.mnemonic << " CLAMP=1 (E5M3) -> VALU emulation"
+                  << " via sled @0x" << tp << std::dec << "\n";
+        di.mnemonic = "<replaced>";
+        return true;
+      }
+    }
+  }
+  Trampoline t;
+  t.original_offset = di.offset;
+  t.original_size = di.size;
+  t.bytes.resize(tramp_size);
+  std::memcpy(t.bytes.data(), enc.data(), enc.size());
+  uint8_t placeholder[4] = {0};
+  std::memcpy(t.bytes.data() + enc.size(), placeholder, 4);
+  ctx.out_trampolines.push_back(std::move(t));
+  std::cerr << "hotswap: B0->A0 @0x" << std::hex << di.offset
+            << ": " << di.mnemonic << " CLAMP=1 (E5M3) deferred for ELF growth"
+            << std::dec << "\n";
+  di.mnemonic = "<replaced>";
+  return true;
+}
+
+static bool ApplyPatch9_Scale16Decomposition(PatchContext &ctx, size_t idx) {
+  auto &di = ctx.decoded[idx];
+
+  if (di.mnemonic == "v_wmma_scale16_f32_16x16x128_f8f6f4") {
+    std::string inst_str = PrintInst(di, ctx.llvm_state);
+    if (inst_str.empty()) return false;
+
+    size_t mnem_start = inst_str.find_first_not_of(" \t");
+    if (mnem_start == std::string::npos) mnem_start = 0;
+    size_t mnem_end = inst_str.find_first_of(" \t", mnem_start);
+    if (mnem_end == std::string::npos) mnem_end = inst_str.size();
+    std::string ops_and_mods = inst_str.substr(mnem_end);
+    size_t ops_start = ops_and_mods.find_first_not_of(" \t");
+    if (ops_start != std::string::npos) ops_and_mods = ops_and_mods.substr(ops_start);
+
+    std::string modifiers;
+    {
+      size_t mod_pos = ops_and_mods.find("matrix_");
+      if (mod_pos == std::string::npos) mod_pos = ops_and_mods.find("neg_");
+      if (mod_pos != std::string::npos) {
+        modifiers = " " + ops_and_mods.substr(mod_pos);
+        while (!modifiers.empty() && modifiers.back() == ' ') modifiers.pop_back();
+        ops_and_mods = ops_and_mods.substr(0, mod_pos);
+      }
+    }
+
+    std::vector<std::string> ops;
+    {
+      std::istringstream ss(ops_and_mods);
+      std::string tok;
+      while (std::getline(ss, tok, ',')) {
+        size_t s = tok.find_first_not_of(" \t");
+        size_t e = tok.find_last_not_of(" \t");
+        if (s != std::string::npos && e != std::string::npos)
+          ops.push_back(tok.substr(s, e - s + 1));
+      }
+    }
+
+    if (ops.size() < 6) return false;
+
+    std::string d_str = ops[0];
+    std::string a_str = ops[1];
+    std::string b_str = ops[2];
+    std::string sa_str = ops[4];
+    std::string sb_str = ops[5];
+
+    auto extractBase = [](const std::string &s) -> int {
+      size_t pos = s.find('[');
+      if (pos != std::string::npos) {
+        size_t colon = s.find(':', pos);
+        if (colon != std::string::npos) {
+          try { return std::stoi(s.substr(pos + 1, colon - pos - 1)); } catch(...) {}
+        }
+      }
+      size_t vpos = s.find('v');
+      if (vpos != std::string::npos) {
+        try { return std::stoi(s.substr(vpos + 1)); } catch(...) {}
+      }
+      return -1;
+    };
+
+    int sa_base = extractBase(sa_str);
+    int sb_base = extractBase(sb_str);
+
+    if (sa_base < 0 || sb_base < 0) return false;
+
+    std::string kernel_p9 = FindKernelAtOffset(ctx.elf_info, di.offset);
+    int kd_vgprs_p9 = GetKernelVgprCount(ctx.elf_data, ctx.elf_size, ctx.elf_info, kernel_p9);
+    ScratchAllocator alloc_p9(ctx.liveness.live_before[idx], kd_vgprs_p9);
+    int p9s0 = alloc_p9.Alloc(), p9s1 = alloc_p9.Alloc();
+    if (p9s0 < 0 || p9s1 < 0) {
+      std::cerr << "hotswap: B0->A0 @0x" << std::hex << di.offset
+                << ": scratch allocation failed, skipping patch" << std::dec << "\n";
+      return false;
+    }
+    std::string p9sv0 = "v" + std::to_string(p9s0);
+    std::string p9sv1 = "v" + std::to_string(p9s1);
+    for (int v : {p9s0, p9s1}) {
+      if (v < kd_vgprs_p9)
+        ctx.kernel_stats[kernel_p9].scratch_reused++;
+      else
+        ctx.kernel_stats[kernel_p9].scratch_above_kd++;
+    }
+    ctx.kernel_stats[kernel_p9].extra_vgprs =
+        std::max(ctx.kernel_stats[kernel_p9].extra_vgprs,
+                 alloc_p9.ExtraVgprsNeeded());
+    ctx.out_scratch_patches.push_back({di.offset, {p9s0, p9s1}});
+
+    std::string repack_sa = "v_perm_b32 " + p9sv0 + ", v" + std::to_string(sa_base) +
+        ", v" + std::to_string(sa_base) + ", 0x05010400";
+    std::string repack_sb = "v_perm_b32 " + p9sv1 + ", v" + std::to_string(sb_base) +
+        ", v" + std::to_string(sb_base) + ", 0x05010400";
+
+    std::string wmma_asm = "v_wmma_scale_f32_16x16x128_f8f6f4 "
+        + d_str + ", " + a_str + ", " + b_str + ", "
+        + d_str + ", " + p9sv0 + ", " + p9sv1 + modifiers;
+
+    std::string all_asm = repack_sa + "\n" + repack_sb + "\n" + wmma_asm;
+    auto enc = AssembleSingleInst(all_asm, ctx.llvm_state);
+
+    if (enc.empty()) return false;
+
+    uint32_t tramp_size = static_cast<uint32_t>(enc.size() + 4);
+
+    NopSled *sled = FindNearestSled(ctx.nop_sleds, di.offset, tramp_size);
+    if (sled) {
+      uint64_t tp = sled->write_pos;
+      std::memcpy(ctx.text + tp, enc.data(), enc.size());
+      uint8_t br_back[4];
+      if (EncodeSBranch(tp + enc.size(), di.offset + di.size, br_back, true)) {
+        std::memcpy(ctx.text + tp + enc.size(), br_back, 4);
+        uint8_t br_fwd[4];
+        if (EncodeSBranch(di.offset, tp, br_fwd, true)) {
+          std::memcpy(ctx.text + di.offset, br_fwd, 4);
+          for (uint32_t i = 4; i < di.size; i += 4) {
+            uint8_t nop[4]; EncodeSNop(nop);
+            std::memcpy(ctx.text + di.offset + i, nop, 4);
+          }
+          sled->write_pos += tramp_size;
+          std::cerr << "hotswap: B0->A0 @0x" << std::hex << di.offset
+                    << ": " << di.mnemonic
+                    << " -> block32 decomposition via sled @0x"
+                    << tp << std::dec << "\n";
+          di.mnemonic = "<replaced>";
+          return true;
+        }
+      }
+    }
+    Trampoline t;
+    t.original_offset = di.offset;
+    t.original_size = di.size;
+    t.bytes.resize(tramp_size);
+    std::memcpy(t.bytes.data(), enc.data(), enc.size());
+    uint8_t placeholder[4] = {0};
+    std::memcpy(t.bytes.data() + enc.size(), placeholder, 4);
+    ctx.out_trampolines.push_back(std::move(t));
+    std::cerr << "hotswap: B0->A0 @0x" << std::hex << di.offset
+              << ": " << di.mnemonic << " -> block32 deferred for ELF growth"
+              << std::dec << "\n";
+    di.mnemonic = "<replaced>";
+    return true;
+  }
+
+  if (di.mnemonic == "v_wmma_ld_scale16_paired_b64") {
+    auto [dst_base, dst_count] = GetOperandVgprRange(di.inst, 0, *ctx.llvm_state.MRI);
+    auto [src_base, src_count] = GetOperandVgprRange(di.inst, 1, *ctx.llvm_state.MRI);
+
+    if (dst_base < 0 || src_base < 0) return false;
+
+    std::string load_asm = "v_wmma_ld_scale_paired_b32 v"
+        + std::to_string(dst_base) + ", v" + std::to_string(src_base);
+
+    auto enc = AssembleSingleInst(load_asm, ctx.llvm_state);
+
+    if (enc.empty()) return false;
+    if (enc.size() > di.size) return false;
+
+    std::memcpy(ctx.text + di.offset, enc.data(), enc.size());
+    for (uint32_t i = static_cast<uint32_t>(enc.size()); i < di.size;
+         i += 4) {
+      uint8_t nop[4]; EncodeSNop(nop);
+      std::memcpy(ctx.text + di.offset + i, nop, 4);
+    }
+    std::cerr << "hotswap: B0->A0 @0x" << std::hex << di.offset
+              << ": v_wmma_ld_scale16 -> block32 v_wmma_ld_scale_paired_b32"
+              << std::dec << "\n";
+    di.mnemonic = "<replaced>";
+    return true;
+  }
+
+  return false;
+}
+
 // ── ApplyGfx1250B0toA0Rules ─────────────────────────────────────────────────
 
 static uint32_t
@@ -324,684 +1034,27 @@ ApplyGfx1250B0toA0Rules(std::vector<InternalDecodedInst> &decoded,
   LivenessInfo liveness = ComputeLiveness(decoded, cfg,
                                           *llvm_state.MCII, *llvm_state.MRI);
 
-  struct KernelPatchStats {
-    int extra_vgprs = 0;
-    int scratch_reused = 0;
-    int scratch_above_kd = 0;
-  };
   std::map<std::string, KernelPatchStats> kernel_stats;
+
+  PatchContext ctx{decoded, text, text_size, llvm_state, out_trampolines,
+                   nop_sleds, elf_data, elf_size, elf_info, liveness,
+                   kernel_stats, out_scratch_patches};
 
   for (size_t idx = 0; idx < decoded.size(); ++idx) {
     auto &di = decoded[idx];
     if (di.mnemonic == "<unknown>" || di.mnemonic == "<replaced>") continue;
 
-    // Patch 1: CLUSTER_LOAD → GLOBAL_LOAD
-    for (size_t swap_i = 0; swap_i < kClusterLoadSwapsSize; ++swap_i) {
-      const auto &swap = kClusterLoadSwaps[swap_i];
-      if (di.mnemonic == swap.first) {
-        RewriteRule rule;
-        rule.replace_mnemonic = swap.second;
-        rule.preserve_operands = true;
-        if (ApplyMnemonicSwap(rule, di, text, llvm_state)) {
-          di.mnemonic = swap.second;
-          ++patched;
-        }
-        break;
-      }
-    }
-
-    // Patch 2: DS 2-addr stride64 → two single-addr ops via trampoline
-    for (size_t swap_i = 0; swap_i < kDs2AddrSwapsSize; ++swap_i) {
-      const auto &swap = kDs2AddrSwaps[swap_i];
-      if (di.mnemonic == swap.first) {
-        if (di.mnemonic.find("stride64") == std::string::npos) break;
-        std::string inst_str = PrintInst(di, llvm_state);
-        if (inst_str.empty()) break;
-        std::vector<std::string> asm_lines =
-            ExpandDs2AddrAsm(inst_str, swap.first, swap.second);
-        if (asm_lines.size() != 2) break;
-        auto bytes0 = AssembleSingleInst(asm_lines[0], llvm_state);
-        auto bytes1 = AssembleSingleInst(asm_lines[1], llvm_state);
-        if (bytes0.empty() || bytes1.empty()) break;
-
-        uint64_t tramp_offset = text_size;
-        for (auto &t : out_trampolines)
-          tramp_offset += t.bytes.size();
-
-        Trampoline tramp;
-        tramp.original_offset = di.offset;
-        tramp.original_size = di.size;
-        tramp.bytes.insert(tramp.bytes.end(), bytes0.begin(), bytes0.end());
-        tramp.bytes.insert(tramp.bytes.end(), bytes1.begin(), bytes1.end());
-
-        uint8_t br_back[4];
-        if (!EncodeSBranch(tramp_offset + tramp.bytes.size(),
-                           di.offset + di.size, br_back, true))
-          break;
-        tramp.bytes.insert(tramp.bytes.end(), br_back, br_back + 4);
-        out_trampolines.push_back(std::move(tramp));
-        di.mnemonic = "<replaced>";
-        ++patched;
-        break;
-      }
-    }
-
-    // Patch 3: s_clause → s_nop
-    if (di.mnemonic == "s_clause") {
-      RewriteRule rule;
-      rule.replace_bytes = {0x00, 0x00, 0x80, 0xBF};
-      if (ApplyByteReplace(rule, di.offset, di.size, text, text_size)) {
-        di.mnemonic = "s_nop";
-        ++patched;
-      }
-    }
-
-    // Patch 4: TENSOR_LOAD_TO_LDS multicast stripping
-    if (di.mnemonic == "tensor_load_to_lds") {
-      if (idx > 0 && decoded[idx - 1].mnemonic == "s_pack_hh_b32_b16")
-        continue;
-      std::string inst_str = PrintInst(di, llvm_state);
-      if (inst_str.empty()) continue;
-
-      size_t first_comma = inst_str.find(',');
-      if (first_comma == std::string::npos) continue;
-      std::string after = inst_str.substr(first_comma + 1);
-
-      size_t s_pos = after.find("s[");
-      if (s_pos == std::string::npos) {
-        s_pos = after.find_first_of("s");
-        if (s_pos == std::string::npos) continue;
-      }
-
-      std::string base_sreg;
-      size_t bracket_pos = after.find('[', s_pos);
-      if (bracket_pos != std::string::npos && bracket_pos == s_pos + 1) {
-        size_t colon = after.find(':', bracket_pos);
-        if (colon != std::string::npos) {
-          std::string num =
-              after.substr(bracket_pos + 1, colon - bracket_pos - 1);
-          base_sreg = "s" + num;
-        }
-      } else {
-        size_t num_start = s_pos + 1;
-        size_t num_end = num_start;
-        while (num_end < after.size() && after[num_end] >= '0' &&
-               after[num_end] <= '9')
-          num_end++;
-        if (num_end > num_start)
-          base_sreg = "s" + after.substr(num_start, num_end - num_start);
-      }
-      if (base_sreg.empty()) continue;
-
-      std::string pack_asm =
-          "s_pack_hh_b32_b16 " + base_sreg + ", 0, " + base_sreg;
-      auto pack_bytes = AssembleSingleInst(pack_asm, llvm_state);
-      if (pack_bytes.empty() || pack_bytes.size() != 4) continue;
-
-      NopSled *sled = FindNearestSled(nop_sleds, di.offset, 20);
-      if (sled) {
-        uint64_t tp = sled->write_pos;
-        std::memcpy(text + tp, pack_bytes.data(), 4);
-        std::memcpy(text + tp + 4, text + di.offset, di.size);
-        uint8_t br_back[4];
-        if (!EncodeSBranch(tp + 4 + di.size, di.offset + di.size, br_back,
-                           true))
-          continue;
-        std::memcpy(text + tp + 4 + di.size, br_back, 4);
-        uint8_t br_fwd[4];
-        if (!EncodeSBranch(di.offset, tp, br_fwd, true)) continue;
-        std::memcpy(text + di.offset, br_fwd, 4);
-        for (uint32_t i = 4; i < di.size; i += 4) {
-          uint8_t nop[4];
-          EncodeSNop(nop);
-          std::memcpy(text + di.offset + i, nop, 4);
-        }
-        sled->write_pos += 4 + di.size + 4;
-      } else {
-        Trampoline t;
-        t.original_offset = di.offset;
-        t.original_size = di.size;
-        t.bytes.resize(4 + di.size + 4);
-        std::memcpy(t.bytes.data(), pack_bytes.data(), 4);
-        std::memcpy(t.bytes.data() + 4, text + di.offset, di.size);
-        uint8_t placeholder[4] = {0};
-        std::memcpy(t.bytes.data() + 4 + di.size, placeholder, 4);
-        out_trampolines.push_back(std::move(t));
-      }
-      di.mnemonic = "<replaced>";
-      ++patched;
-    }
-
-    // Patch 6: 16x16x128 FP8/BF8 WMMA → Two 16x16x64 WMMAs
-    if (di.mnemonic.find("16x16x128") != std::string::npos &&
-        (di.mnemonic.find("_fp8") != std::string::npos ||
-         di.mnemonic.find("_bf8") != std::string::npos) &&
-        di.mnemonic.find("f8f6f4") == std::string::npos) {
-      auto [d_base, d_count] =
-          GetOperandVgprRange(di.inst, 0, *llvm_state.MRI);
-      auto [a_base, a_count] =
-          GetOperandVgprRange(di.inst, 1, *llvm_state.MRI);
-      auto [b_base, b_count] =
-          GetOperandVgprRange(di.inst, 2, *llvm_state.MRI);
-      if (d_base >= 0 && a_base >= 0 && b_base >= 0 && a_count >= 16 &&
-          b_count >= 16) {
-        std::string mnem64 = di.mnemonic;
-        size_t pos128 = mnem64.find("16x16x128");
-        if (pos128 != std::string::npos)
-          mnem64.replace(pos128, 9, "16x16x64");
-        std::string asm1 =
-            mnem64 + " " + FormatVgprRange(d_base, d_count) + ", " +
-            FormatVgprRange(a_base, 8) + ", " + FormatVgprRange(b_base, 8) +
-            ", " + FormatVgprRange(d_base, d_count);
-        std::string asm2 =
-            mnem64 + " " + FormatVgprRange(d_base, d_count) + ", " +
-            FormatVgprRange(a_base + 8, 8) + ", " +
-            FormatVgprRange(b_base + 8, 8) + ", " +
-            FormatVgprRange(d_base, d_count);
-        auto enc1 = AssembleSingleInst(asm1, llvm_state);
-        auto enc2 = AssembleSingleInst(asm2, llvm_state);
-        if (!enc1.empty() && !enc2.empty()) {
-          uint32_t tramp_size = enc1.size() + enc2.size() + 4;
-
-          NopSled *sled = FindNearestSled(nop_sleds, di.offset, tramp_size);
-          if (sled) {
-            uint64_t tp = sled->write_pos;
-            std::memcpy(text + tp, enc1.data(), enc1.size());
-            std::memcpy(text + tp + enc1.size(), enc2.data(), enc2.size());
-            uint8_t br_back[4];
-            if (EncodeSBranch(tp + enc1.size() + enc2.size(),
-                              di.offset + di.size, br_back, true)) {
-              std::memcpy(text + tp + enc1.size() + enc2.size(), br_back, 4);
-              uint8_t br_fwd[4];
-              if (EncodeSBranch(di.offset, tp, br_fwd, true)) {
-                std::memcpy(text + di.offset, br_fwd, 4);
-                for (uint32_t i = 4; i < di.size; i += 4) {
-                  uint8_t nop[4]; EncodeSNop(nop);
-                  std::memcpy(text + di.offset + i, nop, 4);
-                }
-                sled->write_pos += tramp_size;
-                std::cerr << "hotswap: B0->A0 @0x" << std::hex << di.offset
-                          << ": " << di.mnemonic << " -> 2x " << mnem64
-                          << " via sled @0x" << tp << std::dec << "\n";
-                di.mnemonic = "<replaced>";
-                ++patched;
-                continue;
-              }
-            }
-          }
-          Trampoline t;
-          t.original_offset = di.offset;
-          t.original_size = di.size;
-          t.bytes.resize(tramp_size);
-          std::memcpy(t.bytes.data(), enc1.data(), enc1.size());
-          std::memcpy(t.bytes.data() + enc1.size(), enc2.data(), enc2.size());
-          uint8_t placeholder[4] = {0};
-          std::memcpy(t.bytes.data() + enc1.size() + enc2.size(), placeholder,
-                      4);
-          out_trampolines.push_back(std::move(t));
-          std::cerr << "hotswap: B0->A0 @0x" << std::hex << di.offset
-                    << ": " << di.mnemonic << " -> 2x " << mnem64
-                    << " deferred for ELF growth" << std::dec << "\n";
-          di.mnemonic = "<replaced>";
-          ++patched;
-        }
-      }
-    }
-
-    // Patch 7: 32x16x128 F4 WMMA → Two 16x16x128 F8F6F4 WMMAs
-    if (di.mnemonic.find("32x16x128_f4") != std::string::npos &&
-        di.mnemonic.find("v_wmma") == 0) {
-      bool is_scaled = (di.mnemonic.find("_scale_") != std::string::npos ||
-                        di.mnemonic.find("_scale16_") != std::string::npos);
-
-      if (!is_scaled) {
-        auto [d_base, d_count] = GetOperandVgprRange(di.inst, 0, *llvm_state.MRI);
-        auto [a_base, a_count] = GetOperandVgprRange(di.inst, 1, *llvm_state.MRI);
-        auto [b_base, b_count] = GetOperandVgprRange(di.inst, 2, *llvm_state.MRI);
-
-        if (d_base >= 0 && a_base >= 0 && b_base >= 0 && d_count >= 16) {
-          std::string asm1 = "v_wmma_f32_16x16x128_f8f6f4 "
-              + FormatVgprRange(d_base, 8) + ", "
-              + FormatVgprRange(a_base, 8) + ", "
-              + FormatVgprRange(b_base, b_count) + ", "
-              + FormatVgprRange(d_base, 8)
-              + " matrix_a_fmt:MATRIX_FMT_FP4 matrix_b_fmt:MATRIX_FMT_FP4";
-          std::string asm2 = "v_wmma_f32_16x16x128_f8f6f4 "
-              + FormatVgprRange(d_base + 8, 8) + ", "
-              + FormatVgprRange(a_base + 8, 8) + ", "
-              + FormatVgprRange(b_base, b_count) + ", "
-              + FormatVgprRange(d_base + 8, 8)
-              + " matrix_a_fmt:MATRIX_FMT_FP4 matrix_b_fmt:MATRIX_FMT_FP4";
-
-          auto enc1 = AssembleSingleInst(asm1, llvm_state);
-          auto enc2 = AssembleSingleInst(asm2, llvm_state);
-
-          if (!enc1.empty() && !enc2.empty()) {
-            uint32_t tramp_size = enc1.size() + enc2.size() + 4;
-
-            NopSled *sled = FindNearestSled(nop_sleds, di.offset, tramp_size);
-            if (sled) {
-              uint64_t tp = sled->write_pos;
-              std::memcpy(text + tp, enc1.data(), enc1.size());
-              std::memcpy(text + tp + enc1.size(), enc2.data(), enc2.size());
-              uint8_t br_back[4];
-              if (EncodeSBranch(tp + enc1.size() + enc2.size(),
-                                di.offset + di.size, br_back, true)) {
-                std::memcpy(text + tp + enc1.size() + enc2.size(), br_back, 4);
-                uint8_t br_fwd[4];
-                if (EncodeSBranch(di.offset, tp, br_fwd, true)) {
-                  std::memcpy(text + di.offset, br_fwd, 4);
-                  for (uint32_t i = 4; i < di.size; i += 4) {
-                    uint8_t nop[4]; EncodeSNop(nop);
-                    std::memcpy(text + di.offset + i, nop, 4);
-                  }
-                  sled->write_pos += tramp_size;
-                  std::cerr << "hotswap: B0->A0 @0x" << std::hex << di.offset
-                            << ": " << di.mnemonic
-                            << " -> 2x v_wmma_f32_16x16x128_f8f6f4 via sled @0x"
-                            << tp << std::dec << "\n";
-                  di.mnemonic = "<replaced>";
-                  ++patched;
-                  continue;
-                }
-              }
-            }
-            Trampoline t;
-            t.original_offset = di.offset;
-            t.original_size = di.size;
-            t.bytes.resize(tramp_size);
-            std::memcpy(t.bytes.data(), enc1.data(), enc1.size());
-            std::memcpy(t.bytes.data() + enc1.size(), enc2.data(), enc2.size());
-            uint8_t placeholder[4] = {0};
-            std::memcpy(t.bytes.data() + enc1.size() + enc2.size(), placeholder, 4);
-            out_trampolines.push_back(std::move(t));
-            std::cerr << "hotswap: B0->A0 @0x" << std::hex << di.offset
-                      << ": " << di.mnemonic << " deferred for ELF growth"
-                      << std::dec << "\n";
-            di.mnemonic = "<replaced>";
-            ++patched;
-          }
-        }
-      }
-    }
-
-    // Patch 8: E5M3 CVT (CLAMP=1) → VALU Emulation
-    if ((di.mnemonic.find("v_cvt_f32_fp8") == 0 ||
-         di.mnemonic.find("v_cvt_pk_fp8_f32") == 0 ||
-         di.mnemonic.find("v_cvt_sr_fp8_f32") == 0) && di.size >= 8) {
-      uint32_t dw0;
-      std::memcpy(&dw0, text + di.offset, 4);
-      bool has_clamp = (dw0 >> 15) & 1;
-
-      if (has_clamp) {
-        auto [dst_base, dst_count] = GetOperandVgprRange(di.inst, 0, *llvm_state.MRI);
-        auto [src_base, src_count] = GetOperandVgprRange(di.inst, 1, *llvm_state.MRI);
-
-        if (dst_base >= 0 && src_base >= 0) {
-          std::string kernel_p8 = FindKernelAtOffset(elf_info, di.offset);
-          int kd_vgprs_p8 = GetKernelVgprCount(elf_data, elf_size, elf_info, kernel_p8);
-          ScratchAllocator alloc_p8(liveness.live_before[idx], kd_vgprs_p8);
-          int s0 = alloc_p8.Alloc(), s1 = alloc_p8.Alloc();
-          int s2 = alloc_p8.Alloc(), s3 = alloc_p8.Alloc();
-          if (s0 < 0 || s1 < 0 || s2 < 0 || s3 < 0) {
-            std::cerr << "hotswap: B0->A0 @0x" << std::hex << di.offset
-                      << ": scratch allocation failed, skipping patch" << std::dec << "\n";
-            continue;
-          }
-          std::string sv0 = "v" + std::to_string(s0);
-          std::string sv1 = "v" + std::to_string(s1);
-          std::string sv2 = "v" + std::to_string(s2);
-          std::string sv3 = "v" + std::to_string(s3);
-          for (int v : {s0, s1, s2, s3}) {
-            if (v < kd_vgprs_p8)
-              kernel_stats[kernel_p8].scratch_reused++;
-            else
-              kernel_stats[kernel_p8].scratch_above_kd++;
-          }
-          kernel_stats[kernel_p8].extra_vgprs =
-              std::max(kernel_stats[kernel_p8].extra_vgprs,
-                       alloc_p8.ExtraVgprsNeeded());
-          out_scratch_patches.push_back({di.offset, {s0, s1, s2, s3}});
-
-          std::string dst = FormatVgprRange(dst_base, dst_count);
-          std::string src = "v" + std::to_string(src_base);
-          std::vector<std::string> emu_lines;
-
-          if (di.mnemonic == "v_cvt_f32_fp8") {
-            int opsel = (dw0 >> 11) & 0x3;
-            int byte_offset = opsel * 8;
-            emu_lines = {
-              "v_bfe_u32 " + sv0 + ", " + src + ", " + std::to_string(byte_offset) + ", 8",
-              "v_bfe_u32 " + sv1 + ", " + sv0 + ", 0, 3",
-              "v_bfe_u32 " + sv2 + ", " + sv0 + ", 3, 5",
-              "v_bfe_u32 " + sv3 + ", " + sv0 + ", 7, 1",
-              "v_lshlrev_b32 " + sv1 + ", 20, " + sv1,
-              "v_add_nc_u32 " + sv2 + ", 112, " + sv2,
-              "v_lshlrev_b32 " + sv2 + ", 23, " + sv2,
-              "v_lshlrev_b32 " + sv3 + ", 31, " + sv3,
-              "v_or3_b32 " + dst + ", " + sv1 + ", " + sv2 + ", " + sv3,
-            };
-          } else if (di.mnemonic == "v_cvt_pk_fp8_f32") {
-            auto [src2_base, src2_count] = GetOperandVgprRange(di.inst, 2, *llvm_state.MRI);
-            std::string src2 = (src2_base >= 0) ? ("v" + std::to_string(src2_base)) : src;
-            emu_lines = {
-              "v_bfe_u32 " + sv0 + ", " + src + ", 23, 8",
-              "v_bfe_u32 " + sv1 + ", " + src + ", 20, 3",
-              "v_lshrrev_b32 " + sv2 + ", 31, " + src,
-              "v_sub_nc_u32 " + sv0 + ", " + sv0 + ", 112",
-              "v_bfe_u32 " + sv3 + ", " + src + ", 19, 1",
-              "v_add_nc_u32 " + sv1 + ", " + sv1 + ", " + sv3,
-              "v_max_i32 " + sv0 + ", " + sv0 + ", 0",
-              "v_min_i32 " + sv0 + ", " + sv0 + ", 31",
-              "v_lshlrev_b32 " + sv0 + ", 3, " + sv0,
-              "v_or_b32 " + sv0 + ", " + sv0 + ", " + sv1,
-              "v_lshlrev_b32 " + sv2 + ", 7, " + sv2,
-              "v_or_b32 " + sv0 + ", " + sv0 + ", " + sv2,
-              "v_bfe_u32 " + sv1 + ", " + src2 + ", 23, 8",
-              "v_bfe_u32 " + sv2 + ", " + src2 + ", 20, 3",
-              "v_lshrrev_b32 " + sv3 + ", 31, " + src2,
-              "v_sub_nc_u32 " + sv1 + ", " + sv1 + ", 112",
-              "v_bfe_u32 " + dst + ", " + src2 + ", 19, 1",
-              "v_add_nc_u32 " + sv2 + ", " + sv2 + ", " + dst,
-              "v_max_i32 " + sv1 + ", " + sv1 + ", 0",
-              "v_min_i32 " + sv1 + ", " + sv1 + ", 31",
-              "v_lshlrev_b32 " + sv1 + ", 3, " + sv1,
-              "v_or_b32 " + sv1 + ", " + sv1 + ", " + sv2,
-              "v_lshlrev_b32 " + sv3 + ", 7, " + sv3,
-              "v_or_b32 " + sv1 + ", " + sv1 + ", " + sv3,
-              "v_lshlrev_b32 " + sv1 + ", 8, " + sv1,
-              "v_or_b32 " + dst + ", " + sv0 + ", " + sv1,
-            };
-          } else {
-            emu_lines = {
-              "v_bfe_u32 " + sv0 + ", " + src + ", 23, 8",
-              "v_bfe_u32 " + sv1 + ", " + src + ", 20, 3",
-              "v_lshrrev_b32 " + sv2 + ", 31, " + src,
-              "v_sub_nc_u32 " + sv0 + ", " + sv0 + ", 112",
-              "v_bfe_u32 " + sv3 + ", " + src + ", 19, 1",
-              "v_add_nc_u32 " + sv1 + ", " + sv1 + ", " + sv3,
-              "v_max_i32 " + sv0 + ", " + sv0 + ", 0",
-              "v_min_i32 " + sv0 + ", " + sv0 + ", 31",
-              "v_lshlrev_b32 " + sv0 + ", 3, " + sv0,
-              "v_or_b32 " + sv0 + ", " + sv0 + ", " + sv1,
-              "v_lshlrev_b32 " + sv2 + ", 7, " + sv2,
-              "v_or_b32 " + dst + ", " + sv0 + ", " + sv2,
-            };
-          }
-
-          std::string joined;
-          for (const auto &line : emu_lines) {
-            if (!joined.empty()) joined += "\n";
-            joined += line;
-          }
-          auto enc = AssembleSingleInst(joined, llvm_state);
-
-          if (!enc.empty()) {
-            uint32_t tramp_size = enc.size() + 4;
-
-            NopSled *sled = FindNearestSled(nop_sleds, di.offset, tramp_size);
-            if (sled) {
-              uint64_t tp = sled->write_pos;
-              std::memcpy(text + tp, enc.data(), enc.size());
-              uint8_t br_back[4];
-              if (EncodeSBranch(tp + enc.size(), di.offset + di.size, br_back, true)) {
-                std::memcpy(text + tp + enc.size(), br_back, 4);
-                uint8_t br_fwd[4];
-                if (EncodeSBranch(di.offset, tp, br_fwd, true)) {
-                  std::memcpy(text + di.offset, br_fwd, 4);
-                  for (uint32_t i = 4; i < di.size; i += 4) {
-                    uint8_t nop[4]; EncodeSNop(nop);
-                    std::memcpy(text + di.offset + i, nop, 4);
-                  }
-                  sled->write_pos += tramp_size;
-                  std::cerr << "hotswap: B0->A0 @0x" << std::hex << di.offset
-                            << ": " << di.mnemonic << " CLAMP=1 (E5M3) -> VALU emulation"
-                            << " via sled @0x" << tp << std::dec << "\n";
-                  di.mnemonic = "<replaced>";
-                  ++patched;
-                  continue;
-                }
-              }
-            }
-            Trampoline t;
-            t.original_offset = di.offset;
-            t.original_size = di.size;
-            t.bytes.resize(tramp_size);
-            std::memcpy(t.bytes.data(), enc.data(), enc.size());
-            uint8_t placeholder[4] = {0};
-            std::memcpy(t.bytes.data() + enc.size(), placeholder, 4);
-            out_trampolines.push_back(std::move(t));
-            std::cerr << "hotswap: B0->A0 @0x" << std::hex << di.offset
-                      << ": " << di.mnemonic << " CLAMP=1 (E5M3) deferred for ELF growth"
-                      << std::dec << "\n";
-            di.mnemonic = "<replaced>";
-            ++patched;
-          }
-        }
-      }
-    }
-
-    // Patch 9: Block16 Scale → Block32 Decomposition
-    if (di.mnemonic == "v_wmma_scale16_f32_16x16x128_f8f6f4") {
-      std::string inst_str = PrintInst(di, llvm_state);
-      if (!inst_str.empty()) {
-        size_t mnem_start = inst_str.find_first_not_of(" \t");
-        if (mnem_start == std::string::npos) mnem_start = 0;
-        size_t mnem_end = inst_str.find_first_of(" \t", mnem_start);
-        if (mnem_end == std::string::npos) mnem_end = inst_str.size();
-        std::string ops_and_mods = inst_str.substr(mnem_end);
-        size_t ops_start = ops_and_mods.find_first_not_of(" \t");
-        if (ops_start != std::string::npos) ops_and_mods = ops_and_mods.substr(ops_start);
-
-        std::string modifiers;
-        {
-          size_t mod_pos = ops_and_mods.find("matrix_");
-          if (mod_pos == std::string::npos) mod_pos = ops_and_mods.find("neg_");
-          if (mod_pos != std::string::npos) {
-            modifiers = " " + ops_and_mods.substr(mod_pos);
-            while (!modifiers.empty() && modifiers.back() == ' ') modifiers.pop_back();
-            ops_and_mods = ops_and_mods.substr(0, mod_pos);
-          }
-        }
-
-        std::vector<std::string> ops;
-        {
-          std::istringstream ss(ops_and_mods);
-          std::string tok;
-          while (std::getline(ss, tok, ',')) {
-            size_t s = tok.find_first_not_of(" \t");
-            size_t e = tok.find_last_not_of(" \t");
-            if (s != std::string::npos && e != std::string::npos)
-              ops.push_back(tok.substr(s, e - s + 1));
-          }
-        }
-
-        if (ops.size() >= 6) {
-          std::string d_str = ops[0];
-          std::string a_str = ops[1];
-          std::string b_str = ops[2];
-          std::string sa_str = ops[4];
-          std::string sb_str = ops[5];
-
-          auto extractBase = [](const std::string &s) -> int {
-            size_t pos = s.find('[');
-            if (pos != std::string::npos) {
-              size_t colon = s.find(':', pos);
-              if (colon != std::string::npos) {
-                try { return std::stoi(s.substr(pos + 1, colon - pos - 1)); } catch(...) {}
-              }
-            }
-            size_t vpos = s.find('v');
-            if (vpos != std::string::npos) {
-              try { return std::stoi(s.substr(vpos + 1)); } catch(...) {}
-            }
-            return -1;
-          };
-
-          int sa_base = extractBase(sa_str);
-          int sb_base = extractBase(sb_str);
-
-          if (sa_base >= 0 && sb_base >= 0) {
-            std::string kernel_p9 = FindKernelAtOffset(elf_info, di.offset);
-            int kd_vgprs_p9 = GetKernelVgprCount(elf_data, elf_size, elf_info, kernel_p9);
-            ScratchAllocator alloc_p9(liveness.live_before[idx], kd_vgprs_p9);
-            int p9s0 = alloc_p9.Alloc(), p9s1 = alloc_p9.Alloc();
-            if (p9s0 < 0 || p9s1 < 0) {
-              std::cerr << "hotswap: B0->A0 @0x" << std::hex << di.offset
-                        << ": scratch allocation failed, skipping patch" << std::dec << "\n";
-              continue;
-            }
-            std::string p9sv0 = "v" + std::to_string(p9s0);
-            std::string p9sv1 = "v" + std::to_string(p9s1);
-            for (int v : {p9s0, p9s1}) {
-              if (v < kd_vgprs_p9)
-                kernel_stats[kernel_p9].scratch_reused++;
-              else
-                kernel_stats[kernel_p9].scratch_above_kd++;
-            }
-            kernel_stats[kernel_p9].extra_vgprs =
-                std::max(kernel_stats[kernel_p9].extra_vgprs,
-                         alloc_p9.ExtraVgprsNeeded());
-            out_scratch_patches.push_back({di.offset, {p9s0, p9s1}});
-
-            std::string repack_sa = "v_perm_b32 " + p9sv0 + ", v" + std::to_string(sa_base) +
-                ", v" + std::to_string(sa_base) + ", 0x05010400";
-            std::string repack_sb = "v_perm_b32 " + p9sv1 + ", v" + std::to_string(sb_base) +
-                ", v" + std::to_string(sb_base) + ", 0x05010400";
-
-            std::string wmma_asm = "v_wmma_scale_f32_16x16x128_f8f6f4 "
-                + d_str + ", " + a_str + ", " + b_str + ", "
-                + d_str + ", " + p9sv0 + ", " + p9sv1 + modifiers;
-
-            std::string all_asm = repack_sa + "\n" + repack_sb + "\n" + wmma_asm;
-            auto enc = AssembleSingleInst(all_asm, llvm_state);
-
-            if (!enc.empty()) {
-              uint32_t tramp_size = enc.size() + 4;
-
-              NopSled *sled = FindNearestSled(nop_sleds, di.offset, tramp_size);
-              if (sled) {
-                uint64_t tp = sled->write_pos;
-                std::memcpy(text + tp, enc.data(), enc.size());
-                uint8_t br_back[4];
-                if (EncodeSBranch(tp + enc.size(), di.offset + di.size, br_back, true)) {
-                  std::memcpy(text + tp + enc.size(), br_back, 4);
-                  uint8_t br_fwd[4];
-                  if (EncodeSBranch(di.offset, tp, br_fwd, true)) {
-                    std::memcpy(text + di.offset, br_fwd, 4);
-                    for (uint32_t i = 4; i < di.size; i += 4) {
-                      uint8_t nop[4]; EncodeSNop(nop);
-                      std::memcpy(text + di.offset + i, nop, 4);
-                    }
-                    sled->write_pos += tramp_size;
-                    std::cerr << "hotswap: B0->A0 @0x" << std::hex << di.offset
-                              << ": " << di.mnemonic
-                              << " -> block32 decomposition via sled @0x"
-                              << tp << std::dec << "\n";
-                    di.mnemonic = "<replaced>";
-                    ++patched;
-                    continue;
-                  }
-                }
-              }
-              Trampoline t;
-              t.original_offset = di.offset;
-              t.original_size = di.size;
-              t.bytes.resize(tramp_size);
-              std::memcpy(t.bytes.data(), enc.data(), enc.size());
-              uint8_t placeholder[4] = {0};
-              std::memcpy(t.bytes.data() + enc.size(), placeholder, 4);
-              out_trampolines.push_back(std::move(t));
-              std::cerr << "hotswap: B0->A0 @0x" << std::hex << di.offset
-                        << ": " << di.mnemonic << " -> block32 deferred for ELF growth"
-                        << std::dec << "\n";
-              di.mnemonic = "<replaced>";
-              ++patched;
-            }
-          }
-        }
-      }
-    }
-
-    if (di.mnemonic == "v_wmma_ld_scale16_paired_b64") {
-      auto [dst_base, dst_count] = GetOperandVgprRange(di.inst, 0, *llvm_state.MRI);
-      auto [src_base, src_count] = GetOperandVgprRange(di.inst, 1, *llvm_state.MRI);
-
-      if (dst_base >= 0 && src_base >= 0) {
-        std::string load_asm = "v_wmma_ld_scale_paired_b32 v"
-            + std::to_string(dst_base) + ", v" + std::to_string(src_base);
-
-        auto enc = AssembleSingleInst(load_asm, llvm_state);
-
-        if (!enc.empty()) {
-          if (enc.size() <= di.size) {
-            std::memcpy(text + di.offset, enc.data(), enc.size());
-            for (uint32_t i = enc.size(); i < di.size; i += 4) {
-              uint8_t nop[4]; EncodeSNop(nop);
-              std::memcpy(text + di.offset + i, nop, 4);
-            }
-            std::cerr << "hotswap: B0->A0 @0x" << std::hex << di.offset
-                      << ": v_wmma_ld_scale16 -> block32 v_wmma_ld_scale_paired_b32"
-                      << std::dec << "\n";
-            di.mnemonic = "<replaced>";
-            ++patched;
-          }
-        }
-      }
-    }
+    if (ApplyPatch1_ClusterLoad(ctx, idx)) { ++patched; continue; }
+    if (ApplyPatch2_Ds2Addr(ctx, idx)) { ++patched; continue; }
+    if (ApplyPatch3_SClause(ctx, idx)) { ++patched; continue; }
+    if (ApplyPatch4_TensorLoadToLds(ctx, idx)) { ++patched; continue; }
+    if (ApplyPatch6_Fp8WmmaSplit(ctx, idx)) { ++patched; continue; }
+    if (ApplyPatch7_F4WmmaSplit(ctx, idx)) { ++patched; continue; }
+    if (ApplyPatch8_E5M3CvtEmulation(ctx, idx)) { ++patched; continue; }
+    if (ApplyPatch9_Scale16Decomposition(ctx, idx)) { ++patched; continue; }
   }
 
-  // Patch 5: WMMA co-execution hazard V_NOP insertion
-  auto hazards = ValidateWmmaCoexecHazards(decoded, text, llvm_state);
-  if (!hazards.empty()) {
-    auto vnop_bytes = AssembleSingleInst("v_nop", llvm_state);
-    if (!vnop_bytes.empty() && vnop_bytes.size() == 4) {
-      for (auto &h : hazards) {
-        const auto &valu = decoded[h.valu_idx];
-        uint32_t valu_size = valu.size;
-        uint32_t nop_bytes_count = h.deficit * 4;
-        uint32_t tramp_size = nop_bytes_count + valu_size + 4;
-
-        NopSled *sled = FindNearestSled(nop_sleds, valu.offset, tramp_size);
-        if (sled) {
-          uint64_t tp = sled->write_pos;
-          for (int n = 0; n < h.deficit; ++n)
-            std::memcpy(text + tp + n * 4, vnop_bytes.data(), 4);
-          std::memcpy(text + tp + nop_bytes_count, text + valu.offset,
-                      valu_size);
-          uint8_t br_back[4];
-          if (!EncodeSBranch(tp + nop_bytes_count + valu_size,
-                             valu.offset + valu_size, br_back, true))
-            continue;
-          std::memcpy(text + tp + nop_bytes_count + valu_size, br_back, 4);
-          uint8_t br_fwd[4];
-          if (!EncodeSBranch(valu.offset, tp, br_fwd, true)) continue;
-          std::memcpy(text + valu.offset, br_fwd, 4);
-          for (uint32_t i = 4; i < valu_size; i += 4) {
-            uint8_t nop[4];
-            EncodeSNop(nop);
-            std::memcpy(text + valu.offset + i, nop, 4);
-          }
-          sled->write_pos += tramp_size;
-          ++patched;
-        } else {
-          Trampoline t;
-          t.original_offset = valu.offset;
-          t.original_size = valu_size;
-          t.bytes.resize(tramp_size);
-          for (int n = 0; n < h.deficit; ++n)
-            std::memcpy(t.bytes.data() + n * 4, vnop_bytes.data(), 4);
-          std::memcpy(t.bytes.data() + nop_bytes_count,
-                      text + valu.offset, valu_size);
-          uint8_t placeholder[4] = {0};
-          std::memcpy(t.bytes.data() + nop_bytes_count + valu_size,
-                      placeholder, 4);
-          out_trampolines.push_back(std::move(t));
-          ++patched;
-        }
-      }
-    }
-  }
+  patched += ApplyPatch5_WmmaHazard(ctx);
 
   for (const auto &kv : kernel_stats) {
     const std::string &kname = kv.first;

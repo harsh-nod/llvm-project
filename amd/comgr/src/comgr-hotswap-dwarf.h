@@ -4,15 +4,6 @@
 
 // ── DWARF / Debug update helpers ─────────────────────────────────────────────
 
-static void EncodeULEB128(uint64_t value, std::vector<uint8_t> &out) {
-  do {
-    uint8_t byte = value & 0x7f;
-    value >>= 7;
-    if (value) byte |= 0x80;
-    out.push_back(byte);
-  } while (value);
-}
-
 static void EncodeSLEB128(int64_t value, std::vector<uint8_t> &out) {
   bool more = true;
   while (more) {
@@ -405,7 +396,6 @@ static void PatchDebugRanges(uint8_t *elf, size_t elf_size,
   if (offset + size > elf_size) return;
 
   uint64_t text_end = text_addr + text_size_before;
-  uint64_t new_text_end = text_end + tramp_total;
   uint8_t *d = elf + offset;
   for (size_t i = 0; i + 16 <= size; i += 16) {
     uint64_t s, e;

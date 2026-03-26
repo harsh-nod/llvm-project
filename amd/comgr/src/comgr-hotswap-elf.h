@@ -1,6 +1,10 @@
 // comgr-hotswap-elf.h — ELF types, parsing, and binary helpers
 // Included inside the anonymous namespace of comgr-hotswap.cpp.
 // Not a standalone compilation unit.
+//
+// KEEP IN SYNC: ElfSection, ElfSymbol, ElfInfo, ParseElfInfo, ExtractCPU,
+// and FindKernelAtOffset are duplicated in
+// rocr-runtime/hotswap/hotswap_core.{hpp,cpp}.
 
 // ── ELF types ────────────────────────────────────────────────────────────────
 

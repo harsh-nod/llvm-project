@@ -387,7 +387,6 @@ static std::vector<std::string> WidenExecOperation(const std::string& line, bool
           src.replace(vcc_pos, 6, "vcc");
 
         if (dst[0] == 's' && dst.size() > 1 && std::isdigit(dst[1])) {
-          int reg_num = std::stoi(dst.substr(1));
           std::string src32 = src;
           if (src32 == "vcc") src32 = "vcc_lo";
           result.push_back("s_mov_b32 " + dst + ", exec_lo");
@@ -422,6 +421,7 @@ static std::vector<std::string> WidenExecOperation(const std::string& line, bool
 
 static std::string TranslateOperandSyntax(const std::string& line,
                                            const std::string& mnemonic) {
+  (void)mnemonic;
   std::string result = line;
   {
     size_t pos = result.find("scope:");
@@ -546,6 +546,7 @@ static void GetInstRegs(const llvm::MCInst& inst,
                         const llvm::MCRegisterInfo& MRI,
                         std::vector<unsigned>& defs,
                         std::vector<unsigned>& uses) {
+  (void)MRI;
   const llvm::MCInstrDesc& desc = MCII.get(inst.getOpcode());
   unsigned num_defs = desc.getNumDefs();
   for (unsigned i = 0; i < inst.getNumOperands(); ++i) {
@@ -778,7 +779,8 @@ static void PatchKernelDescriptorsForWave64(uint8_t* elf, size_t elf_size,
 
     uint16_t props;
     std::memcpy(&props, text + offset + 56, 2);
-    props &= ~(1u << 10);
+    props = static_cast<uint16_t>((static_cast<uint32_t>(props) & ~(1u << 10)) &
+                                  0xFFFFu);
     std::memcpy(elf + info.text_offset + offset + 56, &props, 2);
 
     uint32_t rsrc3 = gfx9_vgpr;
@@ -967,9 +969,6 @@ static TranslationResult HandleBitopInstruction(
   std::string ops = line.substr(line.find(mnemonic) + mnemonic.size());
   size_t bitop_pos = ops.find("bitop3:");
   if (bitop_pos != std::string::npos) {
-    int truth_table = 0;
-    std::string hex_str = ops.substr(bitop_pos + 7);
-    try { truth_table = std::stoi(hex_str, nullptr, 0); } catch (...) {}
     ops = ops.substr(0, bitop_pos);
   }
   auto operands = ParseOperandList(line, mnemonic);
@@ -1579,6 +1578,9 @@ static TranslationResult HandleExecOperation(
     std::string& line, const std::string& mnemonic,
     const std::string&, const std::string&,
     int scale_temp_vgpr, int cmpx_temp_sgpr, bool compact_mode) {
+  (void)scale_temp_vgpr;
+  (void)cmpx_temp_sgpr;
+  (void)compact_mode;
   // v_div_scale_f32 null sdst → vcc
   if (mnemonic == "v_div_scale_f32") {
     size_t null_pos = line.find(", null,");
@@ -2503,7 +2505,6 @@ TranspileCodeObject(const void *elf_data, size_t elf_size,
         std::memcpy(new_elf + elf_info.text_offset + i, nop_bytes, 4);
     } else {
       uint64_t available = elf_info.text_size;
-      uint64_t after_text = elf_info.text_offset + elf_info.text_size;
       uint64_t next_section_start = new_elf_size;
       uint16_t e_shentsize, e_shnum;
       std::memcpy(&e_shentsize, new_elf + 58, 2);
@@ -2636,7 +2637,8 @@ TranspileCodeObject(const void *elf_data, size_t elf_size,
             std::memcpy(desc + 52, &rsrc2, 4);
             uint16_t props;
             std::memcpy(&props, desc + 56, 2);
-            props &= ~(1u << 10);
+            props = static_cast<uint16_t>(
+                (static_cast<uint32_t>(props) & ~(1u << 10)) & 0xFFFFu);
             std::memcpy(desc + 56, &props, 2);
             uint32_t rsrc3 = gfx9_vgpr;
             std::memcpy(desc + 44, &rsrc3, 4);
