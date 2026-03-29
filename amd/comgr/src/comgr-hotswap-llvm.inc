@@ -1,4 +1,4 @@
-// comgr-hotswap-llvm.h — LLVM MC infrastructure, decode/encode, VGPR introspection
+// comgr-hotswap-llvm.inc — LLVM MC infrastructure, decode/encode, VGPR introspection
 // Included inside the anonymous namespace of comgr-hotswap.cpp.
 // Not a standalone compilation unit.
 
@@ -28,17 +28,22 @@ static void InitLLVMTargets() {
   LLVMInitializeAMDGPUDisassembler();
 }
 
-static LLVMState InitLLVMImpl(const std::string &isa_name) {
+static LLVMState InitLLVMImpl(const std::string &isa_name,
+                              const llvm::Target *cached_target = nullptr) {
   std::call_once(g_llvm_init_flag, InitLLVMTargets);
 
   LLVMState state;
   state.cpu = ExtractCPU(isa_name);
   if (state.cpu.empty()) return state;
 
-  std::string error;
   llvm::Triple triple("amdgcn-amd-amdhsa");
 
-  state.target = llvm::TargetRegistry::lookupTarget("amdgcn", triple, error);
+  if (cached_target) {
+    state.target = cached_target;
+  } else {
+    std::string error;
+    state.target = llvm::TargetRegistry::lookupTarget("amdgcn", triple, error);
+  }
   if (!state.target) return state;
 
   state.MRI.reset(
@@ -96,17 +101,25 @@ static LLVMState InitLLVMImpl(const std::string &isa_name) {
   return state;
 }
 
-static std::mutex g_llvm_cache_mutex;
-static std::map<std::string, LLVMState> g_llvm_cache;
+static std::mutex g_target_cache_mutex;
+static const llvm::Target *g_cached_target = nullptr;
 
-static LLVMState &InitLLVMCached(const std::string &isa_name) {
-  std::string cpu = ExtractCPU(isa_name);
-  std::lock_guard<std::mutex> lock(g_llvm_cache_mutex);
-  auto it = g_llvm_cache.find(cpu);
-  if (it != g_llvm_cache.end())
-    return it->second;
-  g_llvm_cache[cpu] = InitLLVMImpl(isa_name);
-  return g_llvm_cache[cpu];
+static LLVMState InitLLVMCached(const std::string &isa_name) {
+  std::call_once(g_llvm_init_flag, InitLLVMTargets);
+
+  const llvm::Target *tgt;
+  {
+    std::lock_guard<std::mutex> lock(g_target_cache_mutex);
+    if (!g_cached_target) {
+      std::string error;
+      llvm::Triple triple("amdgcn-amd-amdhsa");
+      g_cached_target =
+          llvm::TargetRegistry::lookupTarget("amdgcn", triple, error);
+    }
+    tgt = g_cached_target;
+  }
+
+  return InitLLVMImpl(isa_name, tgt);
 }
 
 // ── Decoded instruction with MCInst ──────────────────────────────────────────

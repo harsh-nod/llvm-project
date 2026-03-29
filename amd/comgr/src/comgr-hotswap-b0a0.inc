@@ -1,4 +1,4 @@
-// comgr-hotswap-b0a0.h — GFX1250 B0-to-A0 load-time instruction patching
+// comgr-hotswap-b0a0.inc — GFX1250 B0-to-A0 load-time instruction patching
 // Included inside the anonymous namespace of comgr-hotswap.cpp.
 // Not a standalone compilation unit.
 
@@ -286,7 +286,7 @@ ValidateWmmaCoexecHazards(const std::vector<InternalDecodedInst> &decoded,
         }
         if (count < req.a0_nops) {
           hazards.push_back({i, j, count, req.a0_nops, req.a0_nops - count});
-          std::cerr << "hotswap: B0->A0 WMMA co-exec hazard @0x"
+          HotswapLog(HotswapLogLevel::Info) << "hotswap: B0->A0 WMMA co-exec hazard @0x"
                     << std::hex << di.offset
                     << ": " << di.mnemonic
                     << " needs " << std::dec << req.a0_nops
@@ -301,7 +301,7 @@ ValidateWmmaCoexecHazards(const std::vector<InternalDecodedInst> &decoded,
     }
   }
 
-  std::cerr << "hotswap: B0->A0 WMMA co-exec validation: "
+  HotswapLog(HotswapLogLevel::Info) << "hotswap: B0->A0 WMMA co-exec validation: "
             << hazards.size() << " hazards ("
             << wmma_scanned << " WMMA instructions scanned)\n";
 
@@ -330,6 +330,61 @@ struct PatchContext {
   std::map<std::string, KernelPatchStats> &kernel_stats;
   std::vector<ScratchPatchInfo> &out_scratch_patches;
 };
+
+// ── Common sled-or-trampoline insertion ─────────────────────────────────────
+
+static bool EmitReplacementCode(PatchContext &ctx, uint64_t inst_offset,
+                                uint32_t inst_size,
+                                const std::vector<uint8_t> &replacement_bytes,
+                                const char *patch_desc = nullptr) {
+  if (replacement_bytes.empty()) return false;
+
+  uint32_t tramp_size = static_cast<uint32_t>(replacement_bytes.size() + 4);
+
+  NopSled *sled = FindNearestSled(ctx.nop_sleds, inst_offset, tramp_size);
+  if (sled) {
+    uint64_t tp = sled->write_pos;
+    std::memcpy(ctx.text + tp, replacement_bytes.data(),
+                replacement_bytes.size());
+    uint8_t br_back[4];
+    if (EncodeSBranch(tp + replacement_bytes.size(),
+                      inst_offset + inst_size, br_back, true)) {
+      std::memcpy(ctx.text + tp + replacement_bytes.size(), br_back, 4);
+      uint8_t br_fwd[4];
+      if (EncodeSBranch(inst_offset, tp, br_fwd, true)) {
+        std::memcpy(ctx.text + inst_offset, br_fwd, 4);
+        for (uint32_t i = 4; i < inst_size; i += 4) {
+          uint8_t nop[4];
+          EncodeSNop(nop);
+          std::memcpy(ctx.text + inst_offset + i, nop, 4);
+        }
+        sled->write_pos += tramp_size;
+        if (patch_desc) {
+          HotswapLog(HotswapLogLevel::Debug) << "hotswap: B0->A0 @0x" << std::hex << inst_offset
+                    << ": " << patch_desc << " via sled @0x" << tp
+                    << std::dec << "\n";
+        }
+        return true;
+      }
+    }
+  }
+
+  Trampoline t;
+  t.original_offset = inst_offset;
+  t.original_size = inst_size;
+  t.bytes.resize(tramp_size);
+  std::memcpy(t.bytes.data(), replacement_bytes.data(),
+              replacement_bytes.size());
+  uint8_t placeholder[4] = {0};
+  std::memcpy(t.bytes.data() + replacement_bytes.size(), placeholder, 4);
+  ctx.out_trampolines.push_back(std::move(t));
+  if (patch_desc) {
+    HotswapLog(HotswapLogLevel::Debug) << "hotswap: B0->A0 @0x" << std::hex << inst_offset
+              << ": " << patch_desc << " deferred for ELF growth"
+              << std::dec << "\n";
+  }
+  return true;
+}
 
 // ── Per-patch functions ─────────────────────────────────────────────────────
 
@@ -444,35 +499,13 @@ static bool ApplyPatch4_TensorLoadToLds(PatchContext &ctx, size_t idx) {
   auto pack_bytes = AssembleSingleInst(pack_asm, ctx.llvm_state);
   if (pack_bytes.empty() || pack_bytes.size() != 4) return false;
 
-  NopSled *sled = FindNearestSled(ctx.nop_sleds, di.offset, 20);
-  if (sled) {
-    uint64_t tp = sled->write_pos;
-    std::memcpy(ctx.text + tp, pack_bytes.data(), 4);
-    std::memcpy(ctx.text + tp + 4, ctx.text + di.offset, di.size);
-    uint8_t br_back[4];
-    if (!EncodeSBranch(tp + 4 + di.size, di.offset + di.size, br_back, true))
-      return false;
-    std::memcpy(ctx.text + tp + 4 + di.size, br_back, 4);
-    uint8_t br_fwd[4];
-    if (!EncodeSBranch(di.offset, tp, br_fwd, true)) return false;
-    std::memcpy(ctx.text + di.offset, br_fwd, 4);
-    for (uint32_t i = 4; i < di.size; i += 4) {
-      uint8_t nop[4];
-      EncodeSNop(nop);
-      std::memcpy(ctx.text + di.offset + i, nop, 4);
-    }
-    sled->write_pos += 4 + di.size + 4;
-  } else {
-    Trampoline t;
-    t.original_offset = di.offset;
-    t.original_size = di.size;
-    t.bytes.resize(4 + di.size + 4);
-    std::memcpy(t.bytes.data(), pack_bytes.data(), 4);
-    std::memcpy(t.bytes.data() + 4, ctx.text + di.offset, di.size);
-    uint8_t placeholder[4] = {0};
-    std::memcpy(t.bytes.data() + 4 + di.size, placeholder, 4);
-    ctx.out_trampolines.push_back(std::move(t));
-  }
+  std::vector<uint8_t> replacement;
+  replacement.insert(replacement.end(), pack_bytes.begin(), pack_bytes.end());
+  replacement.insert(replacement.end(), ctx.text + di.offset,
+                     ctx.text + di.offset + di.size);
+
+  if (!EmitReplacementCode(ctx, di.offset, di.size, replacement))
+    return false;
   di.mnemonic = "<replaced>";
   return true;
 }
@@ -486,46 +519,16 @@ static uint32_t ApplyPatch5_WmmaHazard(PatchContext &ctx) {
   for (auto &h : hazards) {
     const auto &valu = ctx.decoded[h.valu_idx];
     uint32_t valu_size = valu.size;
-    uint32_t nop_bytes_count = h.deficit * 4;
-    uint32_t tramp_size = nop_bytes_count + valu_size + 4;
 
-    NopSled *sled = FindNearestSled(ctx.nop_sleds, valu.offset, tramp_size);
-    if (sled) {
-      uint64_t tp = sled->write_pos;
-      for (int n = 0; n < h.deficit; ++n)
-        std::memcpy(ctx.text + tp + n * 4, vnop_bytes.data(), 4);
-      std::memcpy(ctx.text + tp + nop_bytes_count, ctx.text + valu.offset,
-                  valu_size);
-      uint8_t br_back[4];
-      if (!EncodeSBranch(tp + nop_bytes_count + valu_size,
-                         valu.offset + valu_size, br_back, true))
-        continue;
-      std::memcpy(ctx.text + tp + nop_bytes_count + valu_size, br_back, 4);
-      uint8_t br_fwd[4];
-      if (!EncodeSBranch(valu.offset, tp, br_fwd, true)) continue;
-      std::memcpy(ctx.text + valu.offset, br_fwd, 4);
-      for (uint32_t i = 4; i < valu_size; i += 4) {
-        uint8_t nop[4];
-        EncodeSNop(nop);
-        std::memcpy(ctx.text + valu.offset + i, nop, 4);
-      }
-      sled->write_pos += tramp_size;
+    std::vector<uint8_t> replacement;
+    for (int n = 0; n < h.deficit; ++n)
+      replacement.insert(replacement.end(), vnop_bytes.begin(),
+                         vnop_bytes.end());
+    replacement.insert(replacement.end(), ctx.text + valu.offset,
+                       ctx.text + valu.offset + valu_size);
+
+    if (EmitReplacementCode(ctx, valu.offset, valu_size, replacement))
       ++patched;
-    } else {
-      Trampoline t;
-      t.original_offset = valu.offset;
-      t.original_size = valu_size;
-      t.bytes.resize(tramp_size);
-      for (int n = 0; n < h.deficit; ++n)
-        std::memcpy(t.bytes.data() + n * 4, vnop_bytes.data(), 4);
-      std::memcpy(t.bytes.data() + nop_bytes_count,
-                  ctx.text + valu.offset, valu_size);
-      uint8_t placeholder[4] = {0};
-      std::memcpy(t.bytes.data() + nop_bytes_count + valu_size,
-                  placeholder, 4);
-      ctx.out_trampolines.push_back(std::move(t));
-      ++patched;
-    }
   }
   return patched;
 }
@@ -565,45 +568,13 @@ static bool ApplyPatch6_Fp8WmmaSplit(PatchContext &ctx, size_t idx) {
   auto enc2 = AssembleSingleInst(asm2, ctx.llvm_state);
   if (enc1.empty() || enc2.empty()) return false;
 
-  uint32_t tramp_size = static_cast<uint32_t>(enc1.size() + enc2.size() + 4);
+  std::vector<uint8_t> replacement;
+  replacement.insert(replacement.end(), enc1.begin(), enc1.end());
+  replacement.insert(replacement.end(), enc2.begin(), enc2.end());
 
-  NopSled *sled = FindNearestSled(ctx.nop_sleds, di.offset, tramp_size);
-  if (sled) {
-    uint64_t tp = sled->write_pos;
-    std::memcpy(ctx.text + tp, enc1.data(), enc1.size());
-    std::memcpy(ctx.text + tp + enc1.size(), enc2.data(), enc2.size());
-    uint8_t br_back[4];
-    if (EncodeSBranch(tp + enc1.size() + enc2.size(),
-                      di.offset + di.size, br_back, true)) {
-      std::memcpy(ctx.text + tp + enc1.size() + enc2.size(), br_back, 4);
-      uint8_t br_fwd[4];
-      if (EncodeSBranch(di.offset, tp, br_fwd, true)) {
-        std::memcpy(ctx.text + di.offset, br_fwd, 4);
-        for (uint32_t i = 4; i < di.size; i += 4) {
-          uint8_t nop[4]; EncodeSNop(nop);
-          std::memcpy(ctx.text + di.offset + i, nop, 4);
-        }
-        sled->write_pos += tramp_size;
-        std::cerr << "hotswap: B0->A0 @0x" << std::hex << di.offset
-                  << ": " << di.mnemonic << " -> 2x " << mnem64
-                  << " via sled @0x" << tp << std::dec << "\n";
-        di.mnemonic = "<replaced>";
-        return true;
-      }
-    }
-  }
-  Trampoline t;
-  t.original_offset = di.offset;
-  t.original_size = di.size;
-  t.bytes.resize(tramp_size);
-  std::memcpy(t.bytes.data(), enc1.data(), enc1.size());
-  std::memcpy(t.bytes.data() + enc1.size(), enc2.data(), enc2.size());
-  uint8_t placeholder[4] = {0};
-  std::memcpy(t.bytes.data() + enc1.size() + enc2.size(), placeholder, 4);
-  ctx.out_trampolines.push_back(std::move(t));
-  std::cerr << "hotswap: B0->A0 @0x" << std::hex << di.offset
-            << ": " << di.mnemonic << " -> 2x " << mnem64
-            << " deferred for ELF growth" << std::dec << "\n";
+  std::string desc = di.mnemonic + " -> 2x " + mnem64;
+  if (!EmitReplacementCode(ctx, di.offset, di.size, replacement, desc.c_str()))
+    return false;
   di.mnemonic = "<replaced>";
   return true;
 }
@@ -643,47 +614,14 @@ static bool ApplyPatch7_F4WmmaSplit(PatchContext &ctx, size_t idx) {
 
   if (enc1.empty() || enc2.empty()) return false;
 
-  uint32_t tramp_size =
-      static_cast<uint32_t>(enc1.size() + enc2.size() + 4);
+  std::vector<uint8_t> replacement;
+  replacement.insert(replacement.end(), enc1.begin(), enc1.end());
+  replacement.insert(replacement.end(), enc2.begin(), enc2.end());
 
-  NopSled *sled = FindNearestSled(ctx.nop_sleds, di.offset, tramp_size);
-  if (sled) {
-    uint64_t tp = sled->write_pos;
-    std::memcpy(ctx.text + tp, enc1.data(), enc1.size());
-    std::memcpy(ctx.text + tp + enc1.size(), enc2.data(), enc2.size());
-    uint8_t br_back[4];
-    if (EncodeSBranch(tp + enc1.size() + enc2.size(),
-                      di.offset + di.size, br_back, true)) {
-      std::memcpy(ctx.text + tp + enc1.size() + enc2.size(), br_back, 4);
-      uint8_t br_fwd[4];
-      if (EncodeSBranch(di.offset, tp, br_fwd, true)) {
-        std::memcpy(ctx.text + di.offset, br_fwd, 4);
-        for (uint32_t i = 4; i < di.size; i += 4) {
-          uint8_t nop[4]; EncodeSNop(nop);
-          std::memcpy(ctx.text + di.offset + i, nop, 4);
-        }
-        sled->write_pos += tramp_size;
-        std::cerr << "hotswap: B0->A0 @0x" << std::hex << di.offset
-                  << ": " << di.mnemonic
-                  << " -> 2x v_wmma_f32_16x16x128_f8f6f4 via sled @0x"
-                  << tp << std::dec << "\n";
-        di.mnemonic = "<replaced>";
-        return true;
-      }
-    }
-  }
-  Trampoline t;
-  t.original_offset = di.offset;
-  t.original_size = di.size;
-  t.bytes.resize(tramp_size);
-  std::memcpy(t.bytes.data(), enc1.data(), enc1.size());
-  std::memcpy(t.bytes.data() + enc1.size(), enc2.data(), enc2.size());
-  uint8_t placeholder[4] = {0};
-  std::memcpy(t.bytes.data() + enc1.size() + enc2.size(), placeholder, 4);
-  ctx.out_trampolines.push_back(std::move(t));
-  std::cerr << "hotswap: B0->A0 @0x" << std::hex << di.offset
-            << ": " << di.mnemonic << " deferred for ELF growth"
-            << std::dec << "\n";
+  std::string desc =
+      di.mnemonic + " -> 2x v_wmma_f32_16x16x128_f8f6f4";
+  if (!EmitReplacementCode(ctx, di.offset, di.size, replacement, desc.c_str()))
+    return false;
   di.mnemonic = "<replaced>";
   return true;
 }
@@ -711,7 +649,7 @@ static bool ApplyPatch8_E5M3CvtEmulation(PatchContext &ctx, size_t idx) {
   int s0 = alloc.Alloc(), s1 = alloc.Alloc();
   int s2 = alloc.Alloc(), s3 = alloc.Alloc();
   if (s0 < 0 || s1 < 0 || s2 < 0 || s3 < 0) {
-    std::cerr << "hotswap: B0->A0 @0x" << std::hex << di.offset
+    HotswapLog(HotswapLogLevel::Error) << "hotswap: B0->A0 @0x" << std::hex << di.offset
               << ": scratch allocation failed, skipping patch" << std::dec << "\n";
     return false;
   }
@@ -728,7 +666,12 @@ static bool ApplyPatch8_E5M3CvtEmulation(PatchContext &ctx, size_t idx) {
   ctx.kernel_stats[kernel].extra_vgprs =
       std::max(ctx.kernel_stats[kernel].extra_vgprs,
                alloc.ExtraVgprsNeeded());
-  ctx.out_scratch_patches.push_back({di.offset, {s0, s1, s2, s3}});
+  {
+    ScratchPatchInfo spi;
+    spi.offset = di.offset;
+    for (int v : {s0, s1, s2, s3}) spi.scratch_regs.set(v);
+    ctx.out_scratch_patches.push_back(std::move(spi));
+  }
 
   std::string dst = FormatVgprRange(dst_base, dst_count);
   std::string src = "v" + std::to_string(src_base);
@@ -804,42 +747,9 @@ static bool ApplyPatch8_E5M3CvtEmulation(PatchContext &ctx, size_t idx) {
   auto enc = AssembleSingleInst(joined, ctx.llvm_state);
   if (enc.empty()) return false;
 
-  uint32_t tramp_size = static_cast<uint32_t>(enc.size() + 4);
-
-  NopSled *sled = FindNearestSled(ctx.nop_sleds, di.offset, tramp_size);
-  if (sled) {
-    uint64_t tp = sled->write_pos;
-    std::memcpy(ctx.text + tp, enc.data(), enc.size());
-    uint8_t br_back[4];
-    if (EncodeSBranch(tp + enc.size(), di.offset + di.size, br_back, true)) {
-      std::memcpy(ctx.text + tp + enc.size(), br_back, 4);
-      uint8_t br_fwd[4];
-      if (EncodeSBranch(di.offset, tp, br_fwd, true)) {
-        std::memcpy(ctx.text + di.offset, br_fwd, 4);
-        for (uint32_t i = 4; i < di.size; i += 4) {
-          uint8_t nop[4]; EncodeSNop(nop);
-          std::memcpy(ctx.text + di.offset + i, nop, 4);
-        }
-        sled->write_pos += tramp_size;
-        std::cerr << "hotswap: B0->A0 @0x" << std::hex << di.offset
-                  << ": " << di.mnemonic << " CLAMP=1 (E5M3) -> VALU emulation"
-                  << " via sled @0x" << tp << std::dec << "\n";
-        di.mnemonic = "<replaced>";
-        return true;
-      }
-    }
-  }
-  Trampoline t;
-  t.original_offset = di.offset;
-  t.original_size = di.size;
-  t.bytes.resize(tramp_size);
-  std::memcpy(t.bytes.data(), enc.data(), enc.size());
-  uint8_t placeholder[4] = {0};
-  std::memcpy(t.bytes.data() + enc.size(), placeholder, 4);
-  ctx.out_trampolines.push_back(std::move(t));
-  std::cerr << "hotswap: B0->A0 @0x" << std::hex << di.offset
-            << ": " << di.mnemonic << " CLAMP=1 (E5M3) deferred for ELF growth"
-            << std::dec << "\n";
+  std::string desc = di.mnemonic + " CLAMP=1 (E5M3) -> VALU emulation";
+  if (!EmitReplacementCode(ctx, di.offset, di.size, enc, desc.c_str()))
+    return false;
   di.mnemonic = "<replaced>";
   return true;
 }
@@ -915,7 +825,7 @@ static bool ApplyPatch9_Scale16Decomposition(PatchContext &ctx, size_t idx) {
     ScratchAllocator alloc_p9(ctx.liveness.live_before[idx], kd_vgprs_p9);
     int p9s0 = alloc_p9.Alloc(), p9s1 = alloc_p9.Alloc();
     if (p9s0 < 0 || p9s1 < 0) {
-      std::cerr << "hotswap: B0->A0 @0x" << std::hex << di.offset
+      HotswapLog(HotswapLogLevel::Error) << "hotswap: B0->A0 @0x" << std::hex << di.offset
                 << ": scratch allocation failed, skipping patch" << std::dec << "\n";
       return false;
     }
@@ -930,7 +840,12 @@ static bool ApplyPatch9_Scale16Decomposition(PatchContext &ctx, size_t idx) {
     ctx.kernel_stats[kernel_p9].extra_vgprs =
         std::max(ctx.kernel_stats[kernel_p9].extra_vgprs,
                  alloc_p9.ExtraVgprsNeeded());
-    ctx.out_scratch_patches.push_back({di.offset, {p9s0, p9s1}});
+    {
+      ScratchPatchInfo spi;
+      spi.offset = di.offset;
+      for (int v : {p9s0, p9s1}) spi.scratch_regs.set(v);
+      ctx.out_scratch_patches.push_back(std::move(spi));
+    }
 
     std::string repack_sa = "v_perm_b32 " + p9sv0 + ", v" + std::to_string(sa_base) +
         ", v" + std::to_string(sa_base) + ", 0x05010400";
@@ -946,43 +861,9 @@ static bool ApplyPatch9_Scale16Decomposition(PatchContext &ctx, size_t idx) {
 
     if (enc.empty()) return false;
 
-    uint32_t tramp_size = static_cast<uint32_t>(enc.size() + 4);
-
-    NopSled *sled = FindNearestSled(ctx.nop_sleds, di.offset, tramp_size);
-    if (sled) {
-      uint64_t tp = sled->write_pos;
-      std::memcpy(ctx.text + tp, enc.data(), enc.size());
-      uint8_t br_back[4];
-      if (EncodeSBranch(tp + enc.size(), di.offset + di.size, br_back, true)) {
-        std::memcpy(ctx.text + tp + enc.size(), br_back, 4);
-        uint8_t br_fwd[4];
-        if (EncodeSBranch(di.offset, tp, br_fwd, true)) {
-          std::memcpy(ctx.text + di.offset, br_fwd, 4);
-          for (uint32_t i = 4; i < di.size; i += 4) {
-            uint8_t nop[4]; EncodeSNop(nop);
-            std::memcpy(ctx.text + di.offset + i, nop, 4);
-          }
-          sled->write_pos += tramp_size;
-          std::cerr << "hotswap: B0->A0 @0x" << std::hex << di.offset
-                    << ": " << di.mnemonic
-                    << " -> block32 decomposition via sled @0x"
-                    << tp << std::dec << "\n";
-          di.mnemonic = "<replaced>";
-          return true;
-        }
-      }
-    }
-    Trampoline t;
-    t.original_offset = di.offset;
-    t.original_size = di.size;
-    t.bytes.resize(tramp_size);
-    std::memcpy(t.bytes.data(), enc.data(), enc.size());
-    uint8_t placeholder[4] = {0};
-    std::memcpy(t.bytes.data() + enc.size(), placeholder, 4);
-    ctx.out_trampolines.push_back(std::move(t));
-    std::cerr << "hotswap: B0->A0 @0x" << std::hex << di.offset
-              << ": " << di.mnemonic << " -> block32 deferred for ELF growth"
-              << std::dec << "\n";
+    std::string desc = di.mnemonic + " -> block32 decomposition";
+    if (!EmitReplacementCode(ctx, di.offset, di.size, enc, desc.c_str()))
+      return false;
     di.mnemonic = "<replaced>";
     return true;
   }
@@ -1007,7 +888,7 @@ static bool ApplyPatch9_Scale16Decomposition(PatchContext &ctx, size_t idx) {
       uint8_t nop[4]; EncodeSNop(nop);
       std::memcpy(ctx.text + di.offset + i, nop, 4);
     }
-    std::cerr << "hotswap: B0->A0 @0x" << std::hex << di.offset
+    HotswapLog(HotswapLogLevel::Debug) << "hotswap: B0->A0 @0x" << std::hex << di.offset
               << ": v_wmma_ld_scale16 -> block32 v_wmma_ld_scale_paired_b32"
               << std::dec << "\n";
     di.mnemonic = "<replaced>";
@@ -1033,6 +914,17 @@ ApplyGfx1250B0toA0Rules(std::vector<InternalDecodedInst> &decoded,
   CFG cfg = BuildCFG(decoded);
   LivenessInfo liveness = ComputeLiveness(decoded, cfg,
                                           *llvm_state.MCII, *llvm_state.MRI);
+
+  if (!liveness.converged) {
+    HotswapLog(HotswapLogLevel::Error) << "hotswap: WARNING: liveness analysis did not converge, "
+                 "using conservative all-VGPRs-live fallback\n";
+    llvm::BitVector all_vgprs(256);
+    all_vgprs.set(0, 256);
+    for (size_t i = 0; i < liveness.live_before.size(); ++i) {
+      liveness.live_before[i] = all_vgprs;
+      liveness.live_after[i] = all_vgprs;
+    }
+  }
 
   std::map<std::string, KernelPatchStats> kernel_stats;
 
@@ -1065,7 +957,7 @@ ApplyGfx1250B0toA0Rules(std::vector<InternalDecodedInst> &decoded,
       UpdateKernelDescriptor(elf_data, elf_size, elf_info, kname,
                              stats.extra_vgprs, 0);
     int vgprs_after = GetKernelVgprCount(elf_data, elf_size, elf_info, kname);
-    std::cerr << "hotswap: liveness: kernel " << kname
+    HotswapLog(HotswapLogLevel::Info) << "hotswap: liveness: kernel " << kname
               << ": vgprs_before=" << vgprs_before
               << ", vgprs_after=" << vgprs_after
               << ", scratch_reused=" << stats.scratch_reused
@@ -1178,7 +1070,7 @@ RetargetCodeObjectB0A0Grow(const void *elf_data, size_t elf_size,
     return AMD_COMGR_STATUS_SUCCESS;
   }
 
-  LLVMState &llvm_state = InitLLVMCached(isa);
+  LLVMState llvm_state = InitLLVMCached(isa);
   if (!llvm_state.valid) return AMD_COMGR_STATUS_ERROR;
 
   std::vector<uint8_t> buf(elf, elf + elf_size);
@@ -1218,29 +1110,29 @@ RetargetCodeObjectB0A0Grow(const void *elf_data, size_t elf_size,
       }
     }
 
-    size_t new_size = 0;
-    uint8_t *new_elf = GrowElfWithTrampolines(buf.data(), elf_size, elf_info,
-                                              deferred, &new_size);
-    if (!new_elf) return AMD_COMGR_STATUS_ERROR;
+    MallocBuffer new_buf = GrowElfWithTrampolines(buf.data(), elf_size, elf_info,
+                                                   deferred);
+    if (!new_buf) return AMD_COMGR_STATUS_ERROR;
 
     size_t tramp_total = 0;
     for (auto &t : deferred) tramp_total += t.bytes.size();
 
-    new_elf = AddTrampolineSymbols(new_elf, new_size, deferred,
-                                   elf_info.text_size,
-                                   elf_info.text_section_idx, &new_size);
-    PatchDebugRanges(new_elf, new_size, elf_info.text_addr,
+    if (!AddTrampolineSymbols(new_buf, deferred,
+                              elf_info.text_size,
+                              elf_info.text_section_idx))
+      return AMD_COMGR_STATUS_ERROR;
+    PatchDebugRanges(new_buf.data, new_buf.size, elf_info.text_addr,
                      elf_info.text_size, tramp_total);
-    PatchDebugInfo(new_elf, new_size, elf_info.text_addr,
+    PatchDebugInfo(new_buf.data, new_buf.size, elf_info.text_addr,
                    elf_info.text_size, tramp_total);
-    PatchDebugFrame(new_elf, new_size, elf_info.text_addr,
+    PatchDebugFrame(new_buf.data, new_buf.size, elf_info.text_addr,
                     elf_info.text_size, tramp_total);
-    new_elf = PatchDebugLine(new_elf, new_size, deferred,
-                             elf_info.text_size, elf_info.text_addr,
-                             &new_size);
+    if (!PatchDebugLine(new_buf, deferred,
+                        elf_info.text_size, elf_info.text_addr))
+      return AMD_COMGR_STATUS_ERROR;
 
-    *out_data = new_elf;
-    *out_size = new_size;
+    *out_size = new_buf.size;
+    *out_data = new_buf.release();
     result->trampolines_added = static_cast<uint32_t>(deferred.size());
   } else {
     uint8_t *out = static_cast<uint8_t *>(std::malloc(elf_size));
@@ -1255,9 +1147,14 @@ RetargetCodeObjectB0A0Grow(const void *elf_data, size_t elf_size,
     const uint8_t *verify_elf = static_cast<const uint8_t *>(*out_data);
     if (ParseElfInfo(verify_elf, *out_size, verify_elf_info) &&
         verify_elf_info.text_size > 0) {
-      VerifyPatchCorrectness(verify_elf + verify_elf_info.text_offset,
-                             verify_elf_info.text_size,
-                             llvm_state, scratch_patches);
+      bool ok = VerifyPatchCorrectness(verify_elf + verify_elf_info.text_offset,
+                                       verify_elf_info.text_size,
+                                       llvm_state, scratch_patches);
+      if (!ok) {
+        HotswapLog(HotswapLogLevel::Error) << "hotswap: WARNING: post-patch verification detected "
+                     "possible scratch conflicts (may be false positive from "
+                     "liveness approximation)\n";
+      }
     }
   }
 

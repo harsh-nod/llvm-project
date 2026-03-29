@@ -1,10 +1,61 @@
-// comgr-hotswap-elf.h — ELF types, parsing, and binary helpers
+// comgr-hotswap-elf.inc — ELF types, parsing, and binary helpers
 // Included inside the anonymous namespace of comgr-hotswap.cpp.
 // Not a standalone compilation unit.
 //
-// KEEP IN SYNC: ElfSection, ElfSymbol, ElfInfo, ParseElfInfo, ExtractCPU,
-// and FindKernelAtOffset are duplicated in
-// rocr-runtime/hotswap/hotswap_core.{hpp,cpp}.
+// NOTE: ElfSection, ElfSymbol, ElfInfo, and ExtractCPU are derived from the
+// canonical shared header at:
+//   rocr-runtime/hotswap/hotswap_shared_types.h
+// This copy exists because comgr-hotswap-elf.inc is included inside an
+// anonymous namespace, so it cannot directly #include a namespaced header.
+// TODO: Unify via build-system include-path changes.
+
+// ── MallocBuffer RAII wrapper ────────────────────────────────────────────────
+
+struct MallocBuffer {
+  uint8_t *data = nullptr;
+  size_t size = 0;
+
+  MallocBuffer() = default;
+  MallocBuffer(size_t n) : data(static_cast<uint8_t *>(std::malloc(n))), size(n) {}
+  ~MallocBuffer() { std::free(data); }
+
+  MallocBuffer(MallocBuffer &&o) noexcept : data(o.data), size(o.size) {
+    o.data = nullptr; o.size = 0;
+  }
+  MallocBuffer &operator=(MallocBuffer &&o) noexcept {
+    if (this != &o) { std::free(data); data = o.data; size = o.size; o.data = nullptr; o.size = 0; }
+    return *this;
+  }
+
+  MallocBuffer(const MallocBuffer &) = delete;
+  MallocBuffer &operator=(const MallocBuffer &) = delete;
+
+  explicit operator bool() const { return data != nullptr; }
+  uint8_t *release() { uint8_t *p = data; data = nullptr; size = 0; return p; }
+};
+
+// ── Logging ──────────────────────────────────────────────────────────────────
+
+enum class HotswapLogLevel : int { Silent = 0, Error = 1, Info = 2, Debug = 3 };
+
+static HotswapLogLevel GetHotswapLogLevel() {
+  static HotswapLogLevel level = []() {
+    const char *env = std::getenv("HSA_HOTSWAP_LOG_LEVEL");
+    if (env) {
+      int v = std::atoi(env);
+      if (v >= 0 && v <= 3) return static_cast<HotswapLogLevel>(v);
+    }
+    return HotswapLogLevel::Info;
+  }();
+  return level;
+}
+
+static std::ostream &HotswapLog(HotswapLogLevel level) {
+  static std::ostream null_stream(nullptr);
+  if (static_cast<int>(level) <= static_cast<int>(GetHotswapLogLevel()))
+    return std::cerr;
+  return null_stream;
+}
 
 // ── ELF types ────────────────────────────────────────────────────────────────
 
@@ -129,96 +180,80 @@ static std::string ExtractCPU(const std::string &isa_name) {
 // ── ELF parsing ──────────────────────────────────────────────────────────────
 
 static bool ParseElfInfo(const uint8_t *elf, size_t elf_size, ElfInfo &info) {
-  if (elf_size < 64) return false;
-  if (elf[0] != 0x7f || elf[1] != 'E' || elf[2] != 'L' || elf[3] != 'F')
+  using ELFT = llvm::object::ELF64LE;
+  auto elf_or_err = llvm::object::ELFFile<ELFT>::create(
+      llvm::StringRef(reinterpret_cast<const char *>(elf), elf_size));
+  if (!elf_or_err) {
+    llvm::consumeError(elf_or_err.takeError());
     return false;
-  if (elf[4] != 2) return false;
-
-  uint64_t e_shoff;
-  uint16_t e_shentsize, e_shnum, e_shstrndx;
-  std::memcpy(&e_shoff, elf + 40, 8);
-  std::memcpy(&e_shentsize, elf + 58, 2);
-  std::memcpy(&e_shnum, elf + 60, 2);
-  std::memcpy(&e_shstrndx, elf + 62, 2);
-
-  if (e_shoff == 0 || e_shnum == 0) return false;
-  if (e_shoff + static_cast<uint64_t>(e_shnum) * e_shentsize > elf_size)
-    return false;
-
-  const char *shstrtab = nullptr;
-  uint64_t shstrtab_size = 0;
-  if (e_shstrndx < e_shnum) {
-    const uint8_t *sh = elf + e_shoff + e_shstrndx * e_shentsize;
-    uint64_t sh_offset, sh_size;
-    std::memcpy(&sh_offset, sh + 24, 8);
-    std::memcpy(&sh_size, sh + 32, 8);
-    if (sh_offset + sh_size <= elf_size) {
-      shstrtab = reinterpret_cast<const char *>(elf + sh_offset);
-      shstrtab_size = sh_size;
-    }
   }
+  const auto &elf_file = *elf_or_err;
 
-  info.sections.resize(e_shnum);
-  for (uint16_t i = 0; i < e_shnum; ++i) {
-    const uint8_t *sh = elf + e_shoff + i * e_shentsize;
-    auto &sec = info.sections[i];
-    std::memcpy(&sec.name_idx, sh, 4);
-    std::memcpy(&sec.type, sh + 4, 4);
-    std::memcpy(&sec.addr, sh + 16, 8);
-    std::memcpy(&sec.offset, sh + 24, 8);
-    std::memcpy(&sec.size, sh + 32, 8);
+  auto sections_or_err = elf_file.sections();
+  if (!sections_or_err) {
+    llvm::consumeError(sections_or_err.takeError());
+    return false;
+  }
+  auto shdrs = *sections_or_err;
 
-    if (shstrtab && sec.name_idx < shstrtab_size)
-      sec.name = shstrtab + sec.name_idx;
+  for (const auto &shdr : shdrs) {
+    ElfSection sec;
+    sec.type = shdr.sh_type;
+    sec.offset = shdr.sh_offset;
+    sec.size = shdr.sh_size;
+    sec.addr = shdr.sh_addr;
+    sec.name_idx = shdr.sh_name;
 
-    if (sec.offset + sec.size > elf_size) continue;
+    auto name_or_err = elf_file.getSectionName(shdr);
+    if (name_or_err)
+      sec.name = name_or_err->str();
+    else
+      llvm::consumeError(name_or_err.takeError());
 
-    if (sec.name == ".text") {
-      info.text_section_idx = i;
-      info.text_idx = i;
+    if (sec.name == ".text" && sec.offset + sec.size <= elf_size) {
+      info.text_section_idx = static_cast<int>(info.sections.size());
+      info.text_idx = info.text_section_idx;
       info.text_offset = sec.offset;
       info.text_size = sec.size;
       info.text_addr = sec.addr;
     }
+
+    info.sections.push_back(std::move(sec));
   }
 
-  for (uint16_t i = 0; i < e_shnum; ++i) {
-    auto &sec = info.sections[i];
-    if (sec.type != 2 && sec.type != 11)
+  size_t num_sections = info.sections.size();
+  for (size_t i = 0; i < num_sections; ++i) {
+    if (info.sections[i].type != 2 && info.sections[i].type != 11)
       continue;
 
-    const uint8_t *sh = elf + e_shoff + i * e_shentsize;
-    uint32_t sh_link;
-    std::memcpy(&sh_link, sh + 40, 4);
+    const auto &sym_shdr = *(shdrs.begin() + i);
 
-    const char *symstrtab = nullptr;
-    uint64_t symstrtab_size = 0;
-    if (sh_link < e_shnum) {
-      auto &link_sec = info.sections[sh_link];
-      if (link_sec.offset + link_sec.size <= elf_size) {
-        symstrtab = reinterpret_cast<const char *>(elf + link_sec.offset);
-        symstrtab_size = link_sec.size;
-      }
+    auto syms_or_err = elf_file.symbols(&sym_shdr);
+    if (!syms_or_err) {
+      llvm::consumeError(syms_or_err.takeError());
+      continue;
     }
 
-    size_t sym_count = sec.size / 24;
-    for (size_t j = 0; j < sym_count; ++j) {
-      if (sec.offset + (j + 1) * 24 > elf_size)
-        break;
-      const uint8_t *sym_entry = elf + sec.offset + j * 24;
+    auto strtab_or_err = elf_file.getStringTableForSymtab(sym_shdr, shdrs);
+    if (!strtab_or_err) {
+      llvm::consumeError(strtab_or_err.takeError());
+      continue;
+    }
 
-      ElfSymbol sym;
-      uint32_t st_name;
-      std::memcpy(&st_name, sym_entry, 4);
-      sym.info = sym_entry[4];
-      std::memcpy(&sym.shndx, sym_entry + 6, 2);
-      std::memcpy(&sym.value, sym_entry + 8, 8);
-      std::memcpy(&sym.size, sym_entry + 16, 8);
+    for (const auto &sym : *syms_or_err) {
+      ElfSymbol esym;
+      esym.info = sym.st_info;
+      esym.shndx = sym.st_shndx;
+      esym.value = sym.st_value;
+      esym.size = sym.st_size;
 
-      if (symstrtab && st_name < symstrtab_size)
-        sym.name = symstrtab + st_name;
+      auto sym_name_or_err = sym.getName(*strtab_or_err);
+      if (sym_name_or_err)
+        esym.name = sym_name_or_err->str();
+      else
+        llvm::consumeError(sym_name_or_err.takeError());
 
-      info.symbols.push_back(std::move(sym));
+      info.symbols.push_back(std::move(esym));
     }
   }
 
@@ -276,7 +311,8 @@ static void UpdateKernelDescriptor(uint8_t *elf_data, size_t elf_size,
     if (sym.shndx >= elf_info.sections.size())
       continue;
     auto &sec = elf_info.sections[sym.shndx];
-    uint64_t kd_file_offset = sec.offset + sym.value;
+    if (sym.value < sec.addr) continue;
+    uint64_t kd_file_offset = sec.offset + (sym.value - sec.addr);
     if (kd_file_offset + 64 > elf_size)
       continue;
     uint8_t *kd = elf_data + kd_file_offset;
@@ -323,22 +359,23 @@ static NopSled *FindNearestSled(std::vector<NopSled> &sleds, uint64_t offset,
 
 // ── GrowElfWithTrampolines ──────────────────────────────────────────────────
 
-static uint8_t *GrowElfWithTrampolines(const uint8_t *elf, size_t elf_size,
-                                       const ElfInfo &elf_info,
-                                       const std::vector<Trampoline> &trampolines,
-                                       size_t *out_size) {
+static MallocBuffer GrowElfWithTrampolines(const uint8_t *elf, size_t elf_size,
+                                            const ElfInfo &elf_info,
+                                            const std::vector<Trampoline> &trampolines) {
   size_t tramp_total = 0;
   for (auto &t : trampolines)
     tramp_total += t.bytes.size();
   if (tramp_total == 0)
-    return nullptr;
+    return {};
   if (tramp_total > SIZE_MAX - elf_size)
-    return nullptr;
+    return {};
 
   size_t new_elf_size = elf_size + tramp_total;
-  uint8_t *new_elf = static_cast<uint8_t *>(std::malloc(new_elf_size));
-  if (!new_elf)
-    return nullptr;
+  MallocBuffer buf(new_elf_size);
+  if (!buf)
+    return {};
+
+  uint8_t *new_elf = buf.data;
 
   uint64_t text_end = elf_info.text_offset + elf_info.text_size;
   std::memcpy(new_elf, elf, text_end);
@@ -405,6 +442,5 @@ static uint8_t *GrowElfWithTrampolines(const uint8_t *elf, size_t elf_size,
     }
   }
 
-  *out_size = new_elf_size;
-  return new_elf;
+  return buf;
 }

@@ -1,278 +1,6 @@
-// comgr-hotswap-transpiler.h — Cross-family ISA transpiler (GFX12 -> GFX9)
+// comgr-hotswap-transpiler-handlers.inc — Instruction translation handlers for cross-family transpiler
 // Included inside the anonymous namespace of comgr-hotswap.cpp.
 // Not a standalone compilation unit.
-
-// ── NeedsTranspile ───────────────────────────────────────────────────────────
-
-static bool NeedsTranspileImpl(const std::string &source_isa,
-                               const std::string &target_isa) {
-  std::string src_cpu = ExtractCPU(source_isa);
-  std::string tgt_cpu = ExtractCPU(target_isa);
-  if (src_cpu.empty() || tgt_cpu.empty()) return false;
-  auto isGFX9 = [](const std::string &cpu) {
-    return cpu.size() >= 4 && cpu[3] == '9';
-  };
-  auto isGFX12 = [](const std::string &cpu) {
-    return cpu.size() >= 5 && cpu[3] == '1' && cpu[4] == '2';
-  };
-  return isGFX12(src_cpu) && isGFX9(tgt_cpu);
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// Cross-Family ISA Transpiler (GFX12 → GFX9)
-// ═══════════════════════════════════════════════════════════════════════════════
-
-// ── Mnemonic Translation Tables ──────────────────────────────────────────────
-
-struct MnemonicMapping {
-  const char* gfx12;
-  const char* gfx9;
-};
-
-static const MnemonicMapping kGlobalMemMappings[] = {
-    {"global_load_b32", "global_load_dword"},
-    {"global_load_b64", "global_load_dwordx2"},
-    {"global_load_b96", "global_load_dwordx3"},
-    {"global_load_b128", "global_load_dwordx4"},
-    {"global_load_u8", "global_load_ubyte"},
-    {"global_load_i8", "global_load_sbyte"},
-    {"global_load_u16", "global_load_ushort"},
-    {"global_load_i16", "global_load_sshort"},
-    {"global_load_d16_u8", "global_load_ubyte_d16"},
-    {"global_load_d16_i8", "global_load_sbyte_d16"},
-    {"global_load_d16_b16", "global_load_short_d16"},
-    {"global_load_d16_hi_u8", "global_load_ubyte_d16_hi"},
-    {"global_load_d16_hi_i8", "global_load_sbyte_d16_hi"},
-    {"global_load_d16_hi_b16", "global_load_short_d16_hi"},
-    {"global_store_b8", "global_store_byte"},
-    {"global_store_b16", "global_store_short"},
-    {"global_store_b32", "global_store_dword"},
-    {"global_store_b64", "global_store_dwordx2"},
-    {"global_store_b96", "global_store_dwordx3"},
-    {"global_store_b128", "global_store_dwordx4"},
-    {"global_load_addtid_b32", "global_load_dword_addtid"},
-    {"global_store_addtid_b32", "global_store_dword_addtid"},
-};
-
-static const MnemonicMapping kFlatMemMappings[] = {
-    {"flat_load_b32", "flat_load_dword"},
-    {"flat_load_b64", "flat_load_dwordx2"},
-    {"flat_load_b96", "flat_load_dwordx3"},
-    {"flat_load_b128", "flat_load_dwordx4"},
-    {"flat_load_u8", "flat_load_ubyte"},
-    {"flat_load_i8", "flat_load_sbyte"},
-    {"flat_load_u16", "flat_load_ushort"},
-    {"flat_load_i16", "flat_load_sshort"},
-    {"flat_load_d16_u8", "flat_load_ubyte_d16"},
-    {"flat_load_d16_i8", "flat_load_sbyte_d16"},
-    {"flat_load_d16_b16", "flat_load_short_d16"},
-    {"flat_load_d16_hi_u8", "flat_load_ubyte_d16_hi"},
-    {"flat_load_d16_hi_i8", "flat_load_sbyte_d16_hi"},
-    {"flat_load_d16_hi_b16", "flat_load_short_d16_hi"},
-    {"flat_store_b8", "flat_store_byte"},
-    {"flat_store_b16", "flat_store_short"},
-    {"flat_store_b32", "flat_store_dword"},
-    {"flat_store_b64", "flat_store_dwordx2"},
-    {"flat_store_b96", "flat_store_dwordx3"},
-    {"flat_store_b128", "flat_store_dwordx4"},
-};
-
-static const MnemonicMapping kScratchMemMappings[] = {
-    {"scratch_load_b32", "scratch_load_dword"},
-    {"scratch_load_b64", "scratch_load_dwordx2"},
-    {"scratch_load_b96", "scratch_load_dwordx3"},
-    {"scratch_load_b128", "scratch_load_dwordx4"},
-    {"scratch_load_u8", "scratch_load_ubyte"},
-    {"scratch_load_i8", "scratch_load_sbyte"},
-    {"scratch_load_u16", "scratch_load_ushort"},
-    {"scratch_load_i16", "scratch_load_sshort"},
-    {"scratch_load_d16_u8", "scratch_load_ubyte_d16"},
-    {"scratch_load_d16_i8", "scratch_load_sbyte_d16"},
-    {"scratch_load_d16_b16", "scratch_load_short_d16"},
-    {"scratch_load_d16_hi_u8", "scratch_load_ubyte_d16_hi"},
-    {"scratch_load_d16_hi_i8", "scratch_load_sbyte_d16_hi"},
-    {"scratch_load_d16_hi_b16", "scratch_load_short_d16_hi"},
-    {"scratch_store_b8", "scratch_store_byte"},
-    {"scratch_store_b16", "scratch_store_short"},
-    {"scratch_store_b32", "scratch_store_dword"},
-    {"scratch_store_b64", "scratch_store_dwordx2"},
-    {"scratch_store_b96", "scratch_store_dwordx3"},
-    {"scratch_store_b128", "scratch_store_dwordx4"},
-};
-
-static const MnemonicMapping kBufferMemMappings[] = {
-    {"buffer_load_b32", "buffer_load_dword"},
-    {"buffer_load_b64", "buffer_load_dwordx2"},
-    {"buffer_load_b96", "buffer_load_dwordx3"},
-    {"buffer_load_b128", "buffer_load_dwordx4"},
-    {"buffer_load_u8", "buffer_load_ubyte"},
-    {"buffer_load_i8", "buffer_load_sbyte"},
-    {"buffer_load_u16", "buffer_load_ushort"},
-    {"buffer_load_i16", "buffer_load_sshort"},
-    {"buffer_load_d16_u8", "buffer_load_ubyte_d16"},
-    {"buffer_load_d16_i8", "buffer_load_sbyte_d16"},
-    {"buffer_load_d16_b16", "buffer_load_short_d16"},
-    {"buffer_load_d16_hi_u8", "buffer_load_ubyte_d16_hi"},
-    {"buffer_load_d16_hi_i8", "buffer_load_sbyte_d16_hi"},
-    {"buffer_load_d16_hi_b16", "buffer_load_short_d16_hi"},
-    {"buffer_store_b8", "buffer_store_byte"},
-    {"buffer_store_b16", "buffer_store_short"},
-    {"buffer_store_b32", "buffer_store_dword"},
-    {"buffer_store_b64", "buffer_store_dwordx2"},
-    {"buffer_store_b96", "buffer_store_dwordx3"},
-    {"buffer_store_b128", "buffer_store_dwordx4"},
-};
-
-static const MnemonicMapping kDSMappings[] = {
-    {"ds_load_b32", "ds_read_b32"},
-    {"ds_load_b64", "ds_read_b64"},
-    {"ds_load_b96", "ds_read_b96"},
-    {"ds_load_b128", "ds_read_b128"},
-    {"ds_load_u8", "ds_read_u8"},
-    {"ds_load_i8", "ds_read_i8"},
-    {"ds_load_u16", "ds_read_u16"},
-    {"ds_load_i16", "ds_read_i16"},
-    {"ds_load_2addr_b32", "ds_read2_b32"},
-    {"ds_load_2addr_stride64_b32", "ds_read2st64_b32"},
-    {"ds_load_2addr_b64", "ds_read2_b64"},
-    {"ds_load_2addr_stride64_b64", "ds_read2st64_b64"},
-    {"ds_load_u8_d16", "ds_read_u8_d16"},
-    {"ds_load_i8_d16", "ds_read_i8_d16"},
-    {"ds_load_u16_d16", "ds_read_u16_d16"},
-    {"ds_load_u8_d16_hi", "ds_read_u8_d16_hi"},
-    {"ds_load_i8_d16_hi", "ds_read_i8_d16_hi"},
-    {"ds_load_u16_d16_hi", "ds_read_u16_d16_hi"},
-    {"ds_load_addtid_b32", "ds_read_addtid_b32"},
-    {"ds_store_b32", "ds_write_b32"},
-    {"ds_store_b64", "ds_write_b64"},
-    {"ds_store_b128", "ds_write_b128"},
-    {"ds_store_2addr_b32", "ds_write2_b32"},
-    {"ds_store_2addr_stride64_b32", "ds_write2st64_b32"},
-    {"ds_store_b8", "ds_write_b8"},
-    {"ds_store_b16", "ds_write_b16"},
-};
-
-static const MnemonicMapping kSMEMMappings[] = {
-    {"s_load_b32", "s_load_dword"},
-    {"s_load_b64", "s_load_dwordx2"},
-    {"s_load_b96", "s_load_dwordx3"},
-    {"s_load_b128", "s_load_dwordx4"},
-    {"s_load_b256", "s_load_dwordx8"},
-    {"s_load_b512", "s_load_dwordx16"},
-    {"s_store_b32", "s_store_dword"},
-    {"s_store_b64", "s_store_dwordx2"},
-    {"s_store_b128", "s_store_dwordx4"},
-    {"s_buffer_load_b32", "s_buffer_load_dword"},
-    {"s_buffer_load_b64", "s_buffer_load_dwordx2"},
-    {"s_buffer_load_b128", "s_buffer_load_dwordx4"},
-    {"s_buffer_load_b256", "s_buffer_load_dwordx8"},
-    {"s_buffer_load_b512", "s_buffer_load_dwordx16"},
-};
-
-static const MnemonicMapping kScalarALURenames[] = {
-    {"s_add_co_u32", "s_add_u32"},
-    {"s_sub_co_u32", "s_sub_u32"},
-    {"s_add_co_ci_u32", "s_addc_u32"},
-    {"s_sub_co_ci_u32", "s_subb_u32"},
-    {"s_add_co_i32", "s_add_i32"},
-    {"s_sub_co_i32", "s_sub_i32"},
-    {"s_and_not1_b32", "s_andn2_b32"},
-    {"s_and_not1_b64", "s_andn2_b64"},
-    {"s_or_not1_b32", "s_orn2_b32"},
-    {"s_or_not1_b64", "s_orn2_b64"},
-};
-
-static const MnemonicMapping kVALURenames[] = {
-    {"v_max_num_f32", "v_max_f32"},
-    {"v_min_num_f32", "v_min_f32"},
-    {"v_max_num_f16", "v_max_f16"},
-    {"v_min_num_f16", "v_min_f16"},
-    {"v_max_num_f64", "v_max_f64"},
-    {"v_min_num_f64", "v_min_f64"},
-    {"v_maxmin_num_f32", "v_maxmin_f32"},
-    {"v_minmax_num_f32", "v_minmax_f32"},
-    {"v_maxmin_num_f16", "v_maxmin_f16"},
-    {"v_minmax_num_f16", "v_minmax_f16"},
-    {"v_add_nc_u32", "v_add_u32"},
-    {"v_sub_nc_u32", "v_sub_u32"},
-    {"v_add_nc_i32", "v_add_i32"},
-    {"v_sub_nc_i32", "v_sub_i32"},
-};
-
-static const MnemonicMapping kGlobalAtomicRenames[] = {
-    {"global_atomic_add_u32", "global_atomic_add"},
-    {"global_atomic_sub_u32", "global_atomic_sub"},
-    {"global_atomic_and_b32", "global_atomic_and"},
-    {"global_atomic_or_b32", "global_atomic_or"},
-    {"global_atomic_xor_b32", "global_atomic_xor"},
-    {"global_atomic_min_i32", "global_atomic_smin"},
-    {"global_atomic_max_i32", "global_atomic_smax"},
-    {"global_atomic_min_u32", "global_atomic_umin"},
-    {"global_atomic_max_u32", "global_atomic_umax"},
-    {"global_atomic_swap_b32", "global_atomic_swap"},
-    {"global_atomic_cmpswap_b32", "global_atomic_cmpswap"},
-    {"global_atomic_add_u64", "global_atomic_add_x2"},
-    {"global_atomic_sub_u64", "global_atomic_sub_x2"},
-    {"global_atomic_and_b64", "global_atomic_and_x2"},
-    {"global_atomic_or_b64", "global_atomic_or_x2"},
-    {"global_atomic_xor_b64", "global_atomic_xor_x2"},
-    {"global_atomic_swap_b64", "global_atomic_swap_x2"},
-    {"global_atomic_cmpswap_b64", "global_atomic_cmpswap_x2"},
-    {"global_atomic_add_f32", "global_atomic_add_f32"},
-    {"global_atomic_pk_add_f16", "global_atomic_pk_add_f16"},
-};
-
-static const MnemonicMapping kFlatAtomicRenames[] = {
-    {"flat_atomic_add_u32", "flat_atomic_add"},
-    {"flat_atomic_sub_u32", "flat_atomic_sub"},
-    {"flat_atomic_and_b32", "flat_atomic_and"},
-    {"flat_atomic_or_b32", "flat_atomic_or"},
-    {"flat_atomic_xor_b32", "flat_atomic_xor"},
-    {"flat_atomic_min_i32", "flat_atomic_smin"},
-    {"flat_atomic_max_i32", "flat_atomic_smax"},
-    {"flat_atomic_min_u32", "flat_atomic_umin"},
-    {"flat_atomic_max_u32", "flat_atomic_umax"},
-    {"flat_atomic_swap_b32", "flat_atomic_swap"},
-    {"flat_atomic_cmpswap_b32", "flat_atomic_cmpswap"},
-    {"flat_atomic_add_u64", "flat_atomic_add_x2"},
-    {"flat_atomic_sub_u64", "flat_atomic_sub_x2"},
-    {"flat_atomic_swap_b64", "flat_atomic_swap_x2"},
-    {"flat_atomic_cmpswap_b64", "flat_atomic_cmpswap_x2"},
-};
-
-static const MnemonicMapping kDSAtomicRenames[] = {
-    {"ds_add_u32", "ds_add_u32"},
-    {"ds_add_rtn_u32", "ds_add_rtn_u32"},
-    {"ds_cmpstore_b32", "ds_cmpst_b32"},
-    {"ds_cmpstore_rtn_b32", "ds_cmpst_rtn_b32"},
-    {"ds_cmpstore_b64", "ds_cmpst_b64"},
-    {"ds_cmpstore_rtn_b64", "ds_cmpst_rtn_b64"},
-};
-
-static std::unordered_map<std::string, std::string> BuildMnemonicMap() {
-  std::unordered_map<std::string, std::string> map;
-  auto addMappings = [&](const MnemonicMapping* mappings, size_t count) {
-    for (size_t i = 0; i < count; ++i)
-      map[mappings[i].gfx12] = mappings[i].gfx9;
-  };
-  addMappings(kGlobalMemMappings, sizeof(kGlobalMemMappings) / sizeof(kGlobalMemMappings[0]));
-  addMappings(kFlatMemMappings, sizeof(kFlatMemMappings) / sizeof(kFlatMemMappings[0]));
-  addMappings(kScratchMemMappings, sizeof(kScratchMemMappings) / sizeof(kScratchMemMappings[0]));
-  addMappings(kBufferMemMappings, sizeof(kBufferMemMappings) / sizeof(kBufferMemMappings[0]));
-  addMappings(kDSMappings, sizeof(kDSMappings) / sizeof(kDSMappings[0]));
-  addMappings(kSMEMMappings, sizeof(kSMEMMappings) / sizeof(kSMEMMappings[0]));
-  addMappings(kScalarALURenames, sizeof(kScalarALURenames) / sizeof(kScalarALURenames[0]));
-  addMappings(kVALURenames, sizeof(kVALURenames) / sizeof(kVALURenames[0]));
-  addMappings(kGlobalAtomicRenames, sizeof(kGlobalAtomicRenames) / sizeof(kGlobalAtomicRenames[0]));
-  addMappings(kFlatAtomicRenames, sizeof(kFlatAtomicRenames) / sizeof(kFlatAtomicRenames[0]));
-  addMappings(kDSAtomicRenames, sizeof(kDSAtomicRenames) / sizeof(kDSAtomicRenames[0]));
-  return map;
-}
-
-static const std::unordered_map<std::string, std::string>& GetMnemonicMap() {
-  static auto map = BuildMnemonicMap();
-  return map;
-}
 
 // ── Wave32→Wave64 EXEC Patterns ─────────────────────────────────────────────
 
@@ -618,7 +346,7 @@ static std::vector<TaintResult> AnalyzeTTMPTaint(
         text.find("HW_REG_IB_STS2") != std::string::npos) {
       tr.action = TaintAction::Skip;
       for (auto r : defs) TaintReg(r, tainted, MRI);
-      if (dump) std::cerr << "hotswap: taint: SKIP (HW_REG_IB_STS2): " << text << "\n";
+      if (dump) HotswapLog(HotswapLogLevel::Debug) << "hotswap: taint: SKIP (HW_REG_IB_STS2): " << text << "\n";
       results.push_back(tr);
       continue;
     }
@@ -626,7 +354,7 @@ static std::vector<TaintResult> AnalyzeTTMPTaint(
     if ((mnemonic == "s_setreg_imm32_b32" || mnemonic == "s_setreg_b32") &&
         text.find("HW_REG_WAVE_MODE") != std::string::npos) {
       tr.action = TaintAction::Skip;
-      if (dump) std::cerr << "hotswap: taint: SKIP (HW_REG_WAVE_MODE): " << text << "\n";
+      if (dump) HotswapLog(HotswapLogLevel::Debug) << "hotswap: taint: SKIP (HW_REG_WAVE_MODE): " << text << "\n";
       results.push_back(tr);
       continue;
     }
@@ -646,7 +374,7 @@ static std::vector<TaintResult> AnalyzeTTMPTaint(
           if (ClassifyReg(r, MRI) == RegKind::SCC)
             UntaintReg(r, tainted, MRI);
         }
-        if (dump) std::cerr << "hotswap: taint: REPLACE (s_cselect ttmp → "
+        if (dump) HotswapLog(HotswapLogLevel::Debug) << "hotswap: taint: REPLACE (s_cselect ttmp → "
                             << tr.replace_dst << " = " << tr.replace_src << "): " << text << "\n";
       } else {
         tr.action = TaintAction::Skip;
@@ -655,7 +383,7 @@ static std::vector<TaintResult> AnalyzeTTMPTaint(
           if (kind == RegKind::SGPR || kind == RegKind::SCC)
             TaintReg(r, tainted, MRI);
         }
-        if (dump) std::cerr << "hotswap: taint: SKIP (direct TTMP): " << text << "\n";
+        if (dump) HotswapLog(HotswapLogLevel::Debug) << "hotswap: taint: SKIP (direct TTMP): " << text << "\n";
       }
       results.push_back(tr);
       continue;
@@ -664,7 +392,7 @@ static std::vector<TaintResult> AnalyzeTTMPTaint(
     if (mnemonic.find("s_load_") == 0 || mnemonic.find("s_buffer_load_") == 0) {
       for (auto r : defs) UntaintReg(r, tainted, MRI);
       if (dump && !tainted.empty())
-        std::cerr << "hotswap: taint: KEEP (s_load clears taint on defs): " << text << "\n";
+        HotswapLog(HotswapLogLevel::Debug) << "hotswap: taint: KEEP (s_load clears taint on defs): " << text << "\n";
       results.push_back(tr);
       continue;
     }
@@ -676,7 +404,7 @@ static std::vector<TaintResult> AnalyzeTTMPTaint(
       if (any_tainted) {
         tr.action = TaintAction::Skip;
         for (auto r : defs) TaintReg(r, tainted, MRI);
-        if (dump) std::cerr << "hotswap: taint: SKIP (s_cmp tainted): " << text << "\n";
+        if (dump) HotswapLog(HotswapLogLevel::Debug) << "hotswap: taint: SKIP (s_cmp tainted): " << text << "\n";
         results.push_back(tr);
         continue;
       }
@@ -703,14 +431,14 @@ static std::vector<TaintResult> AnalyzeTTMPTaint(
         if (kind == RegKind::SGPR || kind == RegKind::SCC)
           TaintReg(r, tainted, MRI);
       }
-      if (dump) std::cerr << "hotswap: taint: SKIP (all srcs tainted): " << text << "\n";
+      if (dump) HotswapLog(HotswapLogLevel::Debug) << "hotswap: taint: SKIP (all srcs tainted): " << text << "\n";
       results.push_back(tr);
       continue;
     }
 
     if (has_tainted_src && has_untainted_sgpr_src) {
       for (auto r : defs) UntaintReg(r, tainted, MRI);
-      if (dump) std::cerr << "hotswap: taint: KEEP (mixed taint, clear defs): " << text << "\n";
+      if (dump) HotswapLog(HotswapLogLevel::Debug) << "hotswap: taint: KEEP (mixed taint, clear defs): " << text << "\n";
       results.push_back(tr);
       continue;
     }
@@ -723,123 +451,6 @@ static std::vector<TaintResult> AnalyzeTTMPTaint(
 
   return results;
 }
-
-// ── Kernel Descriptor Patching for Wave64 ────────────────────────────────────
-
-static void PatchKernelDescriptorsForWave64(uint8_t* elf, size_t elf_size,
-                                             const ElfInfo& info) {
-  if (info.text_idx < 0) return;
-  const uint8_t* text = elf + info.text_offset;
-
-  for (uint64_t offset = 0; offset + 64 <= info.text_size; offset += 256) {
-    uint64_t entry_offset;
-    std::memcpy(&entry_offset, text + offset + 16, 8);
-    if (entry_offset != 256) continue;
-
-    uint32_t rsrc1;
-    std::memcpy(&rsrc1, text + offset + 48, 4);
-    rsrc1 &= 0x00FFFFFFu;
-    rsrc1 |= (1u << 21) | (1u << 23);
-
-    uint32_t vgpr_field12 = rsrc1 & 0x3Fu;
-    uint32_t sgpr_field12_kd = (rsrc1 >> 6) & 0x3Fu;
-    uint32_t num_vgprs = (vgpr_field12 + 1u) * 12u;
-    if (num_vgprs < 8u) num_vgprs = 8u;
-    num_vgprs += 4u;
-    uint32_t gfx9_vgpr = (num_vgprs / 4u) - 1u;
-    if (gfx9_vgpr > 62u) gfx9_vgpr = 62u;
-    uint32_t rsrc1_vgpr_field = gfx9_vgpr + 1u;
-    if (rsrc1_vgpr_field > 63u) rsrc1_vgpr_field = 63u;
-    rsrc1 &= ~0xFFFu;
-    rsrc1 |= (rsrc1_vgpr_field << 6u);
-    {
-      uint32_t orig_sgpr_field = sgpr_field12_kd;
-      uint32_t num_sgprs = (orig_sgpr_field + 1u) * 16u + 8u;
-      const char* sgpr_key = ".sgpr_count";
-      for (size_t i = 0; i + 12 < elf_size; i++) {
-        if (std::memcmp(elf + i, sgpr_key, 11) == 0) {
-          uint8_t val = elf[i + 11];
-          uint32_t sc = (val <= 0x7F) ? val : (val == 0xCC ? elf[i+12] : 0);
-          if (sc + 8 > num_sgprs) num_sgprs = sc + 8;
-          break;
-        }
-      }
-      uint32_t gfx9_sgpr = (num_sgprs / 8u) - 1u;
-      if (gfx9_sgpr > 12u) gfx9_sgpr = 12u;
-      rsrc1 |= gfx9_sgpr;
-    }
-    std::memcpy(elf + info.text_offset + offset + 48, &rsrc1, 4);
-
-    uint32_t rsrc2;
-    std::memcpy(&rsrc2, text + offset + 52, 4);
-    rsrc2 |= (1u << 7);
-    rsrc2 |= (1u << 8);
-    rsrc2 |= (1u << 9);
-    std::memcpy(elf + info.text_offset + offset + 52, &rsrc2, 4);
-
-    uint16_t props;
-    std::memcpy(&props, text + offset + 56, 2);
-    props = static_cast<uint16_t>((static_cast<uint32_t>(props) & ~(1u << 10)) &
-                                  0xFFFFu);
-    std::memcpy(elf + info.text_offset + offset + 56, &props, 2);
-
-    uint32_t rsrc3 = gfx9_vgpr;
-    std::memcpy(elf + info.text_offset + offset + 44, &rsrc3, 4);
-  }
-}
-
-// ── ELF Metadata Patching ────────────────────────────────────────────────────
-
-static void PatchElfMetadata(uint8_t* elf, size_t elf_size,
-                              const std::string& target_cpu) {
-  uint32_t e_flags;
-  std::memcpy(&e_flags, elf + 48, 4);
-  uint8_t target_mach = 0;
-  if (target_cpu == "gfx950") target_mach = 0x4f;
-  else if (target_cpu == "gfx942") target_mach = 0x4c;
-  else if (target_cpu == "gfx90a") target_mach = 0x42;
-  if (target_mach != 0) {
-    e_flags = (e_flags & ~0xFFu) | target_mach;
-    std::memcpy(elf + 48, &e_flags, 4);
-  }
-
-  std::string old_isa_full = "amdgcn-amd-amdhsa--gfx1250";
-  std::string new_isa_full = "amdgcn-amd-amdhsa--" + target_cpu;
-  for (size_t i = 0; i + old_isa_full.size() <= elf_size; ++i) {
-    if (std::memcmp(elf + i, old_isa_full.data(), old_isa_full.size()) == 0) {
-      if (new_isa_full.size() <= old_isa_full.size()) {
-        std::memcpy(elf + i, new_isa_full.data(), new_isa_full.size());
-        for (size_t j = new_isa_full.size(); j < old_isa_full.size(); ++j)
-          elf[i + j] = ' ';
-      }
-    }
-  }
-
-  for (size_t i = 0; i + 7 <= elf_size; ++i) {
-    if (std::memcmp(elf + i, "gfx1250", 7) == 0) {
-      if (target_cpu.size() <= 7) {
-        std::memcpy(elf + i, target_cpu.c_str(), target_cpu.size());
-        for (size_t j = target_cpu.size(); j < 7; ++j)
-          elf[i + j] = '0';
-      }
-    }
-  }
-
-  {
-    const char* wf_key = ".wavefront_size";
-    size_t wf_key_len = 15;
-    for (size_t i = 0; i + wf_key_len + 1 <= elf_size; ++i) {
-      if (std::memcmp(elf + i, wf_key, wf_key_len) == 0) {
-        uint8_t val = elf[i + wf_key_len];
-        if (val == 0x20) {
-          elf[i + wf_key_len] = 0x40;
-          std::cerr << "hotswap: transpile: patched wavefront_size 32 → 64\n";
-        }
-      }
-    }
-  }
-}
-
 
 // Forward declaration for recursive dispatch from HandleVOPDInstruction
 static std::vector<std::string> TranslateInstruction(const std::string& asm_line,
@@ -1000,7 +611,8 @@ static TranslationResult HandleBitopInstruction(
 
 static TranslationResult HandleSALUFloat(
     const std::string& line, const std::string& mnemonic,
-    const std::string&, const std::string&, int, int, bool) {
+    const std::string&, const std::string&, int scale_temp_vgpr, int, bool) {
+  const std::string vtemp = "v" + std::to_string(scale_temp_vgpr);
   // s_add_nc_u64 / s_sub_nc_u64
   if (mnemonic == "s_add_nc_u64" || mnemonic == "s_sub_nc_u64") {
     auto operands = ParseOperandList(line, mnemonic);
@@ -1065,14 +677,14 @@ static TranslationResult HandleSALUFloat(
       if (operands.size() >= 3) {
         std::vector<std::string> result;
         if (mnemonic == "s_fmac_f32") {
-          result.push_back("v_mov_b32_e32 v6, " + operands[1]);
-          result.push_back("v_mul_f32_e32 v6, " + operands[2] + ", v6");
-          result.push_back("v_add_f32_e32 v6, " + operands[0] + ", v6");
-          result.push_back("v_readfirstlane_b32 " + operands[0] + ", v6");
+          result.push_back("v_mov_b32_e32 " + vtemp + ", " + operands[1]);
+          result.push_back("v_mul_f32_e32 " + vtemp + ", " + operands[2] + ", " + vtemp);
+          result.push_back("v_add_f32_e32 " + vtemp + ", " + operands[0] + ", " + vtemp);
+          result.push_back("v_readfirstlane_b32 " + operands[0] + ", " + vtemp);
         } else {
-          result.push_back("v_mov_b32_e32 v6, " + operands[1]);
-          result.push_back(salu_it->second + " v6, " + operands[2] + ", v6");
-          result.push_back("v_readfirstlane_b32 " + operands[0] + ", v6");
+          result.push_back("v_mov_b32_e32 " + vtemp + ", " + operands[1]);
+          result.push_back(salu_it->second + " " + vtemp + ", " + operands[2] + ", " + vtemp);
+          result.push_back("v_readfirstlane_b32 " + operands[0] + ", " + vtemp);
         }
         return result;
       }
@@ -1095,8 +707,8 @@ static TranslationResult HandleSALUFloat(
       else if (mnemonic == "s_cvt_i32_f32") valu_mnem = "v_cvt_i32_f32_e32";
       else valu_mnem = "v_cvt_pkrtz_f16_f32";
       return std::vector<std::string>{
-        valu_mnem + " v6, " + operands[1],
-        "v_readfirstlane_b32 " + operands[0] + ", v6"
+        valu_mnem + " " + vtemp + ", " + operands[1],
+        "v_readfirstlane_b32 " + operands[0] + ", " + vtemp
       };
     }
   }
@@ -1106,8 +718,8 @@ static TranslationResult HandleSALUFloat(
     auto operands = ParseOperandList(line, mnemonic);
     if (operands.size() >= 2)
       return std::vector<std::string>{
-        "v_sqrt_f32_e32 v6, " + operands[1],
-        "v_readfirstlane_b32 " + operands[0] + ", v6"
+        "v_sqrt_f32_e32 " + vtemp + ", " + operands[1],
+        "v_readfirstlane_b32 " + operands[0] + ", " + vtemp
       };
   }
 
@@ -1123,8 +735,8 @@ static TranslationResult HandleSALUFloat(
       auto operands = ParseOperandList(line, mnemonic);
       if (operands.size() >= 2)
         return std::vector<std::string>{
-          "v_mov_b32_e32 v6, " + operands[1],
-          cmp_it->second + " " + operands[0] + ", v6",
+          "v_mov_b32_e32 " + vtemp + ", " + operands[1],
+          cmp_it->second + " " + operands[0] + ", " + vtemp,
           "s_cmp_lg_u32 vcc_lo, 0"
         };
     }
@@ -1166,7 +778,8 @@ static TranslationResult HandleVOPDInstruction(
 
 static TranslationResult HandleWMMAInstruction(
     const std::string& line, const std::string& mnemonic,
-    const std::string&, const std::string& target_cpu, int, int, bool);
+    const std::string&, const std::string& target_cpu,
+    int scale_temp_vgpr, int cmpx_temp_sgpr, bool);
 
 // ── Handler: Constant Bus Fix ────────────────────────────────────────────────
 
@@ -1192,7 +805,8 @@ static TranslationResult HandleExecOperation(
 
 static TranslationResult Handle64BitVALU(
     const std::string& line, const std::string& mnemonic,
-    const std::string&, const std::string&, int, int, bool) {
+    const std::string&, const std::string&, int scale_temp_vgpr, int, bool) {
+  const std::string vtemp = "v" + std::to_string(scale_temp_vgpr);
   if (mnemonic == "v_add_nc_u64" || mnemonic == "v_add_nc_u64_e32" ||
       mnemonic == "v_add_u64" || mnemonic == "v_add_u64_e32") {
     std::string ops = line.substr(line.find(mnemonic) + mnemonic.size());
@@ -1251,16 +865,16 @@ static TranslationResult Handle64BitVALU(
       bool src1_sgpr = !src1.empty() && src1[0] == 's';
       if (vdst != src2) {
         if (src0_sgpr && src1_sgpr) {
-          result.push_back("v_mov_b32_e32 v6, " + src0);
-          result.push_back("v_mul_lo_u32 " + vdst + ", v6, " + src1);
+          result.push_back("v_mov_b32_e32 " + vtemp + ", " + src0);
+          result.push_back("v_mul_lo_u32 " + vdst + ", " + vtemp + ", " + src1);
         } else {
           result.push_back("v_mul_lo_u32 " + vdst + ", " + src0 + ", " + src1);
         }
         result.push_back("v_add_u32_e32 " + vdst + ", " + vdst + ", " + src2);
       } else {
-        result.push_back("v_mov_b32_e32 v6, " + src0);
-        result.push_back("v_mul_lo_u32 v6, v6, " + src1);
-        result.push_back("v_add_u32_e32 " + vdst + ", v6, " + src2);
+        result.push_back("v_mov_b32_e32 " + vtemp + ", " + src0);
+        result.push_back("v_mul_lo_u32 " + vtemp + ", " + vtemp + ", " + src1);
+        result.push_back("v_add_u32_e32 " + vdst + ", " + vtemp + ", " + src2);
       }
       return result;
     }
@@ -1273,7 +887,9 @@ static TranslationResult Handle64BitVALU(
 
 static TranslationResult HandleConstantBusFix(
     const std::string& line, const std::string& mnemonic,
-    const std::string&, const std::string&, int, int, bool) {
+    const std::string&, const std::string&, int scale_temp_vgpr, int cmpx_temp_sgpr, bool) {
+  const std::string vtemp = "v" + std::to_string(scale_temp_vgpr);
+  const std::string stemp = "s" + std::to_string(cmpx_temp_sgpr);
   // v_cndmask_b32_e64
   if (mnemonic == "v_cndmask_b32_e64") {
     auto operands = ParseOperandList(line, mnemonic);
@@ -1292,8 +908,8 @@ static TranslationResult HandleConstantBusFix(
       bool src1_sgpr = !src1.empty() && src1[0] == 's';
       bool mask_sgpr = !mask.empty() && (mask[0] == 's' || mask.substr(0, 3) == "vcc" || mask.substr(0, 4) == "exec");
       if (src1_sgpr && mask_sgpr) {
-        result.push_back("v_mov_b32_e32 v6, " + src1);
-        src1 = "v6";
+        result.push_back("v_mov_b32_e32 " + vtemp + ", " + src1);
+        src1 = vtemp;
       }
       std::string fixed = mnemonic + " " + operands[0];
       for (size_t i = 1; i < operands.size(); ++i) fixed += ", " + operands[i];
@@ -1310,8 +926,8 @@ static TranslationResult HandleConstantBusFix(
       bool src0_lit = src0.size() > 2 && src0[0] == '0' && (src0[1] == 'x' || src0[1] == 'X');
       if (src0_sgpr || src0_lit) {
         std::vector<std::string> result;
-        result.push_back("v_mov_b32_e32 v6, " + src0);
-        src0 = "v6";
+        result.push_back("v_mov_b32_e32 " + vtemp + ", " + src0);
+        src0 = vtemp;
         std::string fixed = mnemonic + " " + operands[0];
         for (size_t i = 1; i < operands.size(); ++i) fixed += ", " + operands[i];
         result.push_back(fixed);
@@ -1370,8 +986,8 @@ static TranslationResult HandleConstantBusFix(
           if (neg) op = op.substr(1);
           if (op.size() > 2 && op[0] == '0' && (op[1] == 'x' || op[1] == 'X')) {
             std::vector<std::string> result;
-            result.push_back("v_mov_b32_e32 v6, " + op);
-            operands[i] = (neg ? "-" : "") + std::string("v6");
+            result.push_back("v_mov_b32_e32 " + vtemp + ", " + op);
+            operands[i] = (neg ? "-" : "") + vtemp;
             std::string fixed = mnemonic + " " + operands[0];
             for (size_t j = 1; j < operands.size(); ++j) fixed += ", " + operands[j];
             result.push_back(fixed);
@@ -1388,8 +1004,8 @@ static TranslationResult HandleConstantBusFix(
       auto operands = ParseOperandList(line, mnemonic);
       if (operands.size() >= 4) {
         return std::vector<std::string>{
-          "s_mov_b32 s13, " + operands[3],
-          "v_perm_b32 " + operands[0] + ", " + operands[1] + ", " + operands[2] + ", s13"
+          "s_mov_b32 " + stemp + ", " + operands[3],
+          "v_perm_b32 " + operands[0] + ", " + operands[1] + ", " + operands[2] + ", " + stemp
         };
       }
     }
@@ -1400,11 +1016,11 @@ static TranslationResult HandleConstantBusFix(
     if (operands.size() >= 4) {
       std::vector<std::string> result;
       const std::string& literal = (mnemonic == "v_fmamk_f32") ? operands[2] : operands[3];
-      result.push_back("v_mov_b32_e32 v6, " + literal);
+      result.push_back("v_mov_b32_e32 " + vtemp + ", " + literal);
       if (mnemonic == "v_fmamk_f32")
-        result.push_back("v_fma_f32 " + operands[0] + ", " + operands[1] + ", v6, " + operands[3]);
+        result.push_back("v_fma_f32 " + operands[0] + ", " + operands[1] + ", " + vtemp + ", " + operands[3]);
       else
-        result.push_back("v_fma_f32 " + operands[0] + ", " + operands[1] + ", " + operands[2] + ", v6");
+        result.push_back("v_fma_f32 " + operands[0] + ", " + operands[1] + ", " + operands[2] + ", " + vtemp);
       return result;
     }
   }
@@ -1465,7 +1081,10 @@ static TranslationResult HandleMemoryInstruction(
 
 static TranslationResult HandleWMMAInstruction(
     const std::string& line, const std::string& mnemonic,
-    const std::string&, const std::string& target_cpu, int, int, bool) {
+    const std::string&, const std::string& target_cpu,
+    int scale_temp_vgpr, int cmpx_temp_sgpr, bool) {
+  const std::string stemp = "s" + std::to_string(cmpx_temp_sgpr);
+  const std::string stemp2 = "s" + std::to_string(cmpx_temp_sgpr + 1);
   struct WmmaMfmaMapping { const char* wmma_mnem; const char* mfma_mnem; int dst_vgprs_w32; int src_vgprs_w32; int dst_vgprs_w64; int src_vgprs_w64; };
   static const WmmaMfmaMapping kWmmaMap[] = {
     {"v_wmma_f32_16x16x32_f16", "v_mfma_f32_16x16x32_f16", 8, 8, 4, 4},
@@ -1509,7 +1128,10 @@ static TranslationResult HandleWMMAInstruction(
   int src_w64 = mapping->src_vgprs_w64;
   int dst_w64 = mapping->dst_vgprs_w64;
   std::string mfma_mnem = mapping->mfma_mnem;
-  int t_lane = 248, t_src = 249, t_addr = 250, t_upper = 251, t0 = 252, t1 = 253;
+  int wmma_temp_base = (scale_temp_vgpr + 2 >= 248) ? scale_temp_vgpr + 2 : 248;
+  int t_lane = wmma_temp_base, t_src = wmma_temp_base + 1,
+      t_addr = wmma_temp_base + 2, t_upper = wmma_temp_base + 3,
+      t0 = wmma_temp_base + 4, t1 = wmma_temp_base + 5;
   int mfma_srcA = srcA.first, mfma_srcB = srcB.first, mfma_acc = acc.first, mfma_dst = dst.first;
   auto regRange = [](int base, int count) -> std::string {
     if (count == 1) return "v" + std::to_string(base);
@@ -1526,8 +1148,8 @@ static TranslationResult HandleWMMAInstruction(
     }
   };
   result.push_back("; BEGIN WMMA→MFMA: " + mnemonic + " → " + mfma_mnem);
-  result.push_back("s_mov_b32 s12, exec_lo");
-  result.push_back("s_mov_b32 s13, exec_hi");
+  result.push_back("s_mov_b32 " + stemp + ", exec_lo");
+  result.push_back("s_mov_b32 " + stemp2 + ", exec_hi");
   result.push_back("s_mov_b64 exec, -1");
   result.push_back("v_mbcnt_lo_u32_b32 v" + std::to_string(t_lane) + ", -1, 0");
   result.push_back("v_mbcnt_hi_u32_b32 v" + std::to_string(t_lane) + ", -1, v" + std::to_string(t_lane));
@@ -1553,7 +1175,7 @@ static TranslationResult HandleWMMAInstruction(
   } else {
     result.push_back(mfma_mnem + " " + regRange(mfma_dst, dst_w64) + ", " + regRange(mfma_srcA, src_w64) + ", " + regRange(mfma_srcB, src_w64) + ", " + regRange(mfma_acc, dst_w64));
   }
-  result.push_back("s_mov_b32 exec_lo, s12");
+  result.push_back("s_mov_b32 exec_lo, " + stemp);
   result.push_back("s_mov_b32 exec_hi, 0");
   result.push_back("v_mbcnt_lo_u32_b32 v" + std::to_string(t_lane) + ", -1, 0");
   result.push_back("v_lshlrev_b32_e32 v" + std::to_string(t_addr) + ", 3, v" + std::to_string(t_lane));
@@ -1564,8 +1186,8 @@ static TranslationResult HandleWMMAInstruction(
     result.push_back("ds_bpermute_b32 v" + std::to_string(dst.first + dst_w64 + i) + ", v" + std::to_string(t0) + ", v" + std::to_string(mfma_dst + i));
   }
   result.push_back("s_waitcnt lgkmcnt(0)");
-  result.push_back("s_mov_b32 exec_lo, s12");
-  result.push_back("s_mov_b32 exec_hi, s13");
+  result.push_back("s_mov_b32 exec_lo, " + stemp);
+  result.push_back("s_mov_b32 exec_hi, " + stemp2);
   result.push_back("; END WMMA→MFMA: " + mfma_mnem);
   return result;
 }
@@ -1597,6 +1219,7 @@ static bool HandleVCmpExpansion(
     std::string& line, const std::string& mnemonic,
     std::vector<std::string>& result,
     int scale_temp_vgpr, int cmpx_temp_sgpr, bool compact_mode) {
+  const std::string vtemp = "v" + std::to_string(scale_temp_vgpr);
   // v_cmp_*_e64 with vcc dest + large literal → VOPC _e32
   if (mnemonic.find("v_cmp_") == 0 && mnemonic.find("_e64") != std::string::npos) {
     size_t op_start = line.find(mnemonic) + mnemonic.size();
@@ -1621,8 +1244,8 @@ static bool HandleVCmpExpansion(
           };
           std::string base_mnem = mnemonic.substr(0, mnemonic.size() - 4) + "_e32";
           if (is_ll(srcs[1]) && !is_ll(srcs[0])) {
-            result.push_back("v_mov_b32_e32 v6, " + srcs[1]);
-            result.push_back(base_mnem + " " + srcs[0] + ", v6");
+            result.push_back("v_mov_b32_e32 " + vtemp + ", " + srcs[1]);
+            result.push_back(base_mnem + " " + srcs[0] + ", " + vtemp);
             return true;
           } else if (is_ll(srcs[0])) {
             result.push_back(base_mnem + " " + srcs[0] + ", " + srcs[1]);
@@ -1710,8 +1333,8 @@ static bool HandleVCmpExpansion(
                 if (ls != std::string::npos) {
                   std::string lt = lo.substr(ls, le - ls + 1);
                   if (is_ll(lt)) {
-                    result.insert(result.begin() + ri, "v_mov_b32_e32 v6, " + lt);
-                    result[ri + 1] = result[ri + 1].substr(0, lc + 1) + " v6";
+                    result.insert(result.begin() + ri, "v_mov_b32_e32 " + vtemp + ", " + lt);
+                    result[ri + 1] = result[ri + 1].substr(0, lc + 1) + " " + vtemp;
                   }
                 }
               }
@@ -1739,8 +1362,8 @@ static bool HandleVCmpExpansion(
       if (ls != std::string::npos) {
         std::string lt = last_op.substr(ls, le - ls + 1);
         if (is_ll(lt)) {
-          result.push_back("v_mov_b32_e32 v6, " + lt);
-          line = line.substr(0, last_comma + 1) + " v6";
+          result.push_back("v_mov_b32_e32 " + vtemp + ", " + lt);
+          line = line.substr(0, last_comma + 1) + " " + vtemp;
         }
       }
     }
@@ -1919,750 +1542,4 @@ static std::vector<std::string> TranslateInstruction(const std::string& asm_line
   for (auto& l : exec_result)
     result.push_back(std::move(l));
   return result;
-}
-
-
-
-// ── TranspileStats ───────────────────────────────────────────────────────────
-
-struct TranspileStats {
-  uint32_t total_instructions = 0;
-  uint32_t translated_passthrough = 0;
-  uint32_t translated_renamed = 0;
-  uint32_t translated_waitcnt = 0;
-  uint32_t translated_exec = 0;
-  uint32_t unsupported_skipped = 0;
-};
-
-// ── TranspileCodeObject ──────────────────────────────────────────────────────
-
-static amd_comgr_status_t
-TranspileCodeObject(const void *elf_data, size_t elf_size,
-                    const std::string &source_isa,
-                    const std::string &target_isa,
-                    void **out_data, size_t *out_size,
-                    amd_comgr_hotswap_result_t *result) {
-  TranspileStats stats;
-  std::string src_cpu = ExtractCPU(source_isa);
-  std::string tgt_cpu = ExtractCPU(target_isa);
-
-  std::cerr << "hotswap: transpile: " << src_cpu << " → " << tgt_cpu << "\n";
-
-  const uint8_t* elf = static_cast<const uint8_t*>(elf_data);
-  size_t size = elf_size;
-
-  ElfInfo elf_info;
-  if (!ParseElfInfo(elf, size, elf_info)) {
-    std::cerr << "hotswap: transpile: failed to parse ELF\n";
-    return AMD_COMGR_STATUS_ERROR;
-  }
-  if (elf_info.text_size == 0) {
-    std::cerr << "hotswap: transpile: empty .text section\n";
-    uint8_t *buf = static_cast<uint8_t *>(std::malloc(elf_size));
-    if (!buf) return AMD_COMGR_STATUS_ERROR;
-    std::memcpy(buf, elf_data, elf_size);
-    *out_data = buf;
-    *out_size = elf_size;
-    return AMD_COMGR_STATUS_SUCCESS;
-  }
-
-  LLVMState &src_state = InitLLVMCached(source_isa);
-  if (!src_state.valid) {
-    std::cerr << "hotswap: transpile: failed to init source ISA '" << source_isa << "'\n";
-    return AMD_COMGR_STATUS_ERROR;
-  }
-
-  const uint8_t* text = elf + elf_info.text_offset;
-
-  struct KernelInfo {
-    uint64_t desc_offset;
-    uint64_t code_offset;
-  };
-  std::vector<KernelInfo> kernels;
-  for (uint64_t off = 0; off + 256 <= elf_info.text_size; off += 256) {
-    uint64_t entry_offset;
-    std::memcpy(&entry_offset, text + off + 16, 8);
-    if (entry_offset == 256)
-      kernels.push_back({off, off + 256});
-  }
-
-  if (kernels.empty()) {
-    uint64_t code_offset_in_text = 0;
-    uint64_t text_vaddr = 0;
-    if (elf_info.text_idx >= 0)
-      text_vaddr = elf_info.sections[elf_info.text_idx].addr;
-    for (const auto& sec : elf_info.sections) {
-      if (sec.name == ".rodata" && sec.size >= 64) {
-        for (uint64_t off = 0; off + 64 <= sec.size; off += 64) {
-          const uint8_t* desc = elf + sec.offset + off;
-          uint64_t entry;
-          std::memcpy(&entry, desc + 16, 8);
-          if (entry > 0 && entry < 1000000) {
-            uint64_t kd_vaddr = sec.addr + off;
-            uint64_t code_vaddr = kd_vaddr + entry;
-            if (code_vaddr >= text_vaddr)
-              code_offset_in_text = code_vaddr - text_vaddr;
-            break;
-          }
-        }
-        break;
-      }
-    }
-    std::cerr << "hotswap: transpile: no embedded descriptors in .text, "
-              << "code at .text internal offset " << code_offset_in_text << "\n";
-    kernels.push_back({code_offset_in_text, code_offset_in_text});
-  } else {
-    std::cerr << "hotswap: transpile: found " << kernels.size()
-              << " embedded kernel descriptor(s)\n";
-  }
-
-  std::string translated_asm;
-  translated_asm += ".text\n";
-
-  for (size_t ki = 0; ki < kernels.size(); ++ki) {
-    auto& kern = kernels[ki];
-
-    uint64_t emit_end = kern.code_offset;
-    uint64_t emit_start = (kern.desc_offset != kern.code_offset) ? kern.desc_offset : 0;
-    for (uint64_t i = emit_start; i < emit_end; i += 4) {
-      if (i + 4 > elf_info.text_size) break;
-      uint32_t word;
-      std::memcpy(&word, text + i, 4);
-      std::ostringstream oss;
-      oss << ".long 0x" << std::hex << word;
-      translated_asm += oss.str() + "\n";
-    }
-
-    uint32_t num_vgprs12 = 8;
-    uint32_t num_sgprs12 = 16;
-    {
-      uint32_t rsrc1_src = 0;
-      if (kern.desc_offset != kern.code_offset &&
-          kern.desc_offset + 52 <= elf_info.text_size)
-        std::memcpy(&rsrc1_src, text + kern.desc_offset + 48, 4);
-      else {
-        for (const auto& sec : elf_info.sections) {
-          if (sec.name == ".rodata" && sec.size >= 64) {
-            for (uint64_t off = 0; off + 64 <= sec.size; off += 64) {
-              const uint8_t* desc = elf + sec.offset + off;
-              uint64_t entry;
-              std::memcpy(&entry, desc + 16, 8);
-              if (entry > 0 && entry < 1000000) { std::memcpy(&rsrc1_src, desc + 48, 4); break; }
-            }
-            break;
-          }
-        }
-      }
-      if (rsrc1_src) {
-        num_vgprs12 = ((rsrc1_src & 0x3Fu) + 1u) * 12u;
-        num_sgprs12 = (((rsrc1_src >> 6) & 0x3Fu) + 1u) * 16u;
-        std::cerr << "hotswap: transpile: GFX12 RSRC1=0x" << std::hex
-                  << rsrc1_src << std::dec << " → num_vgprs12=" << num_vgprs12
-                  << " num_sgprs12=" << num_sgprs12 << "\n";
-      }
-    }
-    if (num_vgprs12 < 8u) num_vgprs12 = 8u;
-    if (num_sgprs12 < 16u) num_sgprs12 = 16u;
-
-    // Scan MSGPACK for .sgpr_count
-    {
-      const char* key = ".sgpr_count";
-      size_t key_len = 11;
-      for (const auto& sec : elf_info.sections) {
-        if (sec.name == ".note" && sec.size > key_len + 2) {
-          for (size_t i = 0; i + key_len + 1 < sec.size; i++) {
-            if (std::memcmp(elf + sec.offset + i, key, key_len) == 0) {
-              uint8_t val = elf[sec.offset + i + key_len];
-              uint32_t sgpr_count = 0;
-              if (val <= 0x7F) sgpr_count = val;
-              else if (val == 0xCC) sgpr_count = elf[sec.offset + i + key_len + 1];
-              else if (val == 0xCD) {
-                uint16_t v16;
-                std::memcpy(&v16, elf + sec.offset + i + key_len + 1, 2);
-                sgpr_count = (v16 >> 8) | ((v16 & 0xFF) << 8);
-              }
-              if (sgpr_count > num_sgprs12) num_sgprs12 = sgpr_count;
-              break;
-            }
-          }
-          break;
-        }
-      }
-    }
-
-    uint32_t save_vgpr_x = num_vgprs12;
-    uint32_t save_vgpr_y = num_vgprs12 + 1u;
-    uint32_t cmpx_temp_sgpr = num_sgprs12;
-    const std::string sv_x = "v" + std::to_string(save_vgpr_x);
-    const std::string sv_y = "v" + std::to_string(save_vgpr_y);
-
-    uint64_t code_end = elf_info.text_size;
-    if (ki + 1 < kernels.size())
-      code_end = kernels[ki + 1].desc_offset;
-
-    struct SourceInstr {
-      std::string text;
-      uint64_t pc_offset;
-      uint32_t size;
-      llvm::MCInst inst;
-      bool valid_inst;
-    };
-    std::vector<SourceInstr> source_instrs;
-    std::vector<std::string> source_lines;
-    uint64_t pos = kern.code_offset;
-    while (pos < code_end) {
-      llvm::MCInst inst;
-      uint64_t inst_size = 0;
-      llvm::ArrayRef<uint8_t> bytes(text + pos, code_end - pos);
-      auto status = src_state.disasm->getInstruction(inst, inst_size, bytes, pos, llvm::nulls());
-      if (status == llvm::MCDisassembler::Fail) {
-        if (pos + 4 <= code_end) {
-          uint32_t word;
-          std::memcpy(&word, text + pos, 4);
-          std::ostringstream oss;
-          oss << ".long 0x" << std::hex << word;
-          source_instrs.push_back({oss.str(), pos, 4, llvm::MCInst(), false});
-          source_lines.push_back(oss.str());
-        }
-        pos += 4;
-        ++stats.total_instructions;
-        continue;
-      }
-      std::string asm_text;
-      if (src_state.printer) {
-        llvm::raw_string_ostream rso(asm_text);
-        src_state.printer->printInst(&inst, 0, "", *src_state.STI, rso);
-        rso.flush();
-      }
-      size_t start = asm_text.find_first_not_of(" \t");
-      if (start != std::string::npos && start > 0)
-        asm_text = asm_text.substr(start);
-      if (!asm_text.empty()) {
-        source_instrs.push_back({asm_text, pos, static_cast<uint32_t>(inst_size), inst, true});
-        source_lines.push_back(asm_text);
-      }
-      pos += inst_size;
-      ++stats.total_instructions;
-    }
-
-    std::cerr << "hotswap: transpile: kernel " << ki << ": disassembled "
-              << source_lines.size() << " instructions\n";
-
-    // Branch label resolution
-    std::map<uint64_t, std::string> branch_labels;
-    int label_counter = 0;
-    for (size_t i = 0; i < source_instrs.size(); ++i) {
-      auto& info = source_instrs[i];
-      std::string m = TranspileExtractMnemonic(info.text);
-      bool is_branch = (m.find("s_branch") == 0 || m.find("s_cbranch_") == 0);
-      if (!is_branch) continue;
-      std::string ops = info.text.substr(info.text.find(m) + m.size());
-      size_t s = ops.find_first_not_of(" \t");
-      if (s == std::string::npos) continue;
-      std::string offset_str = ops.substr(s);
-      if (offset_str.find(".L_") == 0) continue;
-      try {
-        int64_t raw = std::stoll(offset_str, nullptr, 0);
-        int64_t simm16 = static_cast<int16_t>(raw & 0xFFFF);
-        uint64_t target_pc = info.pc_offset + 4 + simm16 * 4;
-        uint64_t snapped_pc = target_pc;
-        bool found = false;
-        for (const auto& si : source_instrs) {
-          if (si.pc_offset >= target_pc) { snapped_pc = si.pc_offset; found = true; break; }
-        }
-        if (!found && !source_instrs.empty())
-          snapped_pc = source_instrs.back().pc_offset;
-        if (branch_labels.find(snapped_pc) == branch_labels.end())
-          branch_labels[snapped_pc] = ".L_br" + std::to_string(label_counter++);
-      } catch (...) {}
-    }
-
-    // TTMP taint analysis
-    std::vector<SourceInstrForTaint> taint_input;
-    taint_input.reserve(source_instrs.size());
-    for (const auto& si : source_instrs)
-      taint_input.push_back({si.text, si.inst, si.valid_inst});
-    auto taint_results = AnalyzeTTMPTaint(taint_input, *src_state.MCII, *src_state.MRI);
-
-    for (auto& tr : taint_results) {
-      if (tr.action == TaintAction::Replace) {
-        if (tr.replace_src == "v5") tr.replace_src = sv_x;
-        else if (tr.replace_src == "v4") tr.replace_src = sv_y;
-      }
-    }
-
-    translated_asm += "v_mov_b32_e32 " + sv_x + ", s2 ; save workgroup_id_x\n";
-    translated_asm += "v_mov_b32_e32 " + sv_y + ", s3 ; save workgroup_id_y\n";
-
-    std::vector<std::pair<std::string, std::string>> replace_regs;
-    for (auto& tr : taint_results) {
-      if (tr.action == TaintAction::Replace && !tr.replace_dst.empty())
-        replace_regs.emplace_back(tr.replace_dst, tr.replace_src);
-    }
-
-    int early_exit_after = 0;
-    if (const char* ee = std::getenv("HSA_HOTSWAP_EARLY_EXIT"))
-      early_exit_after = std::atoi(ee);
-    int emitted_count = 0;
-    bool early_exit_done = false;
-
-    for (size_t ii = 0; ii < source_lines.size(); ++ii) {
-      const auto& line = source_lines[ii];
-
-      if (ii < source_instrs.size()) {
-        auto lbl = branch_labels.find(source_instrs[ii].pc_offset);
-        if (lbl != branch_labels.end())
-          translated_asm += lbl->second + ":\n";
-      }
-
-      if (ii < taint_results.size()) {
-        if (taint_results[ii].action == TaintAction::Skip) continue;
-        if (taint_results[ii].action == TaintAction::Replace) {
-          auto& tr = taint_results[ii];
-          translated_asm += "v_readfirstlane_b32 " + tr.replace_dst + ", " + tr.replace_src + "\n";
-          continue;
-        }
-      }
-
-      auto translated_lines = TranslateInstruction(line, src_cpu, tgt_cpu,
-                                                    save_vgpr_y + 1, cmpx_temp_sgpr, false);
-
-      if (ii < source_instrs.size() && !branch_labels.empty()) {
-        for (auto& t : translated_lines) {
-          std::string tm = TranspileExtractMnemonic(t);
-          if (tm.find("s_branch") == 0 || tm.find("s_cbranch_") == 0) {
-            size_t op_pos = t.find(tm) + tm.size();
-            std::string ops = t.substr(op_pos);
-            size_t s = ops.find_first_not_of(" \t");
-            if (s != std::string::npos) {
-              std::string off_str = ops.substr(s);
-              if (off_str.find(".L_") != 0) {
-                try {
-                  int64_t raw = std::stoll(off_str, nullptr, 0);
-                  int64_t simm16 = static_cast<int16_t>(raw & 0xFFFF);
-                  uint64_t target = source_instrs[ii].pc_offset + 4 + simm16 * 4;
-                  uint64_t snapped = target;
-                  for (const auto& si : source_instrs) {
-                    if (si.pc_offset >= target) { snapped = si.pc_offset; break; }
-                  }
-                  auto lbl = branch_labels.find(snapped);
-                  if (lbl != branch_labels.end()) t = tm + " " + lbl->second;
-                } catch (...) {}
-              }
-            }
-          }
-        }
-      }
-
-      bool translated_had_saveexec = false;
-      for (const auto& t : translated_lines) {
-        if (t.empty()) continue;
-        if (t.find("saveexec") != std::string::npos) translated_had_saveexec = true;
-        std::string m = TranspileExtractMnemonic(line);
-        if (t.find("UNSUPPORTED") != std::string::npos) ++stats.unsupported_skipped;
-        else if (t != line) {
-          std::string nm = TranspileExtractMnemonic(t);
-          if (IsWaitInstruction(m)) ++stats.translated_waitcnt;
-          else if (nm != m) ++stats.translated_renamed;
-          else if (t.find("exec_hi") != std::string::npos) ++stats.translated_exec;
-          else ++stats.translated_passthrough;
-        } else {
-          ++stats.translated_passthrough;
-        }
-        translated_asm += t + "\n";
-      }
-      ++emitted_count;
-
-      if (early_exit_after > 0 && emitted_count >= early_exit_after && !early_exit_done
-          && source_lines.size() > 400) {
-        for (size_t jj = ii + 1; jj < source_instrs.size(); jj++) {
-          auto lbl = branch_labels.find(source_instrs[jj].pc_offset);
-          if (lbl != branch_labels.end()) translated_asm += lbl->second + ":\n";
-        }
-        translated_asm += ".L_exit:\ns_waitcnt vmcnt(0) lgkmcnt(0) expcnt(0)\n";
-        translated_asm += "s_endpgm ; EARLY EXIT after " + std::to_string(emitted_count) + " instrs\n";
-        early_exit_done = true;
-        break;
-      }
-
-      if (ii < source_instrs.size()) {
-        bool has_vcmpx = false;
-        for (const auto& t : translated_lines)
-          if (t.find("v_cmpx_") != std::string::npos) { has_vcmpx = true; break; }
-        if (has_vcmpx) {
-          if (source_lines.size() > 400) {
-            translated_asm += "s_mov_b32 exec_hi, 0\n";
-          } else {
-            bool next_is_execz = false;
-            for (size_t nxt = ii + 1; nxt < source_instrs.size(); nxt++) {
-              std::string nm = TranspileExtractMnemonic(source_instrs[nxt].text);
-              if (nm.find("s_delay") == 0 || nm.find("s_wait") == 0 || nm.find("s_nop") == 0 || nm.find("s_clause") == 0) continue;
-              if (nm == "s_cbranch_execz") next_is_execz = true;
-              break;
-            }
-            if (!next_is_execz) translated_asm += "s_mov_b32 exec_hi, 0\n";
-          }
-        }
-      }
-
-      if (translated_had_saveexec) {
-        for (auto& r : replace_regs)
-          translated_asm += "v_readfirstlane_b32 " + r.first + ", " + r.second + "\n";
-      }
-    }
-  }
-
-  std::cerr << "hotswap: transpile: translated "
-            << stats.total_instructions << " instructions → "
-            << stats.translated_passthrough << " passthrough, "
-            << stats.translated_renamed << " renamed, "
-            << stats.translated_waitcnt << " waitcnt, "
-            << stats.translated_exec << " exec-widened, "
-            << stats.unsupported_skipped << " unsupported\n";
-
-  // Post-processing
-  {
-    auto replaceAll = [](std::string& s, const std::string& from, const std::string& to) {
-      size_t pos = 0;
-      while ((pos = s.find(from, pos)) != std::string::npos) {
-        s.replace(pos, from.size(), to);
-        pos += to.size();
-      }
-    };
-    // VCC branch fix
-    {
-      std::string tmp;
-      std::istringstream vfix_iss(translated_asm);
-      std::string vfix_line;
-      while (std::getline(vfix_iss, vfix_line)) {
-        if (vfix_line.find("s_cbranch_vccz") != std::string::npos ||
-            vfix_line.find("s_cbranch_vccnz") != std::string::npos)
-          tmp += "s_mov_b32 vcc_hi, 0\n";
-        tmp += vfix_line + "\n";
-      }
-      translated_asm = tmp;
-    }
-    replaceAll(translated_asm, "v_add_nc_u32 ", "v_add_u32_e32 ");
-    replaceAll(translated_asm, "v_sub_nc_u32 ", "v_sub_u32_e32 ");
-    // Strip explicit VCC mask from v_cndmask_b32_e32
-    {
-      std::string tmp;
-      std::istringstream vcc_iss(translated_asm);
-      std::string vcc_line;
-      while (std::getline(vcc_iss, vcc_line)) {
-        if (vcc_line.find("v_cndmask_b32_e32") != std::string::npos) {
-          size_t vcc_pos = vcc_line.rfind(", vcc_lo");
-          if (vcc_pos == std::string::npos) vcc_pos = vcc_line.rfind(", vcc");
-          if (vcc_pos != std::string::npos)
-            vcc_line = vcc_line.substr(0, vcc_pos);
-        }
-        tmp += vcc_line + "\n";
-      }
-      translated_asm = tmp;
-    }
-    // Fix s_load from s[8:9]+0xc with saved kernarg ptr
-    {
-      if (translated_asm.find("s_load_dword s1, s[8:9], 0xc") != std::string::npos ||
-          translated_asm.find("s_load_dword s0, s[8:9], 0xc") != std::string::npos) {
-        std::string ka_pair = "s[30:31]";
-        size_t ka_pos = translated_asm.find("; save kernarg ptr lo");
-        if (ka_pos != std::string::npos) {
-          size_t s_pos = translated_asm.rfind("s_mov_b32 s", ka_pos);
-          if (s_pos != std::string::npos) {
-            size_t n_start = s_pos + 11;
-            size_t n_end = translated_asm.find(',', n_start);
-            int lo = std::stoi(translated_asm.substr(n_start, n_end - n_start));
-            ka_pair = "s[" + std::to_string(lo) + ":" + std::to_string(lo + 1) + "]";
-          }
-        } else {
-          size_t insert_pos = translated_asm.find("; save workgroup_id_y\n");
-          if (insert_pos != std::string::npos) {
-            insert_pos = translated_asm.find('\n', insert_pos) + 1;
-            translated_asm.insert(insert_pos,
-              "s_mov_b32 s30, s0 ; save kernarg ptr lo\n"
-              "s_mov_b32 s31, s1 ; save kernarg ptr hi\n");
-          }
-        }
-        replaceAll(translated_asm, "s_load_dword s1, s[8:9], 0xc",
-                   "s_load_dword s1, " + ka_pair + ", 0x3c");
-        replaceAll(translated_asm, "s_load_dword s0, s[8:9], 0xc",
-                   "s_load_dword s0, " + ka_pair + ", 0x3c");
-      }
-    }
-  }
-
-  if (std::getenv("HSA_HOTSWAP_DUMP")) {
-    std::cerr << "hotswap: transpile: === TRANSLATED ASSEMBLY ===\n"
-              << translated_asm
-              << "hotswap: transpile: === END ASSEMBLY ===\n";
-  }
-
-  // Assemble translated text for target ISA
-  LLVMState &tgt_state = InitLLVMCached(target_isa);
-  if (!tgt_state.valid) {
-    std::cerr << "hotswap: transpile: failed to init target ISA '" << target_isa << "'\n";
-    return AMD_COMGR_STATUS_ERROR;
-  }
-
-  llvm::Triple tgt_triple("amdgcn-amd-amdhsa");
-  llvm::MCTargetOptions mc_opts;
-
-  tgt_state.Ctx->reset();
-
-  llvm::StringRef asm_ref(translated_asm);
-  auto buf = llvm::MemoryBuffer::getMemBuffer(asm_ref, "", false);
-  llvm::SourceMgr src_mgr;
-  src_mgr.AddNewSourceBuffer(std::move(buf), llvm::SMLoc());
-
-  std::string data;
-  auto data_stream = std::make_unique<llvm::raw_string_ostream>(data);
-  auto bos = std::make_unique<llvm::buffer_ostream>(*data_stream);
-
-#if LLVM_VERSION_MAJOR > 14
-  llvm::MCCodeEmitter* ce = tgt_state.target->createMCCodeEmitter(*tgt_state.MCII, *tgt_state.Ctx);
-#else
-  llvm::MCCodeEmitter* ce = tgt_state.target->createMCCodeEmitter(*tgt_state.MCII, *tgt_state.MRI, *tgt_state.Ctx);
-#endif
-  llvm::MCAsmBackend* mab = tgt_state.target->createMCAsmBackend(*tgt_state.STI, *tgt_state.MRI, mc_opts);
-
-  if (!ce || !mab) {
-    std::cerr << "hotswap: transpile: failed to create code emitter/backend\n";
-    return AMD_COMGR_STATUS_ERROR;
-  }
-
-#if LLVM_VERSION_MAJOR > 20
-  auto streamer = std::unique_ptr<llvm::MCStreamer>(
-      tgt_state.target->createMCObjectStreamer(
-          tgt_triple, *tgt_state.Ctx,
-          std::unique_ptr<llvm::MCAsmBackend>(mab),
-          mab->createObjectWriter(*bos),
-          std::unique_ptr<llvm::MCCodeEmitter>(ce), *tgt_state.STI));
-#else
-  auto streamer = std::unique_ptr<llvm::MCStreamer>(
-      tgt_state.target->createMCObjectStreamer(
-          tgt_triple, *tgt_state.Ctx,
-          std::unique_ptr<llvm::MCAsmBackend>(mab),
-          mab->createObjectWriter(*bos),
-          std::unique_ptr<llvm::MCCodeEmitter>(ce), *tgt_state.STI,
-          mc_opts.MCRelaxAll, mc_opts.MCIncrementalLinkerCompatible, false));
-#endif
-
-  if (!streamer) {
-    std::cerr << "hotswap: transpile: failed to create MC streamer\n";
-    return AMD_COMGR_STATUS_ERROR;
-  }
-
-  auto parser = std::unique_ptr<llvm::MCAsmParser>(
-      llvm::createMCAsmParser(src_mgr, *tgt_state.Ctx, *streamer, *tgt_state.MAI));
-  auto tap = std::unique_ptr<llvm::MCTargetAsmParser>(
-      tgt_state.target->createMCAsmParser(*tgt_state.STI, *parser, *tgt_state.MCII, mc_opts));
-  if (!tap) {
-    std::cerr << "hotswap: transpile: failed to create target asm parser\n";
-    return AMD_COMGR_STATUS_ERROR;
-  }
-  parser->setTargetParser(*tap);
-
-  bool asm_failed = parser->Run(true);
-  tap.reset();
-  parser.reset();
-  streamer.reset();
-  bos.reset();
-  data_stream->flush();
-
-  if (asm_failed)
-    std::cerr << "hotswap: transpile: assembly failed for " << tgt_cpu << "\n";
-
-  if (data.size() < 64) {
-    std::cerr << "hotswap: transpile: assembled output too small (" << data.size() << " bytes)\n";
-    return AMD_COMGR_STATUS_ERROR;
-  }
-
-  // Extract .text from assembled ELF
-  const uint8_t* asm_elf = reinterpret_cast<const uint8_t*>(data.data());
-  ElfInfo asm_info;
-  if (!ParseElfInfo(asm_elf, data.size(), asm_info)) {
-    std::cerr << "hotswap: transpile: failed to parse assembled ELF\n";
-    return AMD_COMGR_STATUS_ERROR;
-  }
-
-  const uint8_t* new_text = asm_elf + asm_info.text_offset;
-  uint64_t new_text_size = asm_info.text_size;
-
-  std::cerr << "hotswap: transpile: assembled " << new_text_size
-            << " bytes (original: " << elf_info.text_size << ")\n";
-
-  // Replace .text in a NEW writable ELF buffer
-  {
-    size_t new_elf_size = size;
-    uint8_t* new_elf = static_cast<uint8_t*>(std::malloc(new_elf_size));
-    if (!new_elf) return AMD_COMGR_STATUS_ERROR;
-    std::memcpy(new_elf, elf, size);
-
-    if (new_text_size <= elf_info.text_size) {
-      std::memcpy(new_elf + elf_info.text_offset, new_text, new_text_size);
-      uint8_t nop_bytes[] = {0x00, 0x00, 0x80, 0xBF};
-      for (uint64_t i = new_text_size; i + 4 <= elf_info.text_size; i += 4)
-        std::memcpy(new_elf + elf_info.text_offset + i, nop_bytes, 4);
-    } else {
-      uint64_t available = elf_info.text_size;
-      uint64_t next_section_start = new_elf_size;
-      uint16_t e_shentsize, e_shnum;
-      std::memcpy(&e_shentsize, new_elf + 58, 2);
-      std::memcpy(&e_shnum, new_elf + 60, 2);
-      uint64_t e_shoff;
-      std::memcpy(&e_shoff, new_elf + 40, 8);
-      for (uint16_t i = 0; i < e_shnum; ++i) {
-        uint64_t sh_off = e_shoff + i * e_shentsize;
-        if (sh_off + e_shentsize > new_elf_size) break;
-        uint64_t sec_offset, sec_size;
-        std::memcpy(&sec_offset, new_elf + sh_off + 24, 8);
-        std::memcpy(&sec_size, new_elf + sh_off + 32, 8);
-        if (sec_offset > elf_info.text_offset && sec_offset < next_section_start && sec_size > 0)
-          next_section_start = sec_offset;
-      }
-      available = next_section_start - elf_info.text_offset;
-
-      if (new_text_size <= available) {
-        std::memcpy(new_elf + elf_info.text_offset, new_text, new_text_size);
-        for (uint16_t i = 0; i < e_shnum; ++i) {
-          uint64_t sh_off = e_shoff + i * e_shentsize;
-          if (static_cast<int>(i) == elf_info.text_idx) {
-            std::memcpy(new_elf + sh_off + 32, &new_text_size, 8);
-            break;
-          }
-        }
-      } else {
-        uint64_t text_end = elf_info.text_offset + elf_info.text_size;
-        uint64_t delta = ((new_text_size - elf_info.text_size + 255u) / 256u) * 256u;
-        uint64_t grown_size = new_elf_size + delta;
-        uint8_t* grown = (uint8_t*)calloc(1, grown_size);
-        std::memcpy(grown, new_elf, text_end);
-        std::memcpy(grown + elf_info.text_offset, new_text, new_text_size);
-        uint64_t new_sec_size = elf_info.text_size + delta;
-        for (uint64_t p = new_text_size; p < new_sec_size; p += 4) {
-          uint8_t nop[] = {0x00, 0x00, 0x80, 0xBF};
-          std::memcpy(grown + elf_info.text_offset + p, nop, 4);
-        }
-        uint64_t tail = new_elf_size - text_end;
-        if (tail > 0) std::memcpy(grown + text_end + delta, new_elf + text_end, tail);
-        std::memcpy(&e_shoff, grown + 40, 8);
-        e_shoff += delta;
-        std::memcpy(grown + 40, &e_shoff, 8);
-        for (uint16_t i = 0; i < e_shnum; ++i) {
-          uint64_t sh_off = e_shoff + i * e_shentsize;
-          uint64_t sec_offset;
-          std::memcpy(&sec_offset, grown + sh_off + 24, 8);
-          if (sec_offset > elf_info.text_offset) {
-            sec_offset += delta;
-            std::memcpy(grown + sh_off + 24, &sec_offset, 8);
-          }
-          if (static_cast<int>(i) == elf_info.text_idx)
-            std::memcpy(grown + sh_off + 32, &new_sec_size, 8);
-        }
-        uint64_t e_phoff;
-        uint16_t e_phentsize, e_phnum;
-        std::memcpy(&e_phoff, grown + 32, 8);
-        std::memcpy(&e_phentsize, grown + 54, 2);
-        std::memcpy(&e_phnum, grown + 56, 2);
-        for (uint16_t i = 0; i < e_phnum; ++i) {
-          uint64_t ph_off = e_phoff + i * e_phentsize;
-          if (ph_off + 56 > grown_size) break;
-          uint64_t p_offset, p_filesz, p_memsz;
-          std::memcpy(&p_offset, grown + ph_off + 8, 8);
-          std::memcpy(&p_filesz, grown + ph_off + 32, 8);
-          std::memcpy(&p_memsz, grown + ph_off + 40, 8);
-          if (p_offset == elf_info.text_offset) {
-            p_filesz += delta; p_memsz += delta;
-            std::memcpy(grown + ph_off + 32, &p_filesz, 8);
-            std::memcpy(grown + ph_off + 40, &p_memsz, 8);
-          } else if (p_offset > elf_info.text_offset) {
-            p_offset += delta;
-            std::memcpy(grown + ph_off + 8, &p_offset, 8);
-          }
-        }
-        free(new_elf);
-        new_elf = grown;
-        new_elf_size = grown_size;
-      }
-    }
-
-    *out_data = new_elf;
-    *out_size = new_elf_size;
-
-    // Patch kernel descriptors for wave64
-    ElfInfo updated_info;
-    if (ParseElfInfo(new_elf, new_elf_size, updated_info)) {
-      PatchKernelDescriptorsForWave64(new_elf, new_elf_size, updated_info);
-      for (auto& sec : updated_info.sections) {
-        if (sec.name == ".rodata" && sec.size >= 64) {
-          for (uint64_t off = 0; off + 64 <= sec.size; off += 64) {
-            uint8_t* desc = new_elf + sec.offset + off;
-            uint64_t entry;
-            std::memcpy(&entry, desc + 16, 8);
-            if (entry == 0 || entry > 1000000) continue;
-            uint32_t rsrc1;
-            std::memcpy(&rsrc1, desc + 48, 4);
-            rsrc1 &= 0x00FFFFFFu;
-            rsrc1 |= (1u << 21) | (1u << 23);
-            uint32_t vgpr_field12 = rsrc1 & 0x3Fu;
-            uint32_t sgpr_field12_rd = (rsrc1 >> 6) & 0x3Fu;
-            uint32_t num_vgprs = (vgpr_field12 + 1u) * 12u;
-            if (num_vgprs < 8u) num_vgprs = 8u;
-            num_vgprs += 4u;
-            uint32_t gfx9_vgpr = (num_vgprs / 4u) - 1u;
-            if (gfx9_vgpr > 62u) gfx9_vgpr = 62u;
-            uint32_t rsrc1_vgpr_field = gfx9_vgpr;
-            if (rsrc1_vgpr_field > 63u) rsrc1_vgpr_field = 63u;
-            rsrc1 &= ~0xFFFu;
-            rsrc1 |= (rsrc1_vgpr_field << 6u);
-            {
-              uint32_t num_sgprs_rd = (sgpr_field12_rd + 1u) * 16u + 8u;
-              const char* sgpr_key = ".sgpr_count";
-              for (size_t si = 0; si + 12 < new_elf_size; si++) {
-                if (std::memcmp(new_elf + si, sgpr_key, 11) == 0) {
-                  uint8_t val = new_elf[si + 11];
-                  uint32_t sc = (val <= 0x7F) ? val : (val == 0xCC ? new_elf[si+12] : 0);
-                  if (sc + 8 > num_sgprs_rd) num_sgprs_rd = sc + 8;
-                  break;
-                }
-              }
-              uint32_t gfx9_sgpr = (num_sgprs_rd / 8u) - 1u;
-              if (gfx9_sgpr > 12u) gfx9_sgpr = 12u;
-              rsrc1 |= gfx9_sgpr;
-            }
-            std::memcpy(desc + 48, &rsrc1, 4);
-            uint32_t rsrc2;
-            std::memcpy(&rsrc2, desc + 52, 4);
-            rsrc2 |= (1u << 7) | (1u << 8) | (1u << 9);
-            std::memcpy(desc + 52, &rsrc2, 4);
-            uint16_t props;
-            std::memcpy(&props, desc + 56, 2);
-            props = static_cast<uint16_t>(
-                (static_cast<uint32_t>(props) & ~(1u << 10)) & 0xFFFFu);
-            std::memcpy(desc + 56, &props, 2);
-            uint32_t rsrc3 = gfx9_vgpr;
-            std::memcpy(desc + 44, &rsrc3, 4);
-          }
-        }
-      }
-    }
-
-    // Patch ELF metadata
-    PatchElfMetadata(new_elf, new_elf_size, tgt_cpu);
-  }
-
-  result->rules_matched = stats.translated_passthrough + stats.translated_renamed + stats.translated_waitcnt;
-
-  std::cerr << "hotswap: transpile: complete (" << src_cpu << " → " << tgt_cpu << ")\n";
-
-  if (auto* dump_path = std::getenv("HSA_HOTSWAP_DUMP_ELF")) {
-    FILE* fp = fopen(dump_path, "wb");
-    if (fp) {
-      fwrite(*out_data, 1, *out_size, fp);
-      fclose(fp);
-      std::cerr << "hotswap: transpile: dumped patched ELF to " << dump_path << "\n";
-    }
-  }
-
-  return AMD_COMGR_STATUS_SUCCESS;
 }

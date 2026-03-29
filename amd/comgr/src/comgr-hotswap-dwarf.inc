@@ -1,47 +1,26 @@
-// comgr-hotswap-dwarf.h — DWARF / debug update helpers
+// comgr-hotswap-dwarf.inc — DWARF / debug update helpers
 // Included inside the anonymous namespace of comgr-hotswap.cpp.
 // Not a standalone compilation unit.
 
 // ── DWARF / Debug update helpers ─────────────────────────────────────────────
 
 static void EncodeSLEB128(int64_t value, std::vector<uint8_t> &out) {
-  bool more = true;
-  while (more) {
-    uint8_t byte = value & 0x7f;
-    value >>= 7;
-    if ((value == 0 && !(byte & 0x40)) || (value == -1 && (byte & 0x40)))
-      more = false;
-    else
-      byte |= 0x80;
-    out.push_back(byte);
-  }
+  uint8_t buf[16];
+  unsigned n = llvm::encodeSLEB128(value, buf);
+  out.insert(out.end(), buf, buf + n);
 }
 
 static uint64_t DecodeULEB128(const uint8_t *p, size_t *n) {
-  uint64_t result = 0;
-  unsigned shift = 0;
-  size_t i = 0;
-  do {
-    result |= static_cast<uint64_t>(p[i] & 0x7f) << shift;
-    shift += 7;
-  } while (p[i++] & 0x80);
-  *n = i;
+  unsigned nn = 0;
+  uint64_t result = llvm::decodeULEB128(p, &nn);
+  *n = nn;
   return result;
 }
 
 static int64_t DecodeSLEB128(const uint8_t *p, size_t *n) {
-  int64_t result = 0;
-  unsigned shift = 0;
-  size_t i = 0;
-  uint8_t byte;
-  do {
-    byte = p[i++];
-    result |= static_cast<int64_t>(byte & 0x7f) << shift;
-    shift += 7;
-  } while (byte & 0x80);
-  if (shift < 64 && (byte & 0x40))
-    result |= -(static_cast<int64_t>(1) << shift);
-  *n = i;
+  unsigned nn = 0;
+  int64_t result = llvm::decodeSLEB128(p, &nn);
+  *n = nn;
   return result;
 }
 
@@ -76,16 +55,18 @@ static uint8_t *FindSectionHeader(uint8_t *elf, size_t elf_size,
   return nullptr;
 }
 
-static uint8_t *AddTrampolineSymbols(
-    uint8_t *elf, size_t elf_size,
+static bool AddTrampolineSymbols(
+    MallocBuffer &elf_buf,
     const std::vector<Trampoline> &trampolines,
-    uint64_t text_size_before, int text_section_idx,
-    size_t *out_size) {
-  if (trampolines.empty()) { *out_size = elf_size; return elf; }
+    uint64_t text_size_before, int text_section_idx) {
+  if (trampolines.empty()) return true;
+
+  uint8_t *elf = elf_buf.data;
+  size_t elf_size = elf_buf.size;
 
   int symtab_idx = -1;
   uint8_t *symtab_sh = FindSectionHeader(elf, elf_size, ".symtab", &symtab_idx);
-  if (!symtab_sh) { *out_size = elf_size; return elf; }
+  if (!symtab_sh) return true;
 
   uint64_t symtab_offset, symtab_size;
   uint32_t symtab_link, symtab_info;
@@ -96,7 +77,7 @@ static uint8_t *AddTrampolineSymbols(
 
   uint16_t e_shnum;
   std::memcpy(&e_shnum, elf + 60, 2);
-  if (symtab_link >= e_shnum) { *out_size = elf_size; return elf; }
+  if (symtab_link >= e_shnum) return true;
 
   uint64_t e_shoff;
   uint16_t e_shentsize;
@@ -135,8 +116,9 @@ static uint8_t *AddTrampolineSymbols(
   size_t new_symtab_total = symtab_size + extra_sym;
   size_t new_elf_size = elf_size + new_strtab_total + new_symtab_total;
 
-  uint8_t *out = static_cast<uint8_t *>(std::malloc(new_elf_size));
-  if (!out) { *out_size = elf_size; return elf; }
+  MallocBuffer out_buf(new_elf_size);
+  if (!out_buf) return false;
+  uint8_t *out = out_buf.data;
   std::memcpy(out, elf, elf_size);
 
   uint64_t new_str_off = elf_size;
@@ -180,9 +162,8 @@ static uint8_t *AddTrampolineSymbols(
   uint32_t new_info = static_cast<uint32_t>(local_end + entries.size());
   std::memcpy(new_sym_sh + 44, &new_info, 4);
 
-  std::free(elf);
-  *out_size = new_elf_size;
-  return out;
+  elf_buf = std::move(out_buf);
+  return true;
 }
 
 struct DebugLineRow {
@@ -294,22 +275,23 @@ static std::vector<DebugLineRow> ScanDebugLineTable(
   return rows;
 }
 
-static uint8_t *PatchDebugLine(
-    uint8_t *elf, size_t elf_size,
+static bool PatchDebugLine(
+    MallocBuffer &elf_buf,
     const std::vector<Trampoline> &trampolines,
-    uint64_t text_size_before, uint64_t text_addr,
-    size_t *out_size) {
-  if (trampolines.empty()) { *out_size = elf_size; return elf; }
+    uint64_t text_size_before, uint64_t text_addr) {
+  if (trampolines.empty()) return true;
+
+  uint8_t *elf = elf_buf.data;
+  size_t elf_size = elf_buf.size;
 
   uint8_t *dl_sh = FindSectionHeader(elf, elf_size, ".debug_line");
-  if (!dl_sh) { *out_size = elf_size; return elf; }
+  if (!dl_sh) return true;
 
   uint64_t dl_offset, dl_size;
   std::memcpy(&dl_offset, dl_sh + 24, 8);
   std::memcpy(&dl_size, dl_sh + 32, 8);
-  if (dl_offset + dl_size > elf_size || dl_size < 15) {
-    *out_size = elf_size; return elf;
-  }
+  if (dl_offset + dl_size > elf_size || dl_size < 15)
+    return true;
 
   auto rows = ScanDebugLineTable(elf + dl_offset, dl_size);
 
@@ -356,12 +338,13 @@ static uint8_t *PatchDebugLine(
     running += t.bytes.size();
   }
 
-  if (extra.empty()) { *out_size = elf_size; return elf; }
+  if (extra.empty()) return true;
 
   size_t new_dl_size = dl_size + extra.size();
   size_t new_elf_size = elf_size + new_dl_size;
-  uint8_t *out = static_cast<uint8_t *>(std::malloc(new_elf_size));
-  if (!out) { *out_size = elf_size; return elf; }
+  MallocBuffer out_buf(new_elf_size);
+  if (!out_buf) return false;
+  uint8_t *out = out_buf.data;
   std::memcpy(out, elf, elf_size);
 
   uint64_t new_dl_off = elf_size;
@@ -380,9 +363,8 @@ static uint8_t *PatchDebugLine(
     std::memcpy(new_dl_sh + 32, &sz64, 8);
   }
 
-  std::free(elf);
-  *out_size = new_elf_size;
-  return out;
+  elf_buf = std::move(out_buf);
+  return true;
 }
 
 static void PatchDebugRanges(uint8_t *elf, size_t elf_size,
@@ -409,6 +391,10 @@ static void PatchDebugRanges(uint8_t *elf, size_t elf_size,
   }
 }
 
+// Byte-scanning heuristic: looks for 8-byte sequences matching text_addr
+// followed by a plausible DW_AT_high_pc size value, then patches in the
+// new text size that accounts for appended trampolines.  This avoids the
+// complexity of constructing a full DWARFContext for in-place mutation.
 static void PatchDebugInfo(uint8_t *elf, size_t elf_size,
                             uint64_t text_addr, uint64_t text_size_before,
                             uint64_t tramp_total) {

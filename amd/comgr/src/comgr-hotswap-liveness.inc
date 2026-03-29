@@ -1,12 +1,12 @@
-// comgr-hotswap-liveness.h — CFG construction, backward liveness, scratch allocation
+// comgr-hotswap-liveness.inc — CFG construction, backward liveness, scratch allocation
 // Included inside the anonymous namespace of comgr-hotswap.cpp.
 // Not a standalone compilation unit.
 
 // ── Per-point VGPR liveness analysis ─────────────────────────────────────────
 
 struct RegDefUse {
-  std::set<int> defs;
-  std::set<int> uses;
+  llvm::BitVector defs{256};
+  llvm::BitVector uses{256};
 };
 
 static RegDefUse GetInstRegDefUse(const llvm::MCInst &inst,
@@ -15,11 +15,11 @@ static RegDefUse GetInstRegDefUse(const llvm::MCInst &inst,
   RegDefUse du;
   const llvm::MCInstrDesc &desc = MCII.get(inst.getOpcode());
 
-  auto addVgprRange = [&](unsigned reg, std::set<int> &out) {
+  auto addVgprRange = [&](unsigned reg, llvm::BitVector &out) {
     auto [base, count] = GetVgprRange(reg, MRI);
     if (base >= 0) {
       for (int v = base; v < base + count; ++v)
-        out.insert(v);
+        out.set(v);
     }
   };
 
@@ -197,8 +197,9 @@ static CFG BuildCFG(const std::vector<InternalDecodedInst> &decoded) {
 // ── Backward liveness analysis ───────────────────────────────────────────────
 
 struct LivenessInfo {
-  std::vector<std::set<int>> live_before;
-  std::vector<std::set<int>> live_after;
+  std::vector<llvm::BitVector> live_before;
+  std::vector<llvm::BitVector> live_after;
+  bool converged = false;
 };
 
 static LivenessInfo ComputeLiveness(
@@ -208,14 +209,14 @@ static LivenessInfo ComputeLiveness(
     const llvm::MCRegisterInfo &MRI) {
   size_t n_inst = decoded.size();
   LivenessInfo info;
-  info.live_before.resize(n_inst);
-  info.live_after.resize(n_inst);
+  info.live_before.assign(n_inst, llvm::BitVector(256));
+  info.live_after.assign(n_inst, llvm::BitVector(256));
 
   size_t n_blocks = cfg.blocks.size();
   if (n_blocks == 0) return info;
 
-  std::vector<std::set<int>> bb_live_in(n_blocks);
-  std::vector<std::set<int>> bb_live_out(n_blocks);
+  std::vector<llvm::BitVector> bb_live_in(n_blocks, llvm::BitVector(256));
+  std::vector<llvm::BitVector> bb_live_out(n_blocks, llvm::BitVector(256));
 
   bool changed = true;
   int max_iters = 200;
@@ -225,28 +226,26 @@ static LivenessInfo ComputeLiveness(
       const auto &bb = cfg.blocks[bi];
       if (bb.inst_indices.empty()) continue;
 
-      std::set<int> new_live_out;
+      llvm::BitVector new_live_out(256);
       size_t last_idx = bb.inst_indices.back();
       const auto &last = decoded[last_idx];
       if (last.mnemonic.find("s_setpc") == 0 ||
           last.mnemonic.find("s_swappc") == 0) {
-        for (int v = 0; v < 256; ++v)
-          new_live_out.insert(v);
+        new_live_out.set(0, 256);
       } else {
         for (int succ : bb.successors) {
           if (succ >= 0 && succ < static_cast<int>(n_blocks))
-            new_live_out.insert(bb_live_in[succ].begin(),
-                                bb_live_in[succ].end());
+            new_live_out |= bb_live_in[succ];
         }
       }
 
-      std::set<int> live = new_live_out;
+      llvm::BitVector live = new_live_out;
       for (int ii = static_cast<int>(bb.inst_indices.size()) - 1;
            ii >= 0; --ii) {
         size_t inst_idx = bb.inst_indices[ii];
         RegDefUse du = GetInstRegDefUse(decoded[inst_idx].inst, MCII, MRI);
-        for (int d : du.defs) live.erase(d);
-        live.insert(du.uses.begin(), du.uses.end());
+        live.reset(du.defs);
+        live |= du.uses;
       }
 
       if (live != bb_live_in[bi]) {
@@ -260,18 +259,20 @@ static LivenessInfo ComputeLiveness(
     }
   }
 
+  info.converged = !changed;
+
   for (int bi = 0; bi < static_cast<int>(n_blocks); ++bi) {
     const auto &bb = cfg.blocks[bi];
     if (bb.inst_indices.empty()) continue;
 
-    std::set<int> live = bb_live_out[bi];
+    llvm::BitVector live = bb_live_out[bi];
     for (int ii = static_cast<int>(bb.inst_indices.size()) - 1;
          ii >= 0; --ii) {
       size_t inst_idx = bb.inst_indices[ii];
       info.live_after[inst_idx] = live;
       RegDefUse du = GetInstRegDefUse(decoded[inst_idx].inst, MCII, MRI);
-      for (int d : du.defs) live.erase(d);
-      live.insert(du.uses.begin(), du.uses.end());
+      live.reset(du.defs);
+      live |= du.uses;
       info.live_before[inst_idx] = live;
     }
   }
@@ -282,26 +283,26 @@ static LivenessInfo ComputeLiveness(
 // ── Scratch register allocator ───────────────────────────────────────────────
 
 struct ScratchAllocator {
-  std::set<int> live_at_point;
+  llvm::BitVector live_at_point;
   int kd_allocated_vgprs;
   int next_above_kd;
   int extra_allocated = 0;
 
-  ScratchAllocator(const std::set<int> &live, int kd_vgprs)
+  ScratchAllocator(const llvm::BitVector &live, int kd_vgprs)
       : live_at_point(live), kd_allocated_vgprs(kd_vgprs),
         next_above_kd(kd_vgprs) {}
 
   int Alloc() {
     for (int v = kd_allocated_vgprs - 1; v >= 0; --v) {
-      if (live_at_point.find(v) == live_at_point.end()) {
-        live_at_point.insert(v);
+      if (!live_at_point.test(v)) {
+        live_at_point.set(v);
         return v;
       }
     }
     if (next_above_kd >= 256) return -1;
     int v = next_above_kd++;
     extra_allocated++;
-    live_at_point.insert(v);
+    live_at_point.set(v);
     return v;
   }
 
@@ -310,7 +311,7 @@ struct ScratchAllocator {
 
 struct ScratchPatchInfo {
   uint64_t offset;
-  std::set<int> scratch_regs;
+  llvm::BitVector scratch_regs{256};
 };
 
 static int GetKernelVgprCount(const uint8_t *elf_data, size_t elf_size,
@@ -321,7 +322,8 @@ static int GetKernelVgprCount(const uint8_t *elf_data, size_t elf_size,
     if (sym.name != kd_name) continue;
     if (sym.shndx >= elf_info.sections.size()) continue;
     const auto &sec = elf_info.sections[sym.shndx];
-    uint64_t kd_file_offset = sec.offset + sym.value;
+    if (sym.value < sec.addr) continue;
+    uint64_t kd_file_offset = sec.offset + (sym.value - sec.addr);
     if (kd_file_offset + 64 > elf_size) continue;
     uint32_t rsrc1;
     std::memcpy(&rsrc1, elf_data + kd_file_offset + 48, 4);
@@ -333,14 +335,14 @@ static int GetKernelVgprCount(const uint8_t *elf_data, size_t elf_size,
 
 // ── Post-patch verification ──────────────────────────────────────────────────
 
-static void VerifyPatchCorrectness(
+static bool VerifyPatchCorrectness(
     const uint8_t *text, uint64_t text_size,
     const LLVMState &llvm_state,
     const std::vector<ScratchPatchInfo> &scratch_patches) {
-  if (scratch_patches.empty()) return;
+  if (scratch_patches.empty()) return true;
 
   std::vector<InternalDecodedInst> decoded;
-  if (!DecodeTextSection(text, text_size, llvm_state, decoded)) return;
+  if (!DecodeTextSection(text, text_size, llvm_state, decoded)) return true;
 
   CFG cfg = BuildCFG(decoded);
   LivenessInfo liveness = ComputeLiveness(decoded, cfg,
@@ -350,18 +352,22 @@ static void VerifyPatchCorrectness(
   for (size_t i = 0; i < decoded.size(); ++i)
     offset_to_idx[decoded[i].offset] = i;
 
+  bool clean = true;
   for (const auto &sp : scratch_patches) {
     auto it = offset_to_idx.find(sp.offset);
     if (it == offset_to_idx.end()) continue;
     size_t idx = it->second;
     if (idx >= liveness.live_before.size()) continue;
 
-    for (int reg : sp.scratch_regs) {
-      if (liveness.live_before[idx].count(reg)) {
-        std::cerr << "hotswap: WARNING: scratch v" << reg
+    for (int reg = sp.scratch_regs.find_first(); reg != -1;
+         reg = sp.scratch_regs.find_next(reg)) {
+      if (liveness.live_before[idx].test(reg)) {
+        HotswapLog(HotswapLogLevel::Error) << "hotswap: WARNING: scratch v" << reg
                   << " is live at patch point 0x" << std::hex << sp.offset
                   << std::dec << " in post-patch verification\n";
+        clean = false;
       }
     }
   }
+  return clean;
 }

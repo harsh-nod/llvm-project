@@ -15,7 +15,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
-#include "amd_comgr/amd_comgr.h"
+#include "amd_comgr.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -35,6 +35,7 @@
 #include <vector>
 
 #include "llvm/Config/llvm-config.h"
+#include "llvm/ADT/BitVector.h"
 #include "llvm/MC/MCAsmBackend.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCCodeEmitter.h"
@@ -53,6 +54,10 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/TargetSelect.h"
+#include "llvm/Support/JSON.h"
+#include "llvm/Support/LEB128.h"
+#include "llvm/Object/ELF.h"
+#include "llvm/Object/ELFTypes.h"
 #include "llvm/Support/raw_ostream.h"
 #if LLVM_VERSION_MAJOR > 13
 #include "llvm/MC/TargetRegistry.h"
@@ -65,12 +70,14 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 namespace {
 
-#include "comgr-hotswap-elf.h"
-#include "comgr-hotswap-dwarf.h"
-#include "comgr-hotswap-llvm.h"
-#include "comgr-hotswap-liveness.h"
-#include "comgr-hotswap-b0a0.h"
-#include "comgr-hotswap-transpiler.h"
+#include "comgr-hotswap-elf.inc"
+#include "comgr-hotswap-dwarf.inc"
+#include "comgr-hotswap-llvm.inc"
+#include "comgr-hotswap-liveness.inc"
+#include "comgr-hotswap-b0a0.inc"
+#include "comgr-hotswap-transpiler-tables.inc"
+#include "comgr-hotswap-transpiler-handlers.inc"
+#include "comgr-hotswap-transpiler.inc"
 
 // ── RetargetCodeObject ───────────────────────────────────────────────────────
 
@@ -83,234 +90,68 @@ RetargetCodeObject(const void *elf_data, size_t elf_size,
   ElfInfo elf_info;
   const uint8_t *elf = static_cast<const uint8_t *>(elf_data);
 
-  uint8_t *buf = static_cast<uint8_t *>(std::malloc(elf_size));
+  MallocBuffer buf(elf_size);
   if (!buf) return AMD_COMGR_STATUS_ERROR;
-  std::memcpy(buf, elf, elf_size);
+  std::memcpy(buf.data, elf, elf_size);
 
-  if (!ParseElfInfo(buf, elf_size, elf_info) || elf_info.text_size == 0) {
-    *out_data = buf;
-    *out_size = elf_size;
+  if (!ParseElfInfo(buf.data, elf_size, elf_info) || elf_info.text_size == 0) {
+    *out_size = buf.size;
+    *out_data = buf.release();
     return AMD_COMGR_STATUS_SUCCESS;
   }
 
-  LLVMState &src_state = InitLLVMCached(source_isa);
-  if (!src_state.valid) {
-    std::free(buf);
+  LLVMState src_state = InitLLVMCached(source_isa);
+  if (!src_state.valid)
     return AMD_COMGR_STATUS_ERROR;
-  }
 
-  uint8_t *text = buf + elf_info.text_offset;
+  uint8_t *text = buf.data + elf_info.text_offset;
   std::vector<InternalDecodedInst> decoded;
-  if (!DecodeTextSection(text, elf_info.text_size, src_state, decoded)) {
-    std::free(buf);
+  if (!DecodeTextSection(text, elf_info.text_size, src_state, decoded))
     return AMD_COMGR_STATUS_ERROR;
-  }
 
   std::string tgt_cpu = ExtractCPU(target_isa);
-  PatchElfIsa(buf, elf_size, tgt_cpu);
+  PatchElfIsa(buf.data, elf_size, tgt_cpu);
 
-  *out_data = buf;
-  *out_size = elf_size;
+  *out_size = buf.size;
+  *out_data = buf.release();
   result->rules_matched = static_cast<uint32_t>(decoded.size());
   return AMD_COMGR_STATUS_SUCCESS;
 }
 
-// ── Minimal JSON parser for rewrite rules ────────────────────────────────────
-
-enum class JsonType { Null, Bool, Int, String, Array, Object };
-
-struct JsonValue;
-using JsonArray = std::vector<JsonValue>;
-using JsonObject = std::vector<std::pair<std::string, JsonValue>>;
-
-struct JsonValue {
-  JsonType type = JsonType::Null;
-  bool bool_val = false;
-  int64_t int_val = 0;
-  std::string str_val;
-  JsonArray arr_val;
-  JsonObject obj_val;
-
-  const JsonValue *get(const std::string &key) const {
-    if (type != JsonType::Object) return nullptr;
-    for (auto &kv : obj_val)
-      if (kv.first == key) return &kv.second;
-    return nullptr;
-  }
-  std::string get_string(const std::string &key,
-                         const std::string &def = "") const {
-    auto *v = get(key);
-    return (v && v->type == JsonType::String) ? v->str_val : def;
-  }
-  int64_t get_int(const std::string &key, int64_t def = 0) const {
-    auto *v = get(key);
-    return (v && v->type == JsonType::Int) ? v->int_val : def;
-  }
-  bool get_bool(const std::string &key, bool def = false) const {
-    auto *v = get(key);
-    return (v && v->type == JsonType::Bool) ? v->bool_val : def;
-  }
-};
-
-class JsonParser {
-public:
-  explicit JsonParser(const std::string &input) : src_(input), pos_(0) {}
-  bool Parse(JsonValue &out) {
-    SkipWS();
-    if (!ParseValue(out)) return false;
-    SkipWS();
-    return true;
-  }
-
-private:
-  const std::string &src_;
-  size_t pos_;
-  char Peek() const { return pos_ < src_.size() ? src_[pos_] : '\0'; }
-  char Next() { return pos_ < src_.size() ? src_[pos_++] : '\0'; }
-  void SkipWS() {
-    while (pos_ < src_.size() &&
-           (src_[pos_] == ' ' || src_[pos_] == '\t' || src_[pos_] == '\n' ||
-            src_[pos_] == '\r'))
-      ++pos_;
-  }
-  bool ParseValue(JsonValue &out) {
-    SkipWS();
-    char c = Peek();
-    if (c == '"') return ParseString(out);
-    if (c == '{') return ParseObject(out);
-    if (c == '[') return ParseArray(out);
-    if (c == 't' || c == 'f') return ParseBool(out);
-    if (c == 'n') return ParseNull(out);
-    if (c == '-' || (c >= '0' && c <= '9')) return ParseInt(out);
-    return false;
-  }
-  bool ParseString(JsonValue &out) {
-    if (Next() != '"') return false;
-    std::string s;
-    while (true) {
-      if (pos_ >= src_.size()) return false;
-      char c = Next();
-      if (c == '"') break;
-      if (c == '\\') {
-        if (pos_ >= src_.size()) return false;
-        char esc = Next();
-        switch (esc) {
-        case '"':  s += '"';  break;
-        case '\\': s += '\\'; break;
-        case '/':  s += '/';  break;
-        case 'n':  s += '\n'; break;
-        case 't':  s += '\t'; break;
-        default:   s += esc;  break;
-        }
-      } else {
-        s += c;
-      }
-    }
-    out.type = JsonType::String;
-    out.str_val = std::move(s);
-    return true;
-  }
-  bool ParseInt(JsonValue &out) {
-    size_t start = pos_;
-    if (Peek() == '-') Next();
-    if (Peek() == '0') {
-      Next();
-      if (Peek() == 'x' || Peek() == 'X') {
-        Next();
-        while (pos_ < src_.size() && std::isxdigit(src_[pos_])) Next();
-      }
-    } else {
-      while (pos_ < src_.size() && std::isdigit(src_[pos_])) Next();
-    }
-    out.type = JsonType::Int;
-    try {
-      out.int_val = std::stoll(src_.substr(start, pos_ - start), nullptr, 0);
-    } catch (...) {
-      out.int_val = 0;
-    }
-    return true;
-  }
-  bool ParseBool(JsonValue &out) {
-    if (src_.compare(pos_, 4, "true") == 0) {
-      pos_ += 4;
-      out.type = JsonType::Bool;
-      out.bool_val = true;
-      return true;
-    }
-    if (src_.compare(pos_, 5, "false") == 0) {
-      pos_ += 5;
-      out.type = JsonType::Bool;
-      out.bool_val = false;
-      return true;
-    }
-    return false;
-  }
-  bool ParseNull(JsonValue &out) {
-    if (src_.compare(pos_, 4, "null") == 0) {
-      pos_ += 4;
-      out.type = JsonType::Null;
-      return true;
-    }
-    return false;
-  }
-  bool ParseArray(JsonValue &out) {
-    if (Next() != '[') return false;
-    out.type = JsonType::Array;
-    SkipWS();
-    if (Peek() == ']') { Next(); return true; }
-    while (true) {
-      JsonValue elem;
-      if (!ParseValue(elem)) return false;
-      out.arr_val.push_back(std::move(elem));
-      SkipWS();
-      if (Peek() == ']') { Next(); return true; }
-      if (Peek() != ',') return false;
-      Next();
-    }
-  }
-  bool ParseObject(JsonValue &out) {
-    if (Next() != '{') return false;
-    out.type = JsonType::Object;
-    SkipWS();
-    if (Peek() == '}') { Next(); return true; }
-    while (true) {
-      JsonValue key;
-      if (!ParseString(key)) return false;
-      SkipWS();
-      if (Peek() != ':') return false;
-      Next();
-      JsonValue val;
-      if (!ParseValue(val)) return false;
-      out.obj_val.push_back({key.str_val, std::move(val)});
-      SkipWS();
-      if (Peek() == '}') { Next(); return true; }
-      if (Peek() != ',') return false;
-      Next();
-    }
-  }
-};
+// ── JSON parser for rewrite rules (using llvm::json) ─────────────────────────
 
 static RulesFile ParseRulesString(const std::string &json) {
   RulesFile rf;
-  JsonValue root;
-  JsonParser parser(json);
-  if (!parser.Parse(root) || root.type != JsonType::Object) return rf;
+  auto parsed = llvm::json::parse(json);
+  if (!parsed) {
+    llvm::consumeError(parsed.takeError());
+    return rf;
+  }
+  auto *root = parsed->getAsObject();
+  if (!root) return rf;
 
-  rf.version = static_cast<uint32_t>(root.get_int("version", 0));
-  rf.target = root.get_string("target");
+  if (auto v = root->getInteger("version"))
+    rf.version = static_cast<uint32_t>(*v);
+  if (auto v = root->getString("target"))
+    rf.target = v->str();
 
-  auto *rules = root.get("rules");
-  if (!rules || rules->type != JsonType::Array) return rf;
+  auto *rules = root->getArray("rules");
+  if (!rules) return rf;
 
-  for (auto &rv : rules->arr_val) {
-    if (rv.type != JsonType::Object) continue;
+  for (const auto &rv : *rules) {
+    auto *obj = rv.getAsObject();
+    if (!obj) continue;
     RewriteRule rule;
-    rule.name = rv.get_string("name");
-    rule.match_mnemonic = rv.get_string("match_mnemonic");
-    rule.match_kernel = rv.get_string("match_kernel");
-    rule.match_offset = rv.get_int("match_offset", -1);
+    if (auto v = obj->getString("name")) rule.name = v->str();
+    if (auto v = obj->getString("match_mnemonic")) rule.match_mnemonic = v->str();
+    if (auto v = obj->getString("match_kernel")) rule.match_kernel = v->str();
+    if (auto v = obj->getInteger("match_offset"))
+      rule.match_offset = *v;
+    else
+      rule.match_offset = -1;
 
-    std::string action = rv.get_string("action", "mnemonic_swap");
+    auto action_str = obj->getString("action");
+    std::string action = action_str ? action_str->str() : "mnemonic_swap";
     if (action == "asm_replace")
       rule.action = ReplaceAction::AsmReplace;
     else if (action == "byte_replace")
@@ -318,26 +159,26 @@ static RulesFile ParseRulesString(const std::string &json) {
     else
       rule.action = ReplaceAction::MnemonicSwap;
 
-    rule.replace_mnemonic = rv.get_string("replace_mnemonic");
-    rule.preserve_operands = rv.get_bool("preserve_operands", true);
-    rule.extra_vgprs = static_cast<int32_t>(rv.get_int("extra_vgprs", 0));
-    rule.extra_sgprs = static_cast<int32_t>(rv.get_int("extra_sgprs", 0));
+    if (auto v = obj->getString("replace_mnemonic")) rule.replace_mnemonic = v->str();
+    if (auto v = obj->getBoolean("preserve_operands"))
+      rule.preserve_operands = *v;
+    else
+      rule.preserve_operands = true;
+    if (auto v = obj->getInteger("extra_vgprs")) rule.extra_vgprs = static_cast<int32_t>(*v);
+    if (auto v = obj->getInteger("extra_sgprs")) rule.extra_sgprs = static_cast<int32_t>(*v);
 
-    auto *asm_arr = rv.get("replace_asm");
-    if (asm_arr && asm_arr->type == JsonType::Array)
-      for (auto &a : asm_arr->arr_val)
-        if (a.type == JsonType::String)
-          rule.replace_asm.push_back(a.str_val);
+    if (auto *asm_arr = obj->getArray("replace_asm"))
+      for (const auto &a : *asm_arr)
+        if (auto s = a.getAsString())
+          rule.replace_asm.push_back(s->str());
 
-    auto *bytes_arr = rv.get("replace_bytes");
-    if (bytes_arr && bytes_arr->type == JsonType::Array)
-      for (auto &b : bytes_arr->arr_val)
-        if (b.type == JsonType::Int)
-          rule.replace_bytes.push_back(static_cast<uint8_t>(b.int_val));
+    if (auto *bytes_arr = obj->getArray("replace_bytes"))
+      for (const auto &b : *bytes_arr)
+        if (auto v = b.getAsInteger())
+          rule.replace_bytes.push_back(static_cast<uint8_t>(*v));
 
     rf.rules.push_back(std::move(rule));
   }
-
   return rf;
 }
 
@@ -350,37 +191,33 @@ RewriteWithRules(const void *elf_data, size_t elf_size,
                  amd_comgr_hotswap_result_t *result) {
   RulesFile rules = ParseRulesString(rules_json);
   if (rules.rules.empty()) {
-    void *copy = std::malloc(elf_size);
+    MallocBuffer copy(elf_size);
     if (!copy) return AMD_COMGR_STATUS_ERROR;
-    std::memcpy(copy, elf_data, elf_size);
-    *out_data = copy;
-    *out_size = elf_size;
+    std::memcpy(copy.data, elf_data, elf_size);
+    *out_size = copy.size;
+    *out_data = copy.release();
     return AMD_COMGR_STATUS_SUCCESS;
   }
 
-  uint8_t *elf = static_cast<uint8_t *>(std::malloc(elf_size));
-  if (!elf) return AMD_COMGR_STATUS_ERROR;
-  std::memcpy(elf, elf_data, elf_size);
+  MallocBuffer buf(elf_size);
+  if (!buf) return AMD_COMGR_STATUS_ERROR;
+  std::memcpy(buf.data, elf_data, elf_size);
 
   ElfInfo elf_info;
-  if (!ParseElfInfo(elf, elf_size, elf_info) || elf_info.text_size == 0) {
-    *out_data = elf;
-    *out_size = elf_size;
+  if (!ParseElfInfo(buf.data, elf_size, elf_info) || elf_info.text_size == 0) {
+    *out_size = buf.size;
+    *out_data = buf.release();
     return AMD_COMGR_STATUS_SUCCESS;
   }
 
   LLVMState llvm_state = InitLLVMImpl(isa_name);
-  if (!llvm_state.valid) {
-    std::free(elf);
+  if (!llvm_state.valid)
     return AMD_COMGR_STATUS_ERROR;
-  }
 
-  uint8_t *text = elf + elf_info.text_offset;
+  uint8_t *text = buf.data + elf_info.text_offset;
   std::vector<InternalDecodedInst> decoded;
-  if (!DecodeTextSection(text, elf_info.text_size, llvm_state, decoded)) {
-    std::free(elf);
+  if (!DecodeTextSection(text, elf_info.text_size, llvm_state, decoded))
     return AMD_COMGR_STATUS_ERROR;
-  }
 
   std::vector<Trampoline> trampolines;
 
@@ -426,7 +263,7 @@ RewriteWithRules(const void *elf_data, size_t elf_size,
         if (rule.extra_vgprs > 0 || rule.extra_sgprs > 0) {
           std::string kernel = FindKernelAtOffset(elf_info, inst.offset);
           if (!kernel.empty())
-            UpdateKernelDescriptor(elf, elf_size, elf_info, kernel,
+            UpdateKernelDescriptor(buf.data, elf_size, elf_info, kernel,
                                   rule.extra_vgprs, rule.extra_sgprs);
         }
         break;
@@ -435,20 +272,16 @@ RewriteWithRules(const void *elf_data, size_t elf_size,
   }
 
   if (!trampolines.empty()) {
-    size_t new_elf_size = 0;
-    uint8_t *new_elf = GrowElfWithTrampolines(elf, elf_size, elf_info,
-                                              trampolines, &new_elf_size);
-    if (!new_elf) {
-      std::free(elf);
+    MallocBuffer new_buf = GrowElfWithTrampolines(buf.data, elf_size, elf_info,
+                                                   trampolines);
+    if (!new_buf)
       return AMD_COMGR_STATUS_ERROR;
-    }
-    std::free(elf);
-    *out_data = new_elf;
-    *out_size = new_elf_size;
+    *out_size = new_buf.size;
+    *out_data = new_buf.release();
     result->trampolines_added = static_cast<uint32_t>(trampolines.size());
   } else {
-    *out_data = elf;
-    *out_size = elf_size;
+    *out_size = buf.size;
+    *out_data = buf.release();
   }
 
   return AMD_COMGR_STATUS_SUCCESS;
@@ -472,11 +305,7 @@ amd_comgr_status_t AMD_COMGR_API amd_comgr_hotswap_rewrite(
 
   const void *current_elf = elf_data;
   size_t current_size = elf_size;
-  void *allocated_elf = nullptr;
-
-  auto cleanup = [&]() {
-    if (allocated_elf) std::free(allocated_elf);
-  };
+  MallocBuffer owned;
 
   // B0→A0 patching
   if (flags & AMD_COMGR_HOTSWAP_FLAG_B0_TO_A0) {
@@ -484,90 +313,79 @@ amd_comgr_status_t AMD_COMGR_API amd_comgr_hotswap_rewrite(
     size_t new_size = 0;
     amd_comgr_status_t status = RetargetCodeObjectB0A0Grow(
         current_elf, current_size, &new_data, &new_size, result);
-    if (status != AMD_COMGR_STATUS_SUCCESS) {
-      cleanup();
+    if (status != AMD_COMGR_STATUS_SUCCESS)
       return status;
-    }
-    if (allocated_elf) std::free(allocated_elf);
-    allocated_elf = new_data;
-    current_elf = new_data;
-    current_size = new_size;
+    owned = MallocBuffer();
+    owned.data = static_cast<uint8_t *>(new_data);
+    owned.size = new_size;
+    current_elf = owned.data;
+    current_size = owned.size;
   }
 
   // Retarget
   if (flags & AMD_COMGR_HOTSWAP_FLAG_RETARGET) {
-    if (!source_isa || !target_isa) {
-      cleanup();
+    if (!source_isa || !target_isa)
       return AMD_COMGR_STATUS_ERROR_INVALID_ARGUMENT;
-    }
     void *new_data = nullptr;
     size_t new_size = 0;
     amd_comgr_status_t status =
         RetargetCodeObject(current_elf, current_size, std::string(source_isa),
                            std::string(target_isa), &new_data, &new_size,
                            result);
-    if (status != AMD_COMGR_STATUS_SUCCESS) {
-      cleanup();
+    if (status != AMD_COMGR_STATUS_SUCCESS)
       return status;
-    }
-    if (allocated_elf) std::free(allocated_elf);
-    allocated_elf = new_data;
-    current_elf = new_data;
-    current_size = new_size;
+    owned = MallocBuffer();
+    owned.data = static_cast<uint8_t *>(new_data);
+    owned.size = new_size;
+    current_elf = owned.data;
+    current_size = owned.size;
   }
 
   // Transpile
   if (flags & AMD_COMGR_HOTSWAP_FLAG_TRANSPILE) {
-    if (!source_isa || !target_isa) {
-      cleanup();
+    if (!source_isa || !target_isa)
       return AMD_COMGR_STATUS_ERROR_INVALID_ARGUMENT;
-    }
     void *new_data = nullptr;
     size_t new_size = 0;
     amd_comgr_status_t status = TranspileCodeObject(
         current_elf, current_size, std::string(source_isa),
         std::string(target_isa), &new_data, &new_size, result);
-    if (status != AMD_COMGR_STATUS_SUCCESS) {
-      cleanup();
+    if (status != AMD_COMGR_STATUS_SUCCESS)
       return status;
-    }
-    if (allocated_elf) std::free(allocated_elf);
-    allocated_elf = new_data;
-    current_elf = new_data;
-    current_size = new_size;
+    owned = MallocBuffer();
+    owned.data = static_cast<uint8_t *>(new_data);
+    owned.size = new_size;
+    current_elf = owned.data;
+    current_size = owned.size;
   }
 
   // Rewrite rules
   if (flags & AMD_COMGR_HOTSWAP_FLAG_REWRITE_RULES) {
-    if (!rules_json || !target_isa) {
-      cleanup();
+    if (!rules_json || !target_isa)
       return AMD_COMGR_STATUS_ERROR_INVALID_ARGUMENT;
-    }
     void *new_data = nullptr;
     size_t new_size = 0;
     amd_comgr_status_t status = RewriteWithRules(
         current_elf, current_size, std::string(target_isa),
         std::string(rules_json), &new_data, &new_size, result);
-    if (status != AMD_COMGR_STATUS_SUCCESS) {
-      cleanup();
+    if (status != AMD_COMGR_STATUS_SUCCESS)
       return status;
-    }
-    if (allocated_elf) std::free(allocated_elf);
-    allocated_elf = new_data;
-    current_elf = new_data;
-    current_size = new_size;
+    owned = MallocBuffer();
+    owned.data = static_cast<uint8_t *>(new_data);
+    owned.size = new_size;
+    current_elf = owned.data;
+    current_size = owned.size;
   }
 
   // If no operations were performed, return a copy of the input
-  if (!allocated_elf) {
-    allocated_elf = std::malloc(elf_size);
-    if (!allocated_elf) return AMD_COMGR_STATUS_ERROR;
-    std::memcpy(allocated_elf, elf_data, elf_size);
-    current_size = elf_size;
+  if (!owned) {
+    owned = MallocBuffer(elf_size);
+    if (!owned) return AMD_COMGR_STATUS_ERROR;
+    std::memcpy(owned.data, elf_data, elf_size);
   }
 
-  *out_elf = allocated_elf;
-  *out_elf_size = current_size;
+  *out_elf_size = owned.size;
+  *out_elf = owned.release();
   result->status = 0;
   return AMD_COMGR_STATUS_SUCCESS;
 }
@@ -594,7 +412,7 @@ int amd_comgr_test_defuse(const char *asm_text, const char *cpu,
     return -1;
 
   std::string isa = std::string("amdgcn-amd-amdhsa--") + cpu;
-  LLVMState &state = InitLLVMCached(isa);
+  LLVMState state = InitLLVMCached(isa);
   if (!state.valid) return -1;
 
   auto bytes = AssembleSingleInst(std::string(asm_text), state);
@@ -608,14 +426,14 @@ int amd_comgr_test_defuse(const char *asm_text, const char *cpu,
   RegDefUse du = GetInstRegDefUse(decoded[0].inst, *state.MCII, *state.MRI);
 
   int dc = 0;
-  for (int d : du.defs) {
+  for (int d = du.defs.find_first(); d != -1; d = du.defs.find_next(d)) {
     if (dc < max_regs) out_defs[dc] = d;
     dc++;
   }
   *out_def_count = dc;
 
   int uc = 0;
-  for (int u : du.uses) {
+  for (int u = du.uses.find_first(); u != -1; u = du.uses.find_next(u)) {
     if (uc < max_regs) out_uses[uc] = u;
     uc++;
   }
@@ -632,7 +450,7 @@ int amd_comgr_test_cfg(const char **asm_lines, int num_lines, const char *cpu,
     return -1;
 
   std::string isa = std::string("amdgcn-amd-amdhsa--") + cpu;
-  LLVMState &state = InitLLVMCached(isa);
+  LLVMState state = InitLLVMCached(isa);
   if (!state.valid) return -1;
 
   std::vector<uint8_t> all_bytes;
@@ -666,7 +484,7 @@ int amd_comgr_test_liveness(const char **asm_lines, int num_lines,
     return -1;
 
   std::string isa = std::string("amdgcn-amd-amdhsa--") + cpu;
-  LLVMState &state = InitLLVMCached(isa);
+  LLVMState state = InitLLVMCached(isa);
   if (!state.valid) return -1;
 
   std::vector<uint8_t> all_bytes;
@@ -688,7 +506,7 @@ int amd_comgr_test_liveness(const char **asm_lines, int num_lines,
 
   const auto &live_set = liveness.live_before[inst_index];
   int count = 0;
-  for (int v : live_set) {
+  for (int v = live_set.find_first(); v != -1; v = live_set.find_next(v)) {
     if (count < max_regs) out_live[count] = v;
     count++;
   }
@@ -701,9 +519,9 @@ int amd_comgr_test_scratch_alloc(const int *live_vgprs, int num_live,
                                  int kd_allocated_vgprs) {
   if (num_live < 0 || kd_allocated_vgprs <= 0) return -1;
 
-  std::set<int> live;
+  llvm::BitVector live(256);
   for (int i = 0; i < num_live; i++)
-    live.insert(live_vgprs[i]);
+    live.set(live_vgprs[i]);
 
   ScratchAllocator alloc(live, kd_allocated_vgprs);
   return alloc.Alloc();
