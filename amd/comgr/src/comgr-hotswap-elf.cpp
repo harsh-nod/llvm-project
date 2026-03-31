@@ -189,20 +189,20 @@ void UpdateKernelDescriptor(uint8_t *elf_data, size_t elf_size,
     uint32_t rsrc1;
     std::memcpy(&rsrc1, kd + 48, 4);
     if (extra_vgprs > 0) {
-      uint32_t current = rsrc1 & 0x3F;
+      uint32_t current = rsrc1 & KD_RSRC1_VGPR_MASK;
       uint32_t extra_granules =
           (static_cast<uint32_t>(extra_vgprs) + 3) / 4;
       uint32_t new_val = current + extra_granules;
       if (new_val > 63) new_val = 63;
-      rsrc1 = (rsrc1 & ~0x3Fu) | new_val;
+      rsrc1 = (rsrc1 & ~KD_RSRC1_VGPR_MASK) | new_val;
     }
     if (extra_sgprs > 0) {
-      uint32_t current = (rsrc1 >> 6) & 0xF;
+      uint32_t current = (rsrc1 >> KD_RSRC1_SGPR_SHIFT) & KD_RSRC1_SGPR_MASK;
       uint32_t extra_granules =
           (static_cast<uint32_t>(extra_sgprs) + 7) / 8;
       uint32_t new_val = current + extra_granules;
       if (new_val > 15) new_val = 15;
-      rsrc1 = (rsrc1 & ~(0xFu << 6)) | (new_val << 6);
+      rsrc1 = (rsrc1 & ~(KD_RSRC1_SGPR_MASK << KD_RSRC1_SGPR_SHIFT)) | (new_val << KD_RSRC1_SGPR_SHIFT);
     }
     std::memcpy(kd + 48, &rsrc1, 4);
     return;
@@ -313,4 +313,89 @@ MallocBuffer GrowElfWithTrampolines(const uint8_t *elf, size_t elf_size,
   }
 
   return buf;
+}
+
+// ── PatchElfIsa ──────────────────────────────────────────────────────────────
+
+bool PatchElfIsa(uint8_t *elf, size_t elf_size,
+                 const std::string &target_cpu) {
+  if (elf_size < 64) return false;
+  if (elf[0] != 0x7f || elf[1] != 'E' || elf[2] != 'L' || elf[3] != 'F')
+    return false;
+  if (elf[4] != 2) return false;
+
+  struct GfxMach { const char *name; uint32_t mach; };
+  static const GfxMach gfx_mach_map[] = {
+      {"gfx900", 0x02c},  {"gfx906", 0x02f},  {"gfx908", 0x030},
+      {"gfx90a", 0x03f},  {"gfx940", 0x04a},  {"gfx941", 0x04b},
+      {"gfx942", 0x04c},  {"gfx950", 0x04f},  {"gfx1010", 0x033},
+      {"gfx1030", 0x036}, {"gfx1100", 0x041},  {"gfx1200", 0x048},
+      {"gfx1201", 0x04a}, {"gfx1250", 0x049},  {nullptr, 0}};
+
+  uint32_t target_mach = 0;
+  for (auto *p = gfx_mach_map; p->name; ++p) {
+    if (target_cpu == p->name) {
+      target_mach = p->mach;
+      break;
+    }
+  }
+  if (target_mach == 0) return false;
+
+  uint32_t e_flags;
+  std::memcpy(&e_flags, elf + 48, 4);
+  e_flags = (e_flags & ~0xFFu) | (target_mach & 0xFF);
+  std::memcpy(elf + 48, &e_flags, 4);
+
+  uint64_t e_shoff;
+  uint16_t e_shentsize, e_shnum;
+  std::memcpy(&e_shoff, elf + 40, 8);
+  std::memcpy(&e_shentsize, elf + 58, 2);
+  std::memcpy(&e_shnum, elf + 60, 2);
+  if (e_shoff == 0 || e_shnum == 0) return true;
+
+  for (uint16_t i = 0; i < e_shnum; ++i) {
+    const uint8_t *sh = elf + e_shoff + i * e_shentsize;
+    uint32_t sh_type;
+    std::memcpy(&sh_type, sh + 4, 4);
+    if (sh_type != 7) continue;
+    uint64_t sh_offset, sh_size;
+    std::memcpy(&sh_offset, sh + 24, 8);
+    std::memcpy(&sh_size, sh + 32, 8);
+    if (sh_offset + sh_size > elf_size) continue;
+    uint64_t pos = sh_offset;
+    while (pos + 12 <= sh_offset + sh_size) {
+      uint32_t namesz, descsz, type;
+      std::memcpy(&namesz, elf + pos, 4);
+      std::memcpy(&descsz, elf + pos + 4, 4);
+      std::memcpy(&type, elf + pos + 8, 4);
+      uint32_t namesz_aligned = (namesz + 3) & ~3u;
+      uint32_t descsz_aligned = (descsz + 3) & ~3u;
+      uint64_t note_total = 12 + namesz_aligned + descsz_aligned;
+      if (pos + note_total > sh_offset + sh_size) break;
+      if (type == 27 && namesz > 0) {
+        const char *owner = reinterpret_cast<const char *>(elf + pos + 12);
+        if (std::strncmp(owner, "AMDGPU", 6) == 0) {
+          uint8_t *desc = elf + pos + 12 + namesz_aligned;
+          std::string orig_isa(reinterpret_cast<const char *>(desc), descsz);
+          size_t gfx_pos = orig_isa.find("gfx");
+          if (gfx_pos != std::string::npos) {
+            size_t gfx_end = gfx_pos;
+            while (gfx_end < orig_isa.size() && orig_isa[gfx_end] != ':' &&
+                   orig_isa[gfx_end] != '\0')
+              ++gfx_end;
+            std::string orig_gfx =
+                orig_isa.substr(gfx_pos, gfx_end - gfx_pos);
+            if (target_cpu.size() <= orig_gfx.size()) {
+              std::memcpy(desc + gfx_pos, target_cpu.c_str(),
+                          target_cpu.size());
+              for (size_t j = target_cpu.size(); j < orig_gfx.size(); ++j)
+                desc[gfx_pos + j] = '\0';
+            }
+          }
+        }
+      }
+      pos += note_total;
+    }
+  }
+  return true;
 }

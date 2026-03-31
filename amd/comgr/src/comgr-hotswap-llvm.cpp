@@ -44,13 +44,8 @@ LLVMState InitLLVMImpl(const std::string &isa_name,
   if (!state.MRI) return state;
 
   llvm::MCTargetOptions mc_opts;
-#if LLVM_VERSION_MAJOR > 9
   state.MAI.reset(state.target->createMCAsmInfo(
       *state.MRI, llvm::Triple("amdgcn-amd-amdhsa"), mc_opts));
-#else
-  state.MAI.reset(
-      state.target->createMCAsmInfo(*state.MRI, "amdgcn-amd-amdhsa"));
-#endif
   if (!state.MAI) return state;
 
   state.MCII.reset(state.target->createMCInstrInfo());
@@ -60,20 +55,12 @@ LLVMState InitLLVMImpl(const std::string &isa_name,
       llvm::Triple("amdgcn-amd-amdhsa"), state.cpu, ""));
   if (!state.STI || !state.STI->isCPUStringValid(state.cpu)) return state;
 
-#if LLVM_VERSION_MAJOR > 12
   state.Ctx = std::make_unique<llvm::MCContext>(triple, state.MAI.get(),
                                                 state.MRI.get(),
                                                 state.STI.get());
   state.MOFI = std::make_unique<llvm::MCObjectFileInfo>();
   state.MOFI->initMCObjectFileInfo(*state.Ctx, false);
   state.Ctx->setObjectFileInfo(state.MOFI.get());
-#else
-  state.MOFI = std::make_unique<llvm::MCObjectFileInfo>();
-  state.Ctx = std::make_unique<llvm::MCContext>(state.MAI.get(),
-                                                state.MRI.get(),
-                                                state.MOFI.get());
-  state.MOFI->InitMCObjectFileInfo(triple, true, *state.Ctx);
-#endif
 
   state.disasm.reset(
       state.target->createMCDisassembler(*state.STI, *state.Ctx));
@@ -83,12 +70,7 @@ LLVMState InitLLVMImpl(const std::string &isa_name,
   state.printer.reset(state.target->createMCInstPrinter(
       triple, asm_variant, *state.MAI, *state.MCII, *state.MRI));
 
-#if LLVM_VERSION_MAJOR > 14
   state.CE = state.target->createMCCodeEmitter(*state.MCII, *state.Ctx);
-#else
-  state.CE = state.target->createMCCodeEmitter(*state.MCII, *state.MRI,
-                                               *state.Ctx);
-#endif
 
   state.valid = true;
   return state;
@@ -173,13 +155,8 @@ std::vector<uint8_t> AssembleSingleInst(const std::string &asm_str,
   llvm::MCTargetOptions mc_opts;
   llvm::Triple triple("amdgcn-amd-amdhsa");
 
-#if LLVM_VERSION_MAJOR > 14
   llvm::MCCodeEmitter *ce =
       llvm_state.target->createMCCodeEmitter(*llvm_state.MCII, *llvm_state.Ctx);
-#else
-  llvm::MCCodeEmitter *ce = llvm_state.target->createMCCodeEmitter(
-      *llvm_state.MCII, *llvm_state.MRI, *llvm_state.Ctx);
-#endif
   llvm::MCAsmBackend *mab = llvm_state.target->createMCAsmBackend(
       *llvm_state.STI, *llvm_state.MRI, mc_opts);
 

@@ -337,6 +337,8 @@ amd_comgr_status_t AMD_COMGR_API amd_comgr_hotswap_needs_transpile(
 }
 
 // ── Test-only entry points for dataflow analysis ─────────────────────────────
+// Test-only entry points — exported via exportmap for the ROCR test suite.
+// These bypass normal input validation and should not be called in production.
 
 extern "C" __attribute__((visibility("default")))
 int amd_comgr_test_defuse(const char *asm_text, const char *cpu,

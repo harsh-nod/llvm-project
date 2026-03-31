@@ -585,7 +585,8 @@ TranspileCodeObject(const void *elf_data, size_t elf_size,
           if (s_pos != std::string::npos) {
             size_t n_start = s_pos + 11;
             size_t n_end = translated_asm.find(',', n_start);
-            int lo = std::stoi(translated_asm.substr(n_start, n_end - n_start));
+            int lo = 0;
+            std::from_chars(translated_asm.data() + n_start, translated_asm.data() + n_end, lo);
             ka_pair = "s[" + std::to_string(lo) + ":" + std::to_string(lo + 1) + "]";
           }
         } else {
@@ -632,11 +633,7 @@ TranspileCodeObject(const void *elf_data, size_t elf_size,
   auto data_stream = std::make_unique<llvm::raw_string_ostream>(data);
   auto bos = std::make_unique<llvm::buffer_ostream>(*data_stream);
 
-#if LLVM_VERSION_MAJOR > 14
   llvm::MCCodeEmitter* ce = tgt_state.target->createMCCodeEmitter(*tgt_state.MCII, *tgt_state.Ctx);
-#else
-  llvm::MCCodeEmitter* ce = tgt_state.target->createMCCodeEmitter(*tgt_state.MCII, *tgt_state.MRI, *tgt_state.Ctx);
-#endif
   llvm::MCAsmBackend* mab = tgt_state.target->createMCAsmBackend(*tgt_state.STI, *tgt_state.MRI, mc_opts);
 
   if (!ce || !mab) {

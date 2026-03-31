@@ -252,17 +252,17 @@ static std::unordered_map<std::string, std::string> BuildMnemonicMap() {
     for (size_t i = 0; i < count; ++i)
       map[mappings[i].gfx12] = mappings[i].gfx9;
   };
-  addMappings(kGlobalMemMappings, sizeof(kGlobalMemMappings) / sizeof(kGlobalMemMappings[0]));
-  addMappings(kFlatMemMappings, sizeof(kFlatMemMappings) / sizeof(kFlatMemMappings[0]));
-  addMappings(kScratchMemMappings, sizeof(kScratchMemMappings) / sizeof(kScratchMemMappings[0]));
-  addMappings(kBufferMemMappings, sizeof(kBufferMemMappings) / sizeof(kBufferMemMappings[0]));
-  addMappings(kDSMappings, sizeof(kDSMappings) / sizeof(kDSMappings[0]));
-  addMappings(kSMEMMappings, sizeof(kSMEMMappings) / sizeof(kSMEMMappings[0]));
-  addMappings(kScalarALURenames, sizeof(kScalarALURenames) / sizeof(kScalarALURenames[0]));
-  addMappings(kVALURenames, sizeof(kVALURenames) / sizeof(kVALURenames[0]));
-  addMappings(kGlobalAtomicRenames, sizeof(kGlobalAtomicRenames) / sizeof(kGlobalAtomicRenames[0]));
-  addMappings(kFlatAtomicRenames, sizeof(kFlatAtomicRenames) / sizeof(kFlatAtomicRenames[0]));
-  addMappings(kDSAtomicRenames, sizeof(kDSAtomicRenames) / sizeof(kDSAtomicRenames[0]));
+  addMappings(kGlobalMemMappings, std::size(kGlobalMemMappings));
+  addMappings(kFlatMemMappings, std::size(kFlatMemMappings));
+  addMappings(kScratchMemMappings, std::size(kScratchMemMappings));
+  addMappings(kBufferMemMappings, std::size(kBufferMemMappings));
+  addMappings(kDSMappings, std::size(kDSMappings));
+  addMappings(kSMEMMappings, std::size(kSMEMMappings));
+  addMappings(kScalarALURenames, std::size(kScalarALURenames));
+  addMappings(kVALURenames, std::size(kVALURenames));
+  addMappings(kGlobalAtomicRenames, std::size(kGlobalAtomicRenames));
+  addMappings(kFlatAtomicRenames, std::size(kFlatAtomicRenames));
+  addMappings(kDSAtomicRenames, std::size(kDSAtomicRenames));
   return map;
 }
 

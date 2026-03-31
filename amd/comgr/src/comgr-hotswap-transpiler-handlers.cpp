@@ -451,7 +451,8 @@ static TranslationResult HandleConstantBusFix(
       if (!mask.empty() && mask[0] == 's' && mask.find('[') == std::string::npos &&
           mask.find("vcc") == std::string::npos && mask.find("exec") == std::string::npos &&
           mask.size() > 1 && std::isdigit((unsigned char)mask[1])) {
-        int n = std::stoi(mask.substr(1));
+        int n = 0;
+        std::from_chars(mask.data() + 1, mask.data() + mask.size(), n);
         int even = n & ~1;
         mask = "s[" + std::to_string(even) + ":" + std::to_string(even + 1) + "]";
       }
@@ -495,7 +496,8 @@ static TranslationResult HandleConstantBusFix(
       if (!mask.empty() && mask[0] == 's' && mask.find('[') == std::string::npos &&
           mask.find("vcc") == std::string::npos && mask.find("exec") == std::string::npos &&
           mask.size() > 1 && std::isdigit((unsigned char)mask[1])) {
-        int n = std::stoi(mask.substr(1));
+        int n = 0;
+        std::from_chars(mask.data() + 1, mask.data() + mask.size(), n);
         int even = n & ~1;
         mask = "s[" + std::to_string(even) + ":" + std::to_string(even + 1) + "]";
       }
@@ -841,7 +843,8 @@ static bool HandleVCmpExpansion(
           std::string dst_str = trimmed.substr(0, comma);
           size_t de = dst_str.find_last_not_of(" \t");
           dst_str = dst_str.substr(0, de + 1);
-          int reg_num = std::stoi(dst_str.substr(1));
+          int reg_num = 0;
+          std::from_chars(dst_str.data() + 1, dst_str.data() + dst_str.size(), reg_num);
           int even = reg_num & ~1;
           int odd = even + 1;
           std::string pair = "s[" + std::to_string(even) + ":" + std::to_string(odd) + "]";

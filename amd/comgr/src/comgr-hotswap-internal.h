@@ -1,9 +1,26 @@
-//===- comgr-hotswap-internal.h - HotSwap internal types & declarations ---===//
+//===- comgr-hotswap-internal.h - HotSwap internal types and declarations -===//
 //
-// Part of Comgr, under the Apache License v2.0 with LLVM Exceptions. See
-// amd/comgr/LICENSE.TXT in this repository for license information.
+// Part of Comgr, under the Apache License v2.0 with LLVM Exceptions.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Internal header for the HotSwap ISA rewriting subsystem. Shared by all
+/// comgr-hotswap-*.cpp compilation units. Not part of the public COMGR API.
+///
+/// Module structure:
+///   comgr-hotswap-elf.cpp       — ELF parsing, binary helpers, trampoline growth
+///   comgr-hotswap-dwarf.cpp     — DWARF debug section patching
+///   comgr-hotswap-llvm.cpp      — LLVM MC infrastructure (disasm/asm/encode)
+///   comgr-hotswap-liveness.cpp  — CFG, backward liveness, scratch allocator
+///   comgr-hotswap-b0a0.cpp      — GFX1250 B0-to-A0 silicon stepping patches
+///   comgr-hotswap-transpiler-tables.cpp   — Mnemonic mapping tables
+///   comgr-hotswap-transpiler-helpers.cpp  — Transpiler utility functions
+///   comgr-hotswap-transpiler-handlers.cpp — Instruction translation handlers
+///   comgr-hotswap-transpiler.cpp          — Cross-family transpile pipeline
+///   comgr-hotswap.cpp           — Public C API entry points
+///
 //===----------------------------------------------------------------------===//
 
 #ifndef COMGR_HOTSWAP_INTERNAL_H
@@ -54,11 +71,7 @@
 #include "llvm/Object/ELF.h"
 #include "llvm/Object/ELFTypes.h"
 #include "llvm/Support/raw_ostream.h"
-#if LLVM_VERSION_MAJOR > 13
 #include "llvm/MC/TargetRegistry.h"
-#else
-#include "llvm/Support/TargetRegistry.h"
-#endif
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Types
@@ -195,6 +208,12 @@ inline constexpr uint32_t S_BRANCH_GFX9  = 0xBF820000u;
 inline constexpr uint32_t S_BRANCH_GFX12 = 0xBFA00000u;
 inline constexpr uint32_t S_NOP_OPCODE   = 0xBF800000u;
 
+// ── AMDGPU Kernel Descriptor RSRC1 bit fields ───────────────────────────────
+
+static constexpr uint32_t KD_RSRC1_VGPR_MASK  = 0x3Fu;
+static constexpr uint32_t KD_RSRC1_SGPR_SHIFT = 6;
+static constexpr uint32_t KD_RSRC1_SGPR_MASK  = 0xFu;
+
 // ── DWARF types ──────────────────────────────────────────────────────────────
 
 struct DebugLineRow {
@@ -246,7 +265,7 @@ struct BasicBlock {
 
 struct CFG {
   std::vector<BasicBlock> blocks;
-  std::map<uint64_t, int> offset_to_block;
+  std::unordered_map<uint64_t, int> offset_to_block;
 };
 
 struct LivenessInfo {
@@ -315,7 +334,7 @@ struct PatchContext {
   size_t elf_size;
   const ElfInfo &elf_info;
   const LivenessInfo &liveness;
-  std::map<std::string, KernelPatchStats> &kernel_stats;
+  std::unordered_map<std::string, KernelPatchStats> &kernel_stats;
   std::vector<ScratchPatchInfo> &out_scratch_patches;
 };
 

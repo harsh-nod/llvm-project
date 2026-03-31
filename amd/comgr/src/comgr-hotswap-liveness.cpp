@@ -34,17 +34,10 @@ RegDefUse GetInstRegDefUse(const llvm::MCInst &inst,
       addVgprRange(op.getReg(), du.uses);
   }
 
-#if LLVM_VERSION_MAJOR >= 16
   for (llvm::MCPhysReg r : desc.implicit_defs())
     addVgprRange(r, du.defs);
   for (llvm::MCPhysReg r : desc.implicit_uses())
     addVgprRange(r, du.uses);
-#else
-  if (const llvm::MCPhysReg *p = desc.getImplicitDefs())
-    for (; *p; ++p) addVgprRange(*p, du.defs);
-  if (const llvm::MCPhysReg *p = desc.getImplicitUses())
-    for (; *p; ++p) addVgprRange(*p, du.uses);
-#endif
 
   return du;
 }
@@ -277,7 +270,7 @@ int GetKernelVgprCount(const uint8_t *elf_data, size_t elf_size,
     if (kd_file_offset + 64 > elf_size) continue;
     uint32_t rsrc1;
     std::memcpy(&rsrc1, elf_data + kd_file_offset + 48, 4);
-    uint32_t granulated = rsrc1 & 0x3F;
+    uint32_t granulated = rsrc1 & KD_RSRC1_VGPR_MASK;
     return static_cast<int>((granulated + 1) * 8);
   }
   return 256;
@@ -298,7 +291,7 @@ int GetKernelVgprCount(const uint8_t *elf_data, size_t elf_size,
   LivenessInfo liveness = ComputeLiveness(decoded, cfg,
                                           *llvm_state.MCII, *llvm_state.MRI);
 
-  std::map<uint64_t, size_t> offset_to_idx;
+  std::unordered_map<uint64_t, size_t> offset_to_idx;
   for (size_t i = 0; i < decoded.size(); ++i)
     offset_to_idx[decoded[i].offset] = i;
 
