@@ -31,12 +31,16 @@ static WmmaNopReq ClassifyWmmaNops(const std::string &mnemonic) {
   return {4, 4};
 }
 
-static bool IsValuInst(const std::string &mnemonic) {
-  if (mnemonic.size() < 2) return false;
-  if (mnemonic[0] != 'v' || mnemonic[1] != '_') return false;
-  if (mnemonic == "v_nop") return false;
-  if (mnemonic.find("v_wmma") == 0) return false;
-  if (mnemonic.find("v_swmmac") == 0) return false;
+static bool IsValuOpcode(unsigned opcode, const llvm::MCInstrInfo &MCII) {
+  const llvm::MCInstrDesc &desc = MCII.get(opcode);
+  uint64_t flags = desc.TSFlags;
+  if (!(flags & llvm::SIInstrFlags::VALU))
+    return false;
+  if (flags & llvm::SIInstrFlags::IsWMMA)
+    return false;
+  llvm::StringRef name = MCII.getName(opcode);
+  if (name.starts_with("V_NOP"))
+    return false;
   return true;
 }
 
@@ -221,10 +225,14 @@ ExpandDs2AddrAsm(const std::string &printed_asm,
 // ── BuildNopSledMap ─────────────────────────────────────────────────────────
 
 static std::vector<NopSled>
-BuildNopSledMap(const std::vector<InternalDecodedInst> &decoded) {
+BuildNopSledMap(const std::vector<InternalDecodedInst> &decoded,
+                const llvm::MCInstrInfo &MCII) {
   std::vector<NopSled> sleds;
   for (size_t i = 0; i < decoded.size(); ++i) {
-    if (decoded[i].mnemonic == "s_endpgm") {
+    unsigned opc = decoded[i].inst.getOpcode();
+    const llvm::MCInstrDesc &desc = MCII.get(opc);
+    if (desc.isTerminator() && desc.isBarrier() &&
+        !desc.isBranch() && !desc.isCall()) {
       uint64_t sled_start = decoded[i].offset + decoded[i].size;
       uint64_t sled_end = sled_start;
       for (size_t j = i + 1; j < decoded.size(); ++j) {
@@ -245,7 +253,8 @@ BuildNopSledMap(const std::vector<InternalDecodedInst> &decoded) {
 static std::vector<WmmaHazard>
 ValidateWmmaCoexecHazards(const std::vector<InternalDecodedInst> &decoded,
                            const uint8_t *text,
-                           const LLVMState &llvm_state) {
+                           const LLVMState &llvm_state,
+                           const llvm::MCInstrInfo &MCII) {
   (void)text;
   std::vector<WmmaHazard> hazards;
   int wmma_scanned = 0;
@@ -263,21 +272,21 @@ ValidateWmmaCoexecHazards(const std::vector<InternalDecodedInst> &decoded,
     int count = 0;
     for (size_t j = i + 1; j < decoded.size(); ++j) {
       const auto &dj = decoded[j];
+      unsigned opc = dj.inst.getOpcode();
+      const llvm::MCInstrDesc &desc = MCII.get(opc);
+
       if (dj.mnemonic == "v_nop") {
         ++count;
         if (count >= req.a0_nops) break;
         continue;
       }
-      if (dj.mnemonic.size() >= 2 && dj.mnemonic[0] == 's' &&
-          dj.mnemonic[1] == '_') {
-        if (dj.mnemonic.find("s_branch") == 0 ||
-            dj.mnemonic.find("s_cbranch") == 0 ||
-            dj.mnemonic == "s_endpgm" || dj.mnemonic == "s_setpc" ||
-            dj.mnemonic == "s_swappc" || dj.mnemonic == "s_call")
+      uint64_t flags = desc.TSFlags;
+      if (flags & llvm::SIInstrFlags::SALU) {
+        if (desc.isBranch() || desc.isTerminator() || desc.isCall())
           break;
         continue;
       }
-      if (IsValuInst(dj.mnemonic)) {
+      if (IsValuOpcode(opc, MCII)) {
         if (!CheckVgprOverlap(di.inst, dj.inst, *llvm_state.MRI)) {
           ++count;
           if (count >= req.a0_nops) break;
@@ -488,7 +497,8 @@ ValidateWmmaCoexecHazards(const std::vector<InternalDecodedInst> &decoded,
 
 static uint32_t ApplyPatch5_WmmaHazard(PatchContext &ctx) {
   uint32_t patched = 0;
-  auto hazards = ValidateWmmaCoexecHazards(ctx.decoded, ctx.text, ctx.llvm_state);
+  auto hazards = ValidateWmmaCoexecHazards(ctx.decoded, ctx.text, ctx.llvm_state,
+                                            *ctx.llvm_state.MCII);
   if (hazards.empty()) return 0;
   auto vnop_bytes = AssembleSingleInst("v_nop", ctx.llvm_state);
   if (vnop_bytes.empty() || vnop_bytes.size() != 4) return 0;
@@ -889,9 +899,9 @@ ApplyGfx1250B0toA0Rules(std::vector<InternalDecodedInst> &decoded,
                         const ElfInfo &elf_info,
                         std::vector<ScratchPatchInfo> &out_scratch_patches) {
   uint32_t patched = 0;
-  std::vector<NopSled> nop_sleds = BuildNopSledMap(decoded);
+  std::vector<NopSled> nop_sleds = BuildNopSledMap(decoded, *llvm_state.MCII);
 
-  CFG cfg = BuildCFG(decoded);
+  CFG cfg = BuildCFG(decoded, *llvm_state.MCII);
   LivenessInfo liveness = ComputeLiveness(decoded, cfg,
                                           *llvm_state.MCII, *llvm_state.MRI);
 

@@ -469,10 +469,9 @@ bool CheckVgprOverlap(const llvm::MCInst &wmma_inst,
 RegDefUse GetInstRegDefUse(const llvm::MCInst &inst,
                            const llvm::MCInstrInfo &MCII,
                            const llvm::MCRegisterInfo &MRI);
-bool IsBranchMnemonic(const std::string &mnem);
-bool IsCBranchMnemonic(const std::string &mnem);
 int64_t GetBranchImm(const llvm::MCInst &inst);
-CFG BuildCFG(const std::vector<InternalDecodedInst> &decoded);
+CFG BuildCFG(const std::vector<InternalDecodedInst> &decoded,
+             const llvm::MCInstrInfo &MCII);
 LivenessInfo ComputeLiveness(const std::vector<InternalDecodedInst> &decoded,
                              const CFG &cfg, const llvm::MCInstrInfo &MCII,
                              const llvm::MCRegisterInfo &MRI);
@@ -536,7 +535,9 @@ std::vector<std::string> TranslateInstruction(const std::string &asm_line,
                                               const std::string &target_cpu,
                                               int scale_temp_vgpr = 7,
                                               int cmpx_temp_sgpr = 16,
-                                              bool compact_mode = false);
+                                              bool compact_mode = false,
+                                              unsigned opcode = ~0u,
+                                              const llvm::MCInstrInfo *MCII = nullptr);
 
 // ── transpiler ───────────────────────────────────────────────────────────────
 

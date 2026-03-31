@@ -44,14 +44,6 @@ RegDefUse GetInstRegDefUse(const llvm::MCInst &inst,
 
 // ── CFG construction ─────────────────────────────────────────────────────────
 
-bool IsBranchMnemonic(const std::string &mnem) {
-  return mnem == "s_branch";
-}
-
-bool IsCBranchMnemonic(const std::string &mnem) {
-  return mnem.find("s_cbranch") == 0;
-}
-
 int64_t GetBranchImm(const llvm::MCInst &inst) {
   for (unsigned i = 0; i < inst.getNumOperands(); ++i) {
     if (inst.getOperand(i).isImm())
@@ -60,7 +52,37 @@ int64_t GetBranchImm(const llvm::MCInst &inst) {
   return 0;
 }
 
-CFG BuildCFG(const std::vector<InternalDecodedInst> &decoded) {
+// ── Opcode-based classification via MCInstrDesc ──────────────────────────────
+
+static bool IsBranchOpcode(unsigned opcode, const llvm::MCInstrInfo &MCII) {
+  const llvm::MCInstrDesc &desc = MCII.get(opcode);
+  return desc.isUnconditionalBranch();
+}
+
+static bool IsCBranchOpcode(unsigned opcode, const llvm::MCInstrInfo &MCII) {
+  const llvm::MCInstrDesc &desc = MCII.get(opcode);
+  return desc.isConditionalBranch();
+}
+
+static bool IsTerminator(unsigned opcode, const llvm::MCInstrInfo &MCII) {
+  const llvm::MCInstrDesc &desc = MCII.get(opcode);
+  return desc.isTerminator();
+}
+
+static bool IsCall(unsigned opcode, const llvm::MCInstrInfo &MCII) {
+  const llvm::MCInstrDesc &desc = MCII.get(opcode);
+  return desc.isCall();
+}
+
+static bool IsReturn(unsigned opcode, const llvm::MCInstrInfo &MCII) {
+  const llvm::MCInstrDesc &desc = MCII.get(opcode);
+  return desc.isReturn();
+}
+
+// ── Opcode-based CFG construction ────────────────────────────────────────────
+
+CFG BuildCFG(const std::vector<InternalDecodedInst> &decoded,
+             const llvm::MCInstrInfo &MCII) {
   CFG cfg;
   if (decoded.empty()) return cfg;
 
@@ -71,8 +93,10 @@ CFG BuildCFG(const std::vector<InternalDecodedInst> &decoded) {
 
   for (size_t i = 0; i < decoded.size(); ++i) {
     const auto &di = decoded[i];
-    bool is_branch = IsBranchMnemonic(di.mnemonic);
-    bool is_cbranch = IsCBranchMnemonic(di.mnemonic);
+    unsigned opc = di.inst.getOpcode();
+    const llvm::MCInstrDesc &desc = MCII.get(opc);
+    bool is_branch = IsBranchOpcode(opc, MCII) && !desc.isIndirectBranch();
+    bool is_cbranch = IsCBranchOpcode(opc, MCII);
 
     if (is_branch || is_cbranch) {
       int64_t imm = GetBranchImm(di.inst);
@@ -82,14 +106,13 @@ CFG BuildCFG(const std::vector<InternalDecodedInst> &decoded) {
       if (i + 1 < decoded.size())
         bb_starts.insert(decoded[i + 1].offset);
     }
-    if (di.mnemonic == "s_endpgm" ||
-        di.mnemonic.find("s_setpc") == 0 ||
-        di.mnemonic.find("s_swappc") == 0) {
+
+    if (IsTerminator(opc, MCII) && !is_branch && !is_cbranch) {
       if (i + 1 < decoded.size())
         bb_starts.insert(decoded[i + 1].offset);
     }
 
-    if (di.mnemonic == "s_call_b64" || di.mnemonic.find("s_call") == 0) {
+    if (IsCall(opc, MCII) && !IsTerminator(opc, MCII)) {
       int64_t imm = GetBranchImm(di.inst);
       if (imm != INT64_MIN) {
         uint64_t target = di.offset + 4 + static_cast<int64_t>(imm) * 4;
@@ -130,26 +153,30 @@ CFG BuildCFG(const std::vector<InternalDecodedInst> &decoded) {
 
     size_t last_idx = bb.inst_indices.back();
     const auto &last = decoded[last_idx];
+    unsigned last_opc = last.inst.getOpcode();
+    const llvm::MCInstrDesc &desc = MCII.get(last_opc);
 
-    if (last.mnemonic == "s_endpgm") {
-      /* no successors */
-    } else if (last.mnemonic.find("s_setpc") == 0 ||
-               last.mnemonic.find("s_swappc") == 0) {
-      /* conservative: unknown targets */
-    } else if (IsBranchMnemonic(last.mnemonic) ||
-               IsCBranchMnemonic(last.mnemonic)) {
+    bool is_branch = IsBranchOpcode(last_opc, MCII) && !desc.isIndirectBranch();
+    bool is_cbranch = IsCBranchOpcode(last_opc, MCII);
+    bool is_call = IsCall(last_opc, MCII);
+
+    if (desc.isBarrier() && !desc.isBranch() && !is_call) {
+      /* s_endpgm: no successors */
+    } else if (IsReturn(last_opc, MCII) || desc.isIndirectBranch()) {
+      /* s_setpc/s_swappc: conservative unknown targets */
+    } else if (is_branch || is_cbranch) {
       int64_t imm = GetBranchImm(last.inst);
       uint64_t target = last.offset + 4 + (imm * 4);
       auto tgt_it = cfg.offset_to_block.find(target);
       if (tgt_it != cfg.offset_to_block.end())
         bb.successors.push_back(tgt_it->second);
-      if (IsCBranchMnemonic(last.mnemonic)) {
+      if (is_cbranch) {
         uint64_t fallthrough = last.offset + last.size;
         auto ft_it = cfg.offset_to_block.find(fallthrough);
         if (ft_it != cfg.offset_to_block.end())
           bb.successors.push_back(ft_it->second);
       }
-    } else if (last.mnemonic == "s_call_b64" || last.mnemonic.find("s_call") == 0) {
+    } else if (is_call) {
       int64_t imm = GetBranchImm(last.inst);
       uint64_t target = last.offset + 4 + (imm * 4);
       auto tgt_it = cfg.offset_to_block.find(target);
@@ -287,7 +314,7 @@ int GetKernelVgprCount(const uint8_t *elf_data, size_t elf_size,
   std::vector<InternalDecodedInst> decoded;
   if (!DecodeTextSection(text, text_size, llvm_state, decoded)) return true;
 
-  CFG cfg = BuildCFG(decoded);
+  CFG cfg = BuildCFG(decoded, *llvm_state.MCII);
   LivenessInfo liveness = ComputeLiveness(decoded, cfg,
                                           *llvm_state.MCII, *llvm_state.MRI);
 

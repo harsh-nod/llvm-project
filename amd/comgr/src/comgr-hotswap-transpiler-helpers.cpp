@@ -23,6 +23,8 @@ bool WritesExecLo(const std::string& line) {
 
 // ── Wait Counter Translation ─────────────────────────────────────────────────
 
+// LEGACY: String-based classification used by text-based handler dispatch.
+// Will be replaced by opcode checks when handlers are migrated to MCInst.
 bool IsWaitInstruction(const std::string& mnemonic) {
   return mnemonic == "s_wait_loadcnt" || mnemonic == "s_wait_storecnt" ||
          mnemonic == "s_wait_samplecnt" || mnemonic == "s_wait_bvhcnt" ||
@@ -57,6 +59,8 @@ std::string TranslateWaitInstruction(const std::string& line) {
 
 // ── Unsupported Instruction Detection ────────────────────────────────────────
 
+// LEGACY: String-based classification used by text-based handler dispatch.
+// Will be replaced by TSFlags/opcode checks when handlers are migrated to MCInst.
 bool IsUnsupportedOnGFX9(const std::string& mnemonic) {
   if (mnemonic.find("tensor_") == 0) return true;
   if (mnemonic.find("cluster_") == 0) return true;

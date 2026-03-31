@@ -923,14 +923,16 @@ static bool HandleVCmpExpansion(
   return false;
 }
 
-// ── TranslateInstruction — Table-driven dispatch ─────────────────────────────
+// ── TranslateInstruction — Opcode-based dispatch with string fallback ────────
 
 std::vector<std::string> TranslateInstruction(const std::string& asm_line,
                                                const std::string& source_cpu,
                                                const std::string& target_cpu,
                                                int scale_temp_vgpr,
                                                int cmpx_temp_sgpr,
-                                               bool compact_mode) {
+                                               bool compact_mode,
+                                               unsigned opcode,
+                                               const llvm::MCInstrInfo *MCII) {
   std::vector<std::string> result;
   std::string line = asm_line;
 
@@ -969,28 +971,101 @@ std::vector<std::string> TranslateInstruction(const std::string& asm_line,
     mnemonic = fixed;
   }
 
-  // ── Dispatch: try each category handler ──
+  // ── Dispatch: opcode-based (fast) or string-based (fallback) ──
 
-  using HandlerFn = TranslationResult (*)(
-      const std::string&, const std::string&, const std::string&,
-      const std::string&, int, int, bool);
+  if (opcode != ~0u && MCII) {
+    const llvm::MCInstrDesc &desc = MCII->get(opcode);
+    uint64_t tsflags = desc.TSFlags;
 
-  static const struct { const char* name; HandlerFn handler; } kHandlers[] = {
-    {"bitop",         HandleBitopInstruction},
-    {"wait",          HandleWaitInstruction},
-    {"unsupported",   HandleUnsupportedInstruction},
-    {"smem",          HandleSMEMInstruction},
-    {"salu_float",    HandleSALUFloat},
-    {"64bit_valu",    Handle64BitVALU},
-    {"constant_bus",  HandleConstantBusFix},
-    {"vopd",          HandleVOPDInstruction},
-    {"wmma",          HandleWMMAInstruction},
-  };
+    // VALU: bitop instructions
+    if (tsflags & llvm::SIInstrFlags::VALU) {
+      auto r = HandleBitopInstruction(line, mnemonic, source_cpu, target_cpu,
+                                      scale_temp_vgpr, cmpx_temp_sgpr, compact_mode);
+      if (r.has_value()) return *r;
+    }
 
-  for (const auto& h : kHandlers) {
-    auto r = h.handler(line, mnemonic, source_cpu, target_cpu,
-                       scale_temp_vgpr, cmpx_temp_sgpr, compact_mode);
-    if (r.has_value()) return *r;
+    // SALU: wait/delay/clause instructions
+    // TODO: Migrate to specific opcode checks (e.g., S_WAIT_LOADCNT) once
+    // we have a canonical opcode set for all wait variants.
+    if (tsflags & llvm::SIInstrFlags::SALU) {
+      auto r = HandleWaitInstruction(line, mnemonic, source_cpu, target_cpu,
+                                     scale_temp_vgpr, cmpx_temp_sgpr, compact_mode);
+      if (r.has_value()) return *r;
+    }
+
+    // Unsupported / skip patterns (category-independent: handles ttmp refs,
+    // s_code_end, s_endpgm, s_barrier_*, etc.)
+    {
+      auto r = HandleUnsupportedInstruction(line, mnemonic, source_cpu, target_cpu,
+                                            scale_temp_vgpr, cmpx_temp_sgpr, compact_mode);
+      if (r.has_value()) return *r;
+    }
+
+    // SMRD: scalar memory read
+    if (tsflags & llvm::SIInstrFlags::SMRD) {
+      auto r = HandleSMEMInstruction(line, mnemonic, source_cpu, target_cpu,
+                                     scale_temp_vgpr, cmpx_temp_sgpr, compact_mode);
+      if (r.has_value()) return *r;
+    }
+
+    // SALU | VALU: scalar float emulation (includes v_s_sqrt_f32 which is VALU)
+    if (tsflags & (llvm::SIInstrFlags::SALU | llvm::SIInstrFlags::VALU)) {
+      auto r = HandleSALUFloat(line, mnemonic, source_cpu, target_cpu,
+                               scale_temp_vgpr, cmpx_temp_sgpr, compact_mode);
+      if (r.has_value()) return *r;
+    }
+
+    // VALU: 64-bit operations
+    if (tsflags & llvm::SIInstrFlags::VALU) {
+      auto r = Handle64BitVALU(line, mnemonic, source_cpu, target_cpu,
+                               scale_temp_vgpr, cmpx_temp_sgpr, compact_mode);
+      if (r.has_value()) return *r;
+    }
+
+    // VALU: constant bus fix
+    if (tsflags & llvm::SIInstrFlags::VALU) {
+      auto r = HandleConstantBusFix(line, mnemonic, source_cpu, target_cpu,
+                                    scale_temp_vgpr, cmpx_temp_sgpr, compact_mode);
+      if (r.has_value()) return *r;
+    }
+
+    // VOPD: dual-issue instructions
+    if ((tsflags & llvm::SIInstrFlags::VOPD3) || mnemonic.find("v_dual_") == 0) {
+      auto r = HandleVOPDInstruction(line, mnemonic, source_cpu, target_cpu,
+                                     scale_temp_vgpr, cmpx_temp_sgpr, compact_mode);
+      if (r.has_value()) return *r;
+    }
+
+    // WMMA: matrix operations
+    if (tsflags & llvm::SIInstrFlags::IsWMMA) {
+      auto r = HandleWMMAInstruction(line, mnemonic, source_cpu, target_cpu,
+                                     scale_temp_vgpr, cmpx_temp_sgpr, compact_mode);
+      if (r.has_value()) return *r;
+    }
+
+  } else {
+    // String-based fallback dispatch (for recursive VOPD calls without opcode)
+    using HandlerFn = TranslationResult (*)(
+        const std::string&, const std::string&, const std::string&,
+        const std::string&, int, int, bool);
+
+    static const struct { const char* name; HandlerFn handler; } kHandlers[] = {
+      {"bitop",         HandleBitopInstruction},
+      {"wait",          HandleWaitInstruction},
+      {"unsupported",   HandleUnsupportedInstruction},
+      {"smem",          HandleSMEMInstruction},
+      {"salu_float",    HandleSALUFloat},
+      {"64bit_valu",    Handle64BitVALU},
+      {"constant_bus",  HandleConstantBusFix},
+      {"vopd",          HandleVOPDInstruction},
+      {"wmma",          HandleWMMAInstruction},
+    };
+
+    for (const auto& h : kHandlers) {
+      auto r = h.handler(line, mnemonic, source_cpu, target_cpu,
+                         scale_temp_vgpr, cmpx_temp_sgpr, compact_mode);
+      if (r.has_value()) return *r;
+    }
   }
 
   // Memory handler may modify line/mnemonic (scale_offset)

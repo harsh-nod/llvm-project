@@ -25,6 +25,10 @@ bool NeedsTranspileImpl(const std::string &source_isa,
 }
 
 // ── Mnemonic Translation Tables ──────────────────────────────────────────────
+// LEGACY: These tables are used by the text-based fallback path in
+// TranslateInstruction (mnemonic renaming in post-dispatch transforms).
+// They will be removed when handler implementations are fully migrated to
+// MCInst-level translation, at which point OpcodeMapper handles renaming.
 
 static const MnemonicMapping kGlobalMemMappings[] = {
     {"global_load_b32", "global_load_dword"},

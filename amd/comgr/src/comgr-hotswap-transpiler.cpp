@@ -124,7 +124,40 @@ static void PatchElfMetadata(uint8_t* elf, size_t elf_size,
   }
 }
 
-// ── TranspileStats ───────────────────────────────────────────────────────────
+// ── Opcode-based MCInst-to-MCInst translation ────────────────────────────────
+
+static bool TranslateViaOpcode(const llvm::MCInst &src_inst, unsigned src_opcode,
+                                const OpcodeMapper &mapper, unsigned tgt_gen,
+                                const llvm::MCInstrInfo &src_MCII,
+                                const llvm::MCInstrInfo &tgt_MCII,
+                                llvm::MCInst &out_inst) {
+  unsigned pseudo = mapper.toPseudo(src_opcode);
+  unsigned tgt_opcode = OpcodeMapper::toTarget(pseudo, tgt_gen);
+  if (tgt_opcode == static_cast<unsigned>(-1))
+    return false;
+
+  const llvm::MCInstrDesc &tgt_desc = tgt_MCII.get(tgt_opcode);
+
+  out_inst.setOpcode(tgt_opcode);
+
+  unsigned num_ops = std::min(src_inst.getNumOperands(),
+                               static_cast<unsigned>(tgt_desc.getNumOperands()));
+  for (unsigned i = 0; i < num_ops; ++i)
+    out_inst.addOperand(src_inst.getOperand(i));
+
+  return true;
+}
+
+// ── Direct MCInst encoding ───────────────────────────────────────────────────
+
+static std::vector<uint8_t> EncodeMCInst(const llvm::MCInst &inst,
+                                          const LLVMState &state) {
+  if (!state.CE) return {};
+  llvm::SmallVector<char, 16> cb;
+  llvm::SmallVector<llvm::MCFixup, 4> fixups;
+  state.CE->encodeInstruction(inst, cb, fixups, *state.STI);
+  return std::vector<uint8_t>(cb.begin(), cb.end());
+}
 
 // ── TranspileCodeObject ──────────────────────────────────────────────────────
 
@@ -163,6 +196,16 @@ TranspileCodeObject(const void *elf_data, size_t elf_size,
     HotswapLog(HotswapLogLevel::Error) << "hotswap: transpile: failed to init source ISA '" << source_isa << "'\n";
     return AMD_COMGR_STATUS_ERROR;
   }
+
+  LLVMState tgt_state = InitLLVMCached(target_isa);
+  if (!tgt_state.valid) {
+    HotswapLog(HotswapLogLevel::Error) << "hotswap: transpile: failed to init target ISA '" << target_isa << "'\n";
+    return AMD_COMGR_STATUS_ERROR;
+  }
+
+  unsigned src_gen = GetEncodingFamily(src_cpu);
+  unsigned tgt_gen = GetEncodingFamily(tgt_cpu);
+  OpcodeMapper &mapper = GetOpcodeMapper(src_gen);
 
   const uint8_t* text = elf + elf_info.text_offset;
 
@@ -427,8 +470,43 @@ TranspileCodeObject(const void *elf_data, size_t elf_size,
         }
       }
 
+      // Phase 5: try opcode-based direct translation for non-control-flow
+      if (ii < source_instrs.size() && source_instrs[ii].valid_inst) {
+        const auto &si = source_instrs[ii];
+        unsigned src_opc = si.inst.getOpcode();
+        const llvm::MCInstrDesc &src_desc = src_state.MCII->get(src_opc);
+        if (!src_desc.isBranch() && !src_desc.isCall() &&
+            !src_desc.isTerminator() && !src_desc.isReturn()) {
+          llvm::MCInst tgt_inst;
+          if (TranslateViaOpcode(si.inst, src_opc, mapper, tgt_gen,
+                                  *src_state.MCII, *tgt_state.MCII, tgt_inst)) {
+            auto encoded = EncodeMCInst(tgt_inst, tgt_state);
+            if (!encoded.empty()) {
+              for (size_t b = 0; b + 4 <= encoded.size(); b += 4) {
+                uint32_t word;
+                std::memcpy(&word, encoded.data() + b, 4);
+                std::ostringstream oss;
+                oss << ".long 0x" << std::hex << word;
+                translated_asm += oss.str() + "\n";
+              }
+              stats.translated_renamed++;
+              ++emitted_count;
+              continue;
+            }
+          }
+        }
+      }
+
+      // Fall through to existing text-based translation (with opcode hint)
+      unsigned src_opc = ~0u;
+      const llvm::MCInstrInfo *src_mcii = nullptr;
+      if (ii < source_instrs.size() && source_instrs[ii].valid_inst) {
+        src_opc = source_instrs[ii].inst.getOpcode();
+        src_mcii = src_state.MCII.get();
+      }
       auto translated_lines = TranslateInstruction(line, src_cpu, tgt_cpu,
-                                                    save_vgpr_y + 1, cmpx_temp_sgpr, false);
+                                                    save_vgpr_y + 1, cmpx_temp_sgpr, false,
+                                                    src_opc, src_mcii);
 
       if (ii < source_instrs.size() && !branch_labels.empty()) {
         for (auto& t : translated_lines) {
@@ -613,12 +691,6 @@ TranspileCodeObject(const void *elf_data, size_t elf_size,
   }
 
   // Assemble translated text for target ISA
-  LLVMState tgt_state = InitLLVMCached(target_isa);
-  if (!tgt_state.valid) {
-    HotswapLog(HotswapLogLevel::Error) << "hotswap: transpile: failed to init target ISA '" << target_isa << "'\n";
-    return AMD_COMGR_STATUS_ERROR;
-  }
-
   llvm::Triple tgt_triple("amdgcn-amd-amdhsa");
   llvm::MCTargetOptions mc_opts;
 

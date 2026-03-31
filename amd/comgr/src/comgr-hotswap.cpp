@@ -402,7 +402,7 @@ int amd_comgr_test_cfg(const char **asm_lines, int num_lines, const char *cpu,
   if (!DecodeTextSection(all_bytes.data(), all_bytes.size(), state, decoded))
     return -1;
 
-  CFG cfg = BuildCFG(decoded);
+  CFG cfg = BuildCFG(decoded, *state.MCII);
   int n = static_cast<int>(cfg.blocks.size());
 
   for (int i = 0; i < n && i < max_blocks; i++) {
@@ -438,7 +438,7 @@ int amd_comgr_test_liveness(const char **asm_lines, int num_lines,
 
   if (inst_index >= static_cast<int>(decoded.size())) return -1;
 
-  CFG cfg = BuildCFG(decoded);
+  CFG cfg = BuildCFG(decoded, *state.MCII);
   LivenessInfo liveness =
       ComputeLiveness(decoded, cfg, *state.MCII, *state.MRI);
 
