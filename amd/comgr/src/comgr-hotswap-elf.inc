@@ -140,7 +140,7 @@ static constexpr uint32_t S_BRANCH_GFX9  = 0xBF820000u;
 static constexpr uint32_t S_BRANCH_GFX12 = 0xBFA00000u;
 static constexpr uint32_t S_NOP_OPCODE   = 0xBF800000u;
 
-static bool EncodeSBranch(uint64_t from_offset, uint64_t to_offset,
+[[nodiscard]] static bool EncodeSBranch(uint64_t from_offset, uint64_t to_offset,
                           uint8_t out_bytes[4], bool gfx12 = false) {
   int64_t byte_delta = static_cast<int64_t>(to_offset) -
                        static_cast<int64_t>(from_offset) - 4;
@@ -179,7 +179,7 @@ static std::string ExtractCPU(const std::string &isa_name) {
 
 // ── ELF parsing ──────────────────────────────────────────────────────────────
 
-static bool ParseElfInfo(const uint8_t *elf, size_t elf_size, ElfInfo &info) {
+[[nodiscard]] static bool ParseElfInfo(const uint8_t *elf, size_t elf_size, ElfInfo &info) {
   using ELFT = llvm::object::ELF64LE;
   auto elf_or_err = llvm::object::ELFFile<ELFT>::create(
       llvm::StringRef(reinterpret_cast<const char *>(elf), elf_size));
@@ -278,7 +278,7 @@ static std::string FindKernelAtOffset(const ElfInfo &elf_info,
 
 // ── ApplyByteReplace ─────────────────────────────────────────────────────────
 
-static bool ApplyByteReplace(const RewriteRule &rule, uint64_t inst_offset,
+[[nodiscard]] static bool ApplyByteReplace(const RewriteRule &rule, uint64_t inst_offset,
                              uint32_t inst_size, uint8_t *text,
                              uint64_t text_size) {
   if (inst_offset + inst_size > text_size) return false;

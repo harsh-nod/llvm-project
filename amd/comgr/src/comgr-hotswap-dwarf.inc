@@ -55,7 +55,7 @@ static uint8_t *FindSectionHeader(uint8_t *elf, size_t elf_size,
   return nullptr;
 }
 
-static bool AddTrampolineSymbols(
+[[nodiscard]] static bool AddTrampolineSymbols(
     MallocBuffer &elf_buf,
     const std::vector<Trampoline> &trampolines,
     uint64_t text_size_before, int text_section_idx) {
@@ -275,7 +275,7 @@ static std::vector<DebugLineRow> ScanDebugLineTable(
   return rows;
 }
 
-static bool PatchDebugLine(
+[[nodiscard]] static bool PatchDebugLine(
     MallocBuffer &elf_buf,
     const std::vector<Trampoline> &trampolines,
     uint64_t text_size_before, uint64_t text_addr) {

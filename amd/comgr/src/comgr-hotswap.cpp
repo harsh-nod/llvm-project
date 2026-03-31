@@ -18,6 +18,7 @@
 #include "amd_comgr.h"
 
 #include <algorithm>
+#include <charconv>
 #include <cstdlib>
 #include <cstring>
 #include <iomanip>
@@ -26,10 +27,10 @@
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <regex>
 #include <set>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -76,6 +77,7 @@ namespace {
 #include "comgr-hotswap-liveness.inc"
 #include "comgr-hotswap-b0a0.inc"
 #include "comgr-hotswap-transpiler-tables.inc"
+#include "comgr-hotswap-transpiler-helpers.inc"
 #include "comgr-hotswap-transpiler-handlers.inc"
 #include "comgr-hotswap-transpiler.inc"
 

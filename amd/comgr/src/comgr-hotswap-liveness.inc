@@ -335,7 +335,7 @@ static int GetKernelVgprCount(const uint8_t *elf_data, size_t elf_size,
 
 // ── Post-patch verification ──────────────────────────────────────────────────
 
-static bool VerifyPatchCorrectness(
+[[nodiscard]] static bool VerifyPatchCorrectness(
     const uint8_t *text, uint64_t text_size,
     const LLVMState &llvm_state,
     const std::vector<ScratchPatchInfo> &scratch_patches) {

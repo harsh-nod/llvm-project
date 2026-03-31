@@ -116,11 +116,17 @@ ExpandDs2AddrAsm(const std::string &printed_asm,
     uint32_t scale = 64 * elem_bytes;
     auto scaleVal = [scale](std::string &val) {
       if (val == "0" || val.empty()) return;
-      try {
-        uint32_t v = static_cast<uint32_t>(std::stoul(val, nullptr, 0));
-        val = std::to_string(v * scale);
-      } catch (...) {
+      uint32_t v = 0;
+      const char *begin = val.data();
+      const char *end = val.data() + val.size();
+      int base = 10;
+      if (val.size() > 2 && val[0] == '0' && (val[1] == 'x' || val[1] == 'X')) {
+        begin += 2;
+        base = 16;
       }
+      auto [p, ec] = std::from_chars(begin, end, v, base);
+      if (ec == std::errc())
+        val = std::to_string(v * scale);
     };
     scaleVal(off0_val);
     scaleVal(off1_val);
@@ -333,7 +339,7 @@ struct PatchContext {
 
 // ── Common sled-or-trampoline insertion ─────────────────────────────────────
 
-static bool EmitReplacementCode(PatchContext &ctx, uint64_t inst_offset,
+[[nodiscard]] static bool EmitReplacementCode(PatchContext &ctx, uint64_t inst_offset,
                                 uint32_t inst_size,
                                 const std::vector<uint8_t> &replacement_bytes,
                                 const char *patch_desc = nullptr) {
@@ -388,7 +394,7 @@ static bool EmitReplacementCode(PatchContext &ctx, uint64_t inst_offset,
 
 // ── Per-patch functions ─────────────────────────────────────────────────────
 
-static bool ApplyPatch1_ClusterLoad(PatchContext &ctx, size_t idx) {
+[[nodiscard]] static bool ApplyPatch1_ClusterLoad(PatchContext &ctx, size_t idx) {
   auto &di = ctx.decoded[idx];
   for (size_t swap_i = 0; swap_i < kClusterLoadSwapsSize; ++swap_i) {
     const auto &swap = kClusterLoadSwaps[swap_i];
@@ -406,7 +412,7 @@ static bool ApplyPatch1_ClusterLoad(PatchContext &ctx, size_t idx) {
   return false;
 }
 
-static bool ApplyPatch2_Ds2Addr(PatchContext &ctx, size_t idx) {
+[[nodiscard]] static bool ApplyPatch2_Ds2Addr(PatchContext &ctx, size_t idx) {
   auto &di = ctx.decoded[idx];
   for (size_t swap_i = 0; swap_i < kDs2AddrSwapsSize; ++swap_i) {
     const auto &swap = kDs2AddrSwaps[swap_i];
@@ -444,7 +450,7 @@ static bool ApplyPatch2_Ds2Addr(PatchContext &ctx, size_t idx) {
   return false;
 }
 
-static bool ApplyPatch3_SClause(PatchContext &ctx, size_t idx) {
+[[nodiscard]] static bool ApplyPatch3_SClause(PatchContext &ctx, size_t idx) {
   auto &di = ctx.decoded[idx];
   if (di.mnemonic != "s_clause") return false;
   RewriteRule rule;
@@ -456,7 +462,7 @@ static bool ApplyPatch3_SClause(PatchContext &ctx, size_t idx) {
   return false;
 }
 
-static bool ApplyPatch4_TensorLoadToLds(PatchContext &ctx, size_t idx) {
+[[nodiscard]] static bool ApplyPatch4_TensorLoadToLds(PatchContext &ctx, size_t idx) {
   auto &di = ctx.decoded[idx];
   if (di.mnemonic != "tensor_load_to_lds") return false;
   if (idx > 0 && ctx.decoded[idx - 1].mnemonic == "s_pack_hh_b32_b16")
@@ -533,7 +539,7 @@ static uint32_t ApplyPatch5_WmmaHazard(PatchContext &ctx) {
   return patched;
 }
 
-static bool ApplyPatch6_Fp8WmmaSplit(PatchContext &ctx, size_t idx) {
+[[nodiscard]] static bool ApplyPatch6_Fp8WmmaSplit(PatchContext &ctx, size_t idx) {
   auto &di = ctx.decoded[idx];
   if (di.mnemonic.find("16x16x128") == std::string::npos ||
       (di.mnemonic.find("_fp8") == std::string::npos &&
@@ -579,7 +585,7 @@ static bool ApplyPatch6_Fp8WmmaSplit(PatchContext &ctx, size_t idx) {
   return true;
 }
 
-static bool ApplyPatch7_F4WmmaSplit(PatchContext &ctx, size_t idx) {
+[[nodiscard]] static bool ApplyPatch7_F4WmmaSplit(PatchContext &ctx, size_t idx) {
   auto &di = ctx.decoded[idx];
   if (di.mnemonic.find("32x16x128_f4") == std::string::npos ||
       di.mnemonic.find("v_wmma") != 0)
@@ -626,7 +632,7 @@ static bool ApplyPatch7_F4WmmaSplit(PatchContext &ctx, size_t idx) {
   return true;
 }
 
-static bool ApplyPatch8_E5M3CvtEmulation(PatchContext &ctx, size_t idx) {
+[[nodiscard]] static bool ApplyPatch8_E5M3CvtEmulation(PatchContext &ctx, size_t idx) {
   auto &di = ctx.decoded[idx];
   if (!((di.mnemonic.find("v_cvt_f32_fp8") == 0 ||
          di.mnemonic.find("v_cvt_pk_fp8_f32") == 0 ||
@@ -754,7 +760,7 @@ static bool ApplyPatch8_E5M3CvtEmulation(PatchContext &ctx, size_t idx) {
   return true;
 }
 
-static bool ApplyPatch9_Scale16Decomposition(PatchContext &ctx, size_t idx) {
+[[nodiscard]] static bool ApplyPatch9_Scale16Decomposition(PatchContext &ctx, size_t idx) {
   auto &di = ctx.decoded[idx];
 
   if (di.mnemonic == "v_wmma_scale16_f32_16x16x128_f8f6f4") {
@@ -805,12 +811,16 @@ static bool ApplyPatch9_Scale16Decomposition(PatchContext &ctx, size_t idx) {
       if (pos != std::string::npos) {
         size_t colon = s.find(':', pos);
         if (colon != std::string::npos) {
-          try { return std::stoi(s.substr(pos + 1, colon - pos - 1)); } catch(...) {}
+          int val = -1;
+          std::from_chars(s.data() + pos + 1, s.data() + colon, val);
+          if (val >= 0) return val;
         }
       }
       size_t vpos = s.find('v');
       if (vpos != std::string::npos) {
-        try { return std::stoi(s.substr(vpos + 1)); } catch(...) {}
+        int val = -1;
+        std::from_chars(s.data() + vpos + 1, s.data() + s.size(), val);
+        if (val >= 0) return val;
       }
       return -1;
     };
@@ -1063,10 +1073,11 @@ RetargetCodeObjectB0A0Grow(const void *elf_data, size_t elf_size,
   ElfInfo elf_info;
   const uint8_t *elf = static_cast<const uint8_t *>(elf_data);
   if (!ParseElfInfo(elf, elf_size, elf_info) || elf_info.text_size == 0) {
-    *out_data = std::malloc(elf_size);
-    if (!*out_data) return AMD_COMGR_STATUS_ERROR;
-    std::memcpy(*out_data, elf_data, elf_size);
+    MallocBuffer copy(elf_size);
+    if (!copy) return AMD_COMGR_STATUS_ERROR;
+    std::memcpy(copy.data, elf_data, elf_size);
     *out_size = elf_size;
+    *out_data = copy.release();
     return AMD_COMGR_STATUS_SUCCESS;
   }
 
@@ -1135,10 +1146,10 @@ RetargetCodeObjectB0A0Grow(const void *elf_data, size_t elf_size,
     *out_data = new_buf.release();
     result->trampolines_added = static_cast<uint32_t>(deferred.size());
   } else {
-    uint8_t *out = static_cast<uint8_t *>(std::malloc(elf_size));
+    MallocBuffer out(elf_size);
     if (!out) return AMD_COMGR_STATUS_ERROR;
-    std::memcpy(out, buf.data(), elf_size);
-    *out_data = out;
+    std::memcpy(out.data, buf.data(), elf_size);
+    *out_data = out.release();
     *out_size = elf_size;
   }
 

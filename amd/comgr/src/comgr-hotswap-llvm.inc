@@ -133,7 +133,7 @@ struct InternalDecodedInst {
 
 // ── Instruction decode ───────────────────────────────────────────────────────
 
-static bool DecodeTextSection(const uint8_t *text, uint64_t text_size,
+[[nodiscard]] static bool DecodeTextSection(const uint8_t *text, uint64_t text_size,
                               const LLVMState &llvm_state,
                               std::vector<InternalDecodedInst> &decoded) {
   uint64_t pos = 0;
@@ -252,7 +252,7 @@ static std::vector<uint8_t> AssembleSingleInst(const std::string &asm_str,
 
 // ── ApplyMnemonicSwap ────────────────────────────────────────────────────────
 
-static bool ApplyMnemonicSwap(const RewriteRule &rule,
+[[nodiscard]] static bool ApplyMnemonicSwap(const RewriteRule &rule,
                               InternalDecodedInst &inst, uint8_t *text,
                               const LLVMState &llvm_state) {
   if (!llvm_state.printer) return false;
@@ -317,7 +317,7 @@ static Trampoline BuildTrampoline(const std::vector<std::string> &asm_lines,
 
 // ── MatchRule ────────────────────────────────────────────────────────────────
 
-static bool MatchRule(const RewriteRule &rule, const InternalDecodedInst &inst,
+[[nodiscard]] static bool MatchRule(const RewriteRule &rule, const InternalDecodedInst &inst,
                       const ElfInfo &elf_info) {
   if (!rule.match_mnemonic.empty() && rule.match_mnemonic != inst.mnemonic)
     return false;
@@ -364,11 +364,9 @@ GetVgprNum(unsigned reg, const llvm::MCRegisterInfo &MRI) {
     std::string numstr = rname.substr(
         numstart, underscore == std::string::npos ? std::string::npos
                                                   : underscore - numstart);
-    try {
-      return std::stoi(numstr);
-    } catch (...) {
-      return -1;
-    }
+    int val = -1;
+    std::from_chars(numstr.data(), numstr.data() + numstr.size(), val);
+    return val;
   }
   return -1;
 }
@@ -387,11 +385,9 @@ static std::pair<int, int> GetVgprRange(unsigned reg,
   if (numend == std::string::npos) numend = rname.size();
   std::string numstr = rname.substr(numstart, numend - numstart);
   int base = -1;
-  try {
-    base = std::stoi(numstr);
-  } catch (...) {
+  auto [p, ec] = std::from_chars(numstr.data(), numstr.data() + numstr.size(), base);
+  if (ec != std::errc())
     return {-1, 0};
-  }
   return {base, count};
 }
 

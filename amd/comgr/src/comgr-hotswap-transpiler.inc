@@ -153,10 +153,10 @@ TranspileCodeObject(const void *elf_data, size_t elf_size,
   }
   if (elf_info.text_size == 0) {
     HotswapLog(HotswapLogLevel::Info) << "hotswap: transpile: empty .text section\n";
-    uint8_t *buf = static_cast<uint8_t *>(std::malloc(elf_size));
-    if (!buf) return AMD_COMGR_STATUS_ERROR;
-    std::memcpy(buf, elf_data, elf_size);
-    *out_data = buf;
+    MallocBuffer copy(elf_size);
+    if (!copy) return AMD_COMGR_STATUS_ERROR;
+    std::memcpy(copy.data, elf_data, elf_size);
+    *out_data = copy.release();
     *out_size = elf_size;
     return AMD_COMGR_STATUS_SUCCESS;
   }
@@ -356,20 +356,31 @@ TranspileCodeObject(const void *elf_data, size_t elf_size,
       if (s == std::string::npos) continue;
       std::string offset_str = ops.substr(s);
       if (offset_str.find(".L_") == 0) continue;
-      try {
-        int64_t raw = std::stoll(offset_str, nullptr, 0);
-        int64_t simm16 = static_cast<int16_t>(raw & 0xFFFF);
-        uint64_t target_pc = info.pc_offset + 4 + simm16 * 4;
-        uint64_t snapped_pc = target_pc;
-        bool found = false;
-        for (const auto& si : source_instrs) {
-          if (si.pc_offset >= target_pc) { snapped_pc = si.pc_offset; found = true; break; }
+      {
+        int64_t raw = 0;
+        const char *fc_begin = offset_str.data();
+        const char *fc_end = offset_str.data() + offset_str.size();
+        int fc_base = 10;
+        if (offset_str.size() > 2 && offset_str[0] == '0' &&
+            (offset_str[1] == 'x' || offset_str[1] == 'X')) {
+          fc_begin += 2;
+          fc_base = 16;
         }
-        if (!found && !source_instrs.empty())
-          snapped_pc = source_instrs.back().pc_offset;
-        if (branch_labels.find(snapped_pc) == branch_labels.end())
-          branch_labels[snapped_pc] = ".L_br" + std::to_string(label_counter++);
-      } catch (...) {}
+        auto [fc_p, fc_ec] = std::from_chars(fc_begin, fc_end, raw, fc_base);
+        if (fc_ec == std::errc()) {
+          int64_t simm16 = static_cast<int16_t>(raw & 0xFFFF);
+          uint64_t target_pc = info.pc_offset + 4 + simm16 * 4;
+          uint64_t snapped_pc = target_pc;
+          bool found = false;
+          for (const auto& si : source_instrs) {
+            if (si.pc_offset >= target_pc) { snapped_pc = si.pc_offset; found = true; break; }
+          }
+          if (!found && !source_instrs.empty())
+            snapped_pc = source_instrs.back().pc_offset;
+          if (branch_labels.find(snapped_pc) == branch_labels.end())
+            branch_labels[snapped_pc] = ".L_br" + std::to_string(label_counter++);
+        }
+      }
     }
 
     // TTMP taint analysis
@@ -432,17 +443,28 @@ TranspileCodeObject(const void *elf_data, size_t elf_size,
             if (s != std::string::npos) {
               std::string off_str = ops.substr(s);
               if (off_str.find(".L_") != 0) {
-                try {
-                  int64_t raw = std::stoll(off_str, nullptr, 0);
-                  int64_t simm16 = static_cast<int16_t>(raw & 0xFFFF);
-                  uint64_t target = source_instrs[ii].pc_offset + 4 + simm16 * 4;
-                  uint64_t snapped = target;
-                  for (const auto& si : source_instrs) {
-                    if (si.pc_offset >= target) { snapped = si.pc_offset; break; }
+                {
+                  int64_t raw = 0;
+                  const char *fc_begin = off_str.data();
+                  const char *fc_end = off_str.data() + off_str.size();
+                  int fc_base = 10;
+                  if (off_str.size() > 2 && off_str[0] == '0' &&
+                      (off_str[1] == 'x' || off_str[1] == 'X')) {
+                    fc_begin += 2;
+                    fc_base = 16;
                   }
-                  auto lbl = branch_labels.find(snapped);
-                  if (lbl != branch_labels.end()) t = tm + " " + lbl->second;
-                } catch (...) {}
+                  auto [fc_p, fc_ec] = std::from_chars(fc_begin, fc_end, raw, fc_base);
+                  if (fc_ec == std::errc()) {
+                    int64_t simm16 = static_cast<int16_t>(raw & 0xFFFF);
+                    uint64_t target = source_instrs[ii].pc_offset + 4 + simm16 * 4;
+                    uint64_t snapped = target;
+                    for (const auto& si : source_instrs) {
+                      if (si.pc_offset >= target) { snapped = si.pc_offset; break; }
+                    }
+                    auto lbl = branch_labels.find(snapped);
+                    if (lbl != branch_labels.end()) t = tm + " " + lbl->second;
+                  }
+                }
               }
             }
           }
@@ -689,8 +711,9 @@ TranspileCodeObject(const void *elf_data, size_t elf_size,
   // Replace .text in a NEW writable ELF buffer
   {
     size_t new_elf_size = size;
-    uint8_t* new_elf = static_cast<uint8_t*>(std::malloc(new_elf_size));
-    if (!new_elf) return AMD_COMGR_STATUS_ERROR;
+    MallocBuffer new_buf(new_elf_size);
+    if (!new_buf) return AMD_COMGR_STATUS_ERROR;
+    uint8_t *new_elf = new_buf.data;
     std::memcpy(new_elf, elf, size);
 
     if (new_text_size <= elf_info.text_size) {
@@ -730,8 +753,10 @@ TranspileCodeObject(const void *elf_data, size_t elf_size,
         uint64_t text_end = elf_info.text_offset + elf_info.text_size;
         uint64_t delta = ((new_text_size - elf_info.text_size + 255u) / 256u) * 256u;
         uint64_t grown_size = new_elf_size + delta;
-        uint8_t* grown = (uint8_t*)calloc(1, grown_size);
-        if (!grown) { free(new_elf); return AMD_COMGR_STATUS_ERROR; }
+        MallocBuffer grown_buf(grown_size);
+        if (!grown_buf) return AMD_COMGR_STATUS_ERROR;
+        std::memset(grown_buf.data, 0, grown_size);
+        uint8_t *grown = grown_buf.data;
         std::memcpy(grown, new_elf, text_end);
         std::memcpy(grown + elf_info.text_offset, new_text, new_text_size);
         uint64_t new_sec_size = elf_info.text_size + delta;
@@ -776,13 +801,13 @@ TranspileCodeObject(const void *elf_data, size_t elf_size,
             std::memcpy(grown + ph_off + 8, &p_offset, 8);
           }
         }
-        free(new_elf);
-        new_elf = grown;
+        new_buf = std::move(grown_buf);
+        new_elf = new_buf.data;
         new_elf_size = grown_size;
       }
     }
 
-    *out_data = new_elf;
+    *out_data = new_buf.release();
     *out_size = new_elf_size;
 
     // Patch kernel descriptors for wave64
