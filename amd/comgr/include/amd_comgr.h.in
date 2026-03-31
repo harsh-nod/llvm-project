@@ -237,6 +237,12 @@ extern "C" {
  */
 #define AMD_COMGR_VERSION_3_1
 
+/**
+ * The function was introduced or changed in version 3.2 of the interface
+ * and has the symbol version string of ``"@amd_comgr_NAME@_3.2"``.
+ */
+#define AMD_COMGR_VERSION_3_2
+
 /** @} */
 
 /**
@@ -2670,6 +2676,42 @@ amd_comgr_map_elf_virtual_address_to_code_object_offset(
     uint64_t *code_object_offset,
     uint64_t *slice_size,
     bool *nobits) AMD_COMGR_VERSION_2_7;
+
+/** @} */
+
+/**
+ * \defgroup hotswap HotSwap ISA Rewriting
+ * @{
+ *
+ * APIs for load-time GPU ISA binary rewriting.
+ */
+
+/**
+ * @brief Apply GFX1250 B0-to-A0 silicon stepping patches to a code object.
+ *
+ * Rewrites GPU instructions in the ELF code object to work around
+ * differences between B0 and A0 silicon steppings of the GFX1250 GPU.
+ * The input ELF is not modified; a new buffer is allocated and returned.
+ * The caller must free the output buffer with @c free().
+ *
+ * If no patches are needed, the output is a copy of the input.
+ *
+ * @param[in] elf_data Pointer to the input ELF code object.
+ * @param[in] elf_size Size of the input ELF in bytes.
+ * @param[out] out_elf On success, set to a newly allocated buffer
+ *   containing the patched ELF. Caller must @c free() this buffer.
+ * @param[out] out_elf_size On success, set to the size of the output ELF.
+ *
+ * @retval ::AMD_COMGR_STATUS_SUCCESS Patching completed successfully.
+ * @retval ::AMD_COMGR_STATUS_ERROR An internal error occurred.
+ * @retval ::AMD_COMGR_STATUS_ERROR_INVALID_ARGUMENT An argument is invalid.
+ */
+amd_comgr_status_t AMD_COMGR_API
+amd_comgr_hotswap_rewrite_b0a0(
+    const void *elf_data,
+    size_t elf_size,
+    void **out_elf,
+    size_t *out_elf_size) AMD_COMGR_VERSION_3_2;
 
 /** @} */
 
