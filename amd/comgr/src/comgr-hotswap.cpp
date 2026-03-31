@@ -15,71 +15,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
-#include "amd_comgr.h"
-
-#include <algorithm>
-#include <charconv>
-#include <cstdlib>
-#include <cstring>
-#include <iomanip>
-#include <iostream>
-#include <map>
-#include <memory>
-#include <mutex>
-#include <optional>
-#include <set>
-#include <sstream>
-#include <string>
-#include <string_view>
-#include <unordered_map>
-#include <utility>
-#include <vector>
-
-#include "llvm/Config/llvm-config.h"
-#include "llvm/ADT/BitVector.h"
-#include "llvm/MC/MCAsmBackend.h"
-#include "llvm/MC/MCAsmInfo.h"
-#include "llvm/MC/MCCodeEmitter.h"
-#include "llvm/MC/MCContext.h"
-#include "llvm/MC/MCDisassembler/MCDisassembler.h"
-#include "llvm/MC/MCInstPrinter.h"
-#include "llvm/MC/MCInstrDesc.h"
-#include "llvm/MC/MCInstrInfo.h"
-#include "llvm/MC/MCObjectFileInfo.h"
-#include "llvm/MC/MCObjectWriter.h"
-#include "llvm/MC/MCParser/MCAsmParser.h"
-#include "llvm/MC/MCParser/MCTargetAsmParser.h"
-#include "llvm/MC/MCRegisterInfo.h"
-#include "llvm/MC/MCStreamer.h"
-#include "llvm/MC/MCSubtargetInfo.h"
-#include "llvm/Support/MemoryBuffer.h"
-#include "llvm/Support/SourceMgr.h"
-#include "llvm/Support/TargetSelect.h"
-#include "llvm/Support/JSON.h"
-#include "llvm/Support/LEB128.h"
-#include "llvm/Object/ELF.h"
-#include "llvm/Object/ELFTypes.h"
-#include "llvm/Support/raw_ostream.h"
-#if LLVM_VERSION_MAJOR > 13
-#include "llvm/MC/TargetRegistry.h"
-#else
-#include "llvm/Support/TargetRegistry.h"
-#endif
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// Anonymous namespace: all internal helpers
-// ═══════════════════════════════════════════════════════════════════════════════
-namespace {
-
-#include "comgr-hotswap-elf.inc"
-#include "comgr-hotswap-dwarf.inc"
-#include "comgr-hotswap-llvm.inc"
-#include "comgr-hotswap-liveness.inc"
-#include "comgr-hotswap-b0a0.inc"
-#include "comgr-hotswap-transpiler-tables.inc"
-#include "comgr-hotswap-transpiler-helpers.inc"
-#include "comgr-hotswap-transpiler-handlers.inc"
-#include "comgr-hotswap-transpiler.inc"
+#include "comgr-hotswap-internal.h"
 
 // ── RetargetCodeObject ───────────────────────────────────────────────────────
 
@@ -288,8 +224,6 @@ RewriteWithRules(const void *elf_data, size_t elf_size,
 
   return AMD_COMGR_STATUS_SUCCESS;
 }
-
-} // anonymous namespace
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Public API entry points

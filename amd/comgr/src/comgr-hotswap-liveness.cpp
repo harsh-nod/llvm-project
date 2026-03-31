@@ -1,15 +1,16 @@
-// comgr-hotswap-liveness.inc — CFG construction, backward liveness, scratch allocation
-// Included inside the anonymous namespace of comgr-hotswap.cpp.
-// Not a standalone compilation unit.
+//===- comgr-hotswap-liveness.cpp - CFG, backward liveness, scratch alloc -===//
+//
+// Part of Comgr, under the Apache License v2.0 with LLVM Exceptions. See
+// amd/comgr/LICENSE.TXT in this repository for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
+#include "comgr-hotswap-internal.h"
 
 // ── Per-point VGPR liveness analysis ─────────────────────────────────────────
 
-struct RegDefUse {
-  llvm::BitVector defs{256};
-  llvm::BitVector uses{256};
-};
-
-static RegDefUse GetInstRegDefUse(const llvm::MCInst &inst,
+RegDefUse GetInstRegDefUse(const llvm::MCInst &inst,
                                   const llvm::MCInstrInfo &MCII,
                                   const llvm::MCRegisterInfo &MRI) {
   RegDefUse du;
@@ -50,28 +51,15 @@ static RegDefUse GetInstRegDefUse(const llvm::MCInst &inst,
 
 // ── CFG construction ─────────────────────────────────────────────────────────
 
-struct BasicBlock {
-  uint64_t start_offset = 0;
-  uint64_t end_offset = 0;
-  std::vector<size_t> inst_indices;
-  std::vector<int> successors;
-  std::vector<int> predecessors;
-};
-
-struct CFG {
-  std::vector<BasicBlock> blocks;
-  std::map<uint64_t, int> offset_to_block;
-};
-
-static bool IsBranchMnemonic(const std::string &mnem) {
+bool IsBranchMnemonic(const std::string &mnem) {
   return mnem == "s_branch";
 }
 
-static bool IsCBranchMnemonic(const std::string &mnem) {
+bool IsCBranchMnemonic(const std::string &mnem) {
   return mnem.find("s_cbranch") == 0;
 }
 
-static int64_t GetBranchImm(const llvm::MCInst &inst) {
+int64_t GetBranchImm(const llvm::MCInst &inst) {
   for (unsigned i = 0; i < inst.getNumOperands(); ++i) {
     if (inst.getOperand(i).isImm())
       return inst.getOperand(i).getImm();
@@ -79,7 +67,7 @@ static int64_t GetBranchImm(const llvm::MCInst &inst) {
   return 0;
 }
 
-static CFG BuildCFG(const std::vector<InternalDecodedInst> &decoded) {
+CFG BuildCFG(const std::vector<InternalDecodedInst> &decoded) {
   CFG cfg;
   if (decoded.empty()) return cfg;
 
@@ -196,13 +184,7 @@ static CFG BuildCFG(const std::vector<InternalDecodedInst> &decoded) {
 
 // ── Backward liveness analysis ───────────────────────────────────────────────
 
-struct LivenessInfo {
-  std::vector<llvm::BitVector> live_before;
-  std::vector<llvm::BitVector> live_after;
-  bool converged = false;
-};
-
-static LivenessInfo ComputeLiveness(
+LivenessInfo ComputeLiveness(
     const std::vector<InternalDecodedInst> &decoded,
     const CFG &cfg,
     const llvm::MCInstrInfo &MCII,
@@ -280,41 +262,9 @@ static LivenessInfo ComputeLiveness(
   return info;
 }
 
-// ── Scratch register allocator ───────────────────────────────────────────────
+// ── GetKernelVgprCount ───────────────────────────────────────────────────────
 
-struct ScratchAllocator {
-  llvm::BitVector live_at_point;
-  int kd_allocated_vgprs;
-  int next_above_kd;
-  int extra_allocated = 0;
-
-  ScratchAllocator(const llvm::BitVector &live, int kd_vgprs)
-      : live_at_point(live), kd_allocated_vgprs(kd_vgprs),
-        next_above_kd(kd_vgprs) {}
-
-  int Alloc() {
-    for (int v = kd_allocated_vgprs - 1; v >= 0; --v) {
-      if (!live_at_point.test(v)) {
-        live_at_point.set(v);
-        return v;
-      }
-    }
-    if (next_above_kd >= 256) return -1;
-    int v = next_above_kd++;
-    extra_allocated++;
-    live_at_point.set(v);
-    return v;
-  }
-
-  int ExtraVgprsNeeded() const { return extra_allocated; }
-};
-
-struct ScratchPatchInfo {
-  uint64_t offset;
-  llvm::BitVector scratch_regs{256};
-};
-
-static int GetKernelVgprCount(const uint8_t *elf_data, size_t elf_size,
+int GetKernelVgprCount(const uint8_t *elf_data, size_t elf_size,
                               const ElfInfo &elf_info,
                               const std::string &kernel_name) {
   std::string kd_name = kernel_name + ".kd";
@@ -335,7 +285,7 @@ static int GetKernelVgprCount(const uint8_t *elf_data, size_t elf_size,
 
 // ── Post-patch verification ──────────────────────────────────────────────────
 
-[[nodiscard]] static bool VerifyPatchCorrectness(
+[[nodiscard]] bool VerifyPatchCorrectness(
     const uint8_t *text, uint64_t text_size,
     const LLVMState &llvm_state,
     const std::vector<ScratchPatchInfo> &scratch_patches) {

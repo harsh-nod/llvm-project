@@ -1,6 +1,12 @@
-// comgr-hotswap-transpiler.inc — Cross-family ISA transpile pipeline (GFX12 -> GFX9)
-// Included inside the anonymous namespace of comgr-hotswap.cpp.
-// Not a standalone compilation unit.
+//===- comgr-hotswap-transpiler.cpp - Cross-family ISA transpile pipeline --===//
+//
+// Part of Comgr, under the Apache License v2.0 with LLVM Exceptions. See
+// amd/comgr/LICENSE.TXT in this repository for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
+#include "comgr-hotswap-internal.h"
 
 // ── Kernel Descriptor Patching for Wave64 ────────────────────────────────────
 
@@ -120,18 +126,9 @@ static void PatchElfMetadata(uint8_t* elf, size_t elf_size,
 
 // ── TranspileStats ───────────────────────────────────────────────────────────
 
-struct TranspileStats {
-  uint32_t total_instructions = 0;
-  uint32_t translated_passthrough = 0;
-  uint32_t translated_renamed = 0;
-  uint32_t translated_waitcnt = 0;
-  uint32_t translated_exec = 0;
-  uint32_t unsupported_skipped = 0;
-};
-
 // ── TranspileCodeObject ──────────────────────────────────────────────────────
 
-static amd_comgr_status_t
+amd_comgr_status_t
 TranspileCodeObject(const void *elf_data, size_t elf_size,
                     const std::string &source_isa,
                     const std::string &target_isa,

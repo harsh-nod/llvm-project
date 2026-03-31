@@ -77,6 +77,15 @@ set(SOURCES
   src/comgr-disassembly.cpp
   src/comgr-env.cpp
   src/comgr-hotswap.cpp
+  src/comgr-hotswap-elf.cpp
+  src/comgr-hotswap-dwarf.cpp
+  src/comgr-hotswap-llvm.cpp
+  src/comgr-hotswap-liveness.cpp
+  src/comgr-hotswap-b0a0.cpp
+  src/comgr-hotswap-transpiler-tables.cpp
+  src/comgr-hotswap-transpiler-helpers.cpp
+  src/comgr-hotswap-transpiler-handlers.cpp
+  src/comgr-hotswap-transpiler.cpp
   src/comgr-metadata.cpp
   src/comgr-signal.cpp
   src/comgr-spirv-command.cpp

@@ -1,10 +1,16 @@
-// comgr-hotswap-transpiler-helpers.inc — Utility functions for cross-family transpiler
-// Included inside the anonymous namespace of comgr-hotswap.cpp.
-// Not a standalone compilation unit.
+//===- comgr-hotswap-transpiler-helpers.cpp - Transpiler utility functions -===//
+//
+// Part of Comgr, under the Apache License v2.0 with LLVM Exceptions. See
+// amd/comgr/LICENSE.TXT in this repository for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
+#include "comgr-hotswap-internal.h"
 
 // ── Wave32→Wave64 EXEC Patterns ─────────────────────────────────────────────
 
-static bool WritesExecLo(const std::string& line) {
+bool WritesExecLo(const std::string& line) {
   size_t mnem_end = line.find_first_of(" \t");
   if (mnem_end == std::string::npos) return false;
   size_t op_start = line.find_first_not_of(" \t,", mnem_end);
@@ -17,7 +23,7 @@ static bool WritesExecLo(const std::string& line) {
 
 // ── Wait Counter Translation ─────────────────────────────────────────────────
 
-static bool IsWaitInstruction(const std::string& mnemonic) {
+bool IsWaitInstruction(const std::string& mnemonic) {
   return mnemonic == "s_wait_loadcnt" || mnemonic == "s_wait_storecnt" ||
          mnemonic == "s_wait_samplecnt" || mnemonic == "s_wait_bvhcnt" ||
          mnemonic == "s_wait_expcnt" || mnemonic == "s_wait_dscnt" ||
@@ -26,7 +32,7 @@ static bool IsWaitInstruction(const std::string& mnemonic) {
          mnemonic == "s_wait_asynccnt" || mnemonic == "s_wait_tensorcnt";
 }
 
-static std::string TranslateWaitInstruction(const std::string& line) {
+std::string TranslateWaitInstruction(const std::string& line) {
   std::string mnemonic;
   int count = 0;
   std::istringstream iss(line);
@@ -51,7 +57,7 @@ static std::string TranslateWaitInstruction(const std::string& line) {
 
 // ── Unsupported Instruction Detection ────────────────────────────────────────
 
-static bool IsUnsupportedOnGFX9(const std::string& mnemonic) {
+bool IsUnsupportedOnGFX9(const std::string& mnemonic) {
   if (mnemonic.find("tensor_") == 0) return true;
   if (mnemonic.find("cluster_") == 0) return true;
   if (mnemonic.find("_prefetch_") != std::string::npos) return true;
@@ -64,7 +70,7 @@ static bool IsUnsupportedOnGFX9(const std::string& mnemonic) {
 
 // ── VCC Register Width Translation ───────────────────────────────────────────
 
-static std::string WidenVccReferences(const std::string& line) {
+std::string WidenVccReferences(const std::string& line) {
   std::string result = line;
   size_t mnem_end = result.find_first_of(" \t");
   if (mnem_end == std::string::npos) return result;
@@ -84,7 +90,7 @@ static std::string WidenVccReferences(const std::string& line) {
 
 // ── EXEC Width Widening ──────────────────────────────────────────────────────
 
-static std::vector<std::string> WidenExecOperation(const std::string& line, bool compact_mode = false) {
+std::vector<std::string> WidenExecOperation(const std::string& line, bool compact_mode) {
   std::vector<std::string> result;
   std::string mnemonic = line.substr(0, line.find_first_of(" \t"));
 
@@ -147,7 +153,7 @@ static std::vector<std::string> WidenExecOperation(const std::string& line, bool
 
 // ── Operand Syntax Translation ───────────────────────────────────────────────
 
-static std::string TranslateOperandSyntax(const std::string& line,
+std::string TranslateOperandSyntax(const std::string& line,
                                            const std::string& mnemonic) {
   (void)mnemonic;
   std::string result = line;
@@ -201,7 +207,7 @@ static std::string TranslateOperandSyntax(const std::string& line,
 
 // ── Extract/Replace Mnemonic ─────────────────────────────────────────────────
 
-static std::string TranspileExtractMnemonic(const std::string& line) {
+std::string TranspileExtractMnemonic(const std::string& line) {
   size_t start = line.find_first_not_of(" \t");
   if (start == std::string::npos) return "";
   size_t end = line.find_first_of(" \t", start);
@@ -209,7 +215,7 @@ static std::string TranspileExtractMnemonic(const std::string& line) {
   return line.substr(start, end - start);
 }
 
-static std::string TranspileReplaceMnemonic(const std::string& line,
+std::string TranspileReplaceMnemonic(const std::string& line,
                                              const std::string& old_mnemonic,
                                              const std::string& new_mnemonic) {
   size_t pos = line.find(old_mnemonic);
@@ -221,9 +227,7 @@ static std::string TranspileReplaceMnemonic(const std::string& line,
 
 // ── TTMP Taint Analysis ──────────────────────────────────────────────────────
 
-enum class RegKind { SGPR, VGPR, TTMP, SCC, VCC, EXEC, Other };
-
-static RegKind ClassifyReg(unsigned reg, const llvm::MCRegisterInfo& MRI) {
+RegKind ClassifyReg(unsigned reg, const llvm::MCRegisterInfo& MRI) {
   const char* name = MRI.getName(reg);
   if (!name) return RegKind::Other;
   if (strncmp(name, "TTMP", 4) == 0) return RegKind::TTMP;
@@ -235,7 +239,7 @@ static RegKind ClassifyReg(unsigned reg, const llvm::MCRegisterInfo& MRI) {
   return RegKind::Other;
 }
 
-static bool IsRegTainted(unsigned reg, const std::set<unsigned>& tainted,
+bool IsRegTainted(unsigned reg, const std::set<unsigned>& tainted,
                          const llvm::MCRegisterInfo& MRI) {
   if (tainted.count(reg)) return true;
   for (auto sub : MRI.subregs(reg))
@@ -245,14 +249,14 @@ static bool IsRegTainted(unsigned reg, const std::set<unsigned>& tainted,
   return false;
 }
 
-static void TaintReg(unsigned reg, std::set<unsigned>& tainted,
+void TaintReg(unsigned reg, std::set<unsigned>& tainted,
                      const llvm::MCRegisterInfo& MRI) {
   tainted.insert(reg);
   for (auto sub : MRI.subregs(reg))
     tainted.insert(sub);
 }
 
-static void UntaintReg(unsigned reg, std::set<unsigned>& tainted,
+void UntaintReg(unsigned reg, std::set<unsigned>& tainted,
                        const llvm::MCRegisterInfo& MRI) {
   tainted.erase(reg);
   for (auto sub : MRI.subregs(reg))
@@ -261,15 +265,7 @@ static void UntaintReg(unsigned reg, std::set<unsigned>& tainted,
     tainted.erase(sup);
 }
 
-enum class TaintAction { Keep, Skip, Replace };
-
-struct TaintResult {
-  TaintAction action;
-  std::string replace_dst;
-  std::string replace_src;
-};
-
-static void GetInstRegs(const llvm::MCInst& inst,
+void GetInstRegs(const llvm::MCInst& inst,
                         const llvm::MCInstrInfo& MCII,
                         const llvm::MCRegisterInfo& MRI,
                         std::vector<unsigned>& defs,
@@ -291,13 +287,7 @@ static void GetInstRegs(const llvm::MCInst& inst,
     uses.push_back(imp);
 }
 
-struct SourceInstrForTaint {
-  std::string text;
-  llvm::MCInst inst;
-  bool valid_inst;
-};
-
-static std::vector<TaintResult> AnalyzeTTMPTaint(
+std::vector<TaintResult> AnalyzeTTMPTaint(
     const std::vector<SourceInstrForTaint>& instrs,
     const llvm::MCInstrInfo& MCII,
     const llvm::MCRegisterInfo& MRI) {
@@ -454,7 +444,7 @@ static std::vector<TaintResult> AnalyzeTTMPTaint(
 
 // ── Operand parsing helper ───────────────────────────────────────────────────
 
-static std::vector<std::string> ParseOperandList(const std::string& line,
+std::vector<std::string> ParseOperandList(const std::string& line,
                                                   const std::string& mnemonic) {
   std::string ops = line.substr(line.find(mnemonic) + mnemonic.size());
   size_t op_start = ops.find_first_not_of(" \t");
@@ -471,7 +461,3 @@ static std::vector<std::string> ParseOperandList(const std::string& line,
   return operands;
 }
 
-// ── Translation result type ──────────────────────────────────────────────────
-// nullopt = not handled (try next handler); has_value() = handled (may be empty for skip)
-
-using TranslationResult = std::optional<std::vector<std::string>>;

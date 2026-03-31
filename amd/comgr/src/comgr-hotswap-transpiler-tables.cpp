@@ -1,10 +1,16 @@
-// comgr-hotswap-transpiler-tables.inc — Mnemonic mapping tables for cross-family transpiler
-// Included inside the anonymous namespace of comgr-hotswap.cpp.
-// Not a standalone compilation unit.
+//===- comgr-hotswap-transpiler-tables.cpp - Mnemonic mapping tables ------===//
+//
+// Part of Comgr, under the Apache License v2.0 with LLVM Exceptions. See
+// amd/comgr/LICENSE.TXT in this repository for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
+#include "comgr-hotswap-internal.h"
 
 // ── NeedsTranspile ───────────────────────────────────────────────────────────
 
-static bool NeedsTranspileImpl(const std::string &source_isa,
+bool NeedsTranspileImpl(const std::string &source_isa,
                                const std::string &target_isa) {
   std::string src_cpu = ExtractCPU(source_isa);
   std::string tgt_cpu = ExtractCPU(target_isa);
@@ -18,16 +24,7 @@ static bool NeedsTranspileImpl(const std::string &source_isa,
   return isGFX12(src_cpu) && isGFX9(tgt_cpu);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// Cross-Family ISA Transpiler (GFX12 → GFX9)
-// ═══════════════════════════════════════════════════════════════════════════════
-
 // ── Mnemonic Translation Tables ──────────────────────────────────────────────
-
-struct MnemonicMapping {
-  const char* gfx12;
-  const char* gfx9;
-};
 
 static const MnemonicMapping kGlobalMemMappings[] = {
     {"global_load_b32", "global_load_dword"},
@@ -269,7 +266,7 @@ static std::unordered_map<std::string, std::string> BuildMnemonicMap() {
   return map;
 }
 
-static const std::unordered_map<std::string, std::string>& GetMnemonicMap() {
+const std::unordered_map<std::string, std::string>& GetMnemonicMap() {
   static auto map = BuildMnemonicMap();
   return map;
 }

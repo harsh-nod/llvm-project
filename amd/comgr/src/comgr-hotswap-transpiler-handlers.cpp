@@ -1,14 +1,12 @@
-// comgr-hotswap-transpiler-handlers.inc — Instruction translation handlers for cross-family transpiler
-// Included inside the anonymous namespace of comgr-hotswap.cpp.
-// Not a standalone compilation unit.
+//===- comgr-hotswap-transpiler-handlers.cpp - Instruction translation -----===//
+//
+// Part of Comgr, under the Apache License v2.0 with LLVM Exceptions. See
+// amd/comgr/LICENSE.TXT in this repository for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
 
-// Forward declaration for recursive dispatch from HandleVOPDInstruction
-static std::vector<std::string> TranslateInstruction(const std::string& asm_line,
-                                               const std::string& source_cpu,
-                                               const std::string& target_cpu,
-                                               int scale_temp_vgpr,
-                                               int cmpx_temp_sgpr,
-                                               bool compact_mode);
+#include "comgr-hotswap-internal.h"
 
 // ── Handler: Wait Instructions ───────────────────────────────────────────────
 
@@ -924,12 +922,12 @@ static bool HandleVCmpExpansion(
 
 // ── TranslateInstruction — Table-driven dispatch ─────────────────────────────
 
-static std::vector<std::string> TranslateInstruction(const std::string& asm_line,
+std::vector<std::string> TranslateInstruction(const std::string& asm_line,
                                                const std::string& source_cpu,
                                                const std::string& target_cpu,
-                                               int scale_temp_vgpr = 7,
-                                               int cmpx_temp_sgpr = 16,
-                                               bool compact_mode = false) {
+                                               int scale_temp_vgpr,
+                                               int cmpx_temp_sgpr,
+                                               bool compact_mode) {
   std::vector<std::string> result;
   std::string line = asm_line;
 

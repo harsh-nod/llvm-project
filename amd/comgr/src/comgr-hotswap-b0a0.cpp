@@ -1,17 +1,12 @@
-// comgr-hotswap-b0a0.inc — GFX1250 B0-to-A0 load-time instruction patching
-// Included inside the anonymous namespace of comgr-hotswap.cpp.
-// Not a standalone compilation unit.
+//===- comgr-hotswap-b0a0.cpp - GFX1250 B0-to-A0 instruction patching -----===//
+//
+// Part of Comgr, under the Apache License v2.0 with LLVM Exceptions. See
+// amd/comgr/LICENSE.TXT in this repository for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
 
-// ── WMMA hazard classification ───────────────────────────────────────────────
-
-struct WmmaNopReq { int b0_nops; int a0_nops; };
-struct WmmaHazard {
-  size_t wmma_idx;
-  size_t valu_idx;
-  int existing_nops;
-  int needed_nops;
-  int deficit;
-};
+#include "comgr-hotswap-internal.h"
 
 // ── WMMA helpers ─────────────────────────────────────────────────────────────
 
@@ -314,29 +309,6 @@ ValidateWmmaCoexecHazards(const std::vector<InternalDecodedInst> &decoded,
   return hazards;
 }
 
-// ── Per-patch types ──────────────────────────────────────────────────────────
-
-struct KernelPatchStats {
-  int extra_vgprs = 0;
-  int scratch_reused = 0;
-  int scratch_above_kd = 0;
-};
-
-struct PatchContext {
-  std::vector<InternalDecodedInst> &decoded;
-  uint8_t *text;
-  uint64_t text_size;
-  const LLVMState &llvm_state;
-  std::vector<Trampoline> &out_trampolines;
-  std::vector<NopSled> &nop_sleds;
-  uint8_t *elf_data;
-  size_t elf_size;
-  const ElfInfo &elf_info;
-  const LivenessInfo &liveness;
-  std::map<std::string, KernelPatchStats> &kernel_stats;
-  std::vector<ScratchPatchInfo> &out_scratch_patches;
-};
-
 // ── Common sled-or-trampoline insertion ─────────────────────────────────────
 
 [[nodiscard]] static bool EmitReplacementCode(PatchContext &ctx, uint64_t inst_offset,
@@ -366,7 +338,7 @@ struct PatchContext {
         }
         sled->write_pos += tramp_size;
         if (patch_desc) {
-          HotswapLog(HotswapLogLevel::Debug) << "hotswap: B0->A0 @0x" << std::hex << inst_offset
+          HotswapLog(HotswapLogLevel::Info) << "hotswap: B0->A0 @0x" << std::hex << inst_offset
                     << ": " << patch_desc << " via sled @0x" << tp
                     << std::dec << "\n";
         }
@@ -385,7 +357,7 @@ struct PatchContext {
   std::memcpy(t.bytes.data() + replacement_bytes.size(), placeholder, 4);
   ctx.out_trampolines.push_back(std::move(t));
   if (patch_desc) {
-    HotswapLog(HotswapLogLevel::Debug) << "hotswap: B0->A0 @0x" << std::hex << inst_offset
+    HotswapLog(HotswapLogLevel::Info) << "hotswap: B0->A0 @0x" << std::hex << inst_offset
               << ": " << patch_desc << " deferred for ELF growth"
               << std::dec << "\n";
   }
@@ -898,7 +870,7 @@ static uint32_t ApplyPatch5_WmmaHazard(PatchContext &ctx) {
       uint8_t nop[4]; EncodeSNop(nop);
       std::memcpy(ctx.text + di.offset + i, nop, 4);
     }
-    HotswapLog(HotswapLogLevel::Debug) << "hotswap: B0->A0 @0x" << std::hex << di.offset
+    HotswapLog(HotswapLogLevel::Info) << "hotswap: B0->A0 @0x" << std::hex << di.offset
               << ": v_wmma_ld_scale16 -> block32 v_wmma_ld_scale_paired_b32"
               << std::dec << "\n";
     di.mnemonic = "<replaced>";
@@ -979,7 +951,7 @@ ApplyGfx1250B0toA0Rules(std::vector<InternalDecodedInst> &decoded,
 
 // ── PatchElfIsa ──────────────────────────────────────────────────────────────
 
-static bool PatchElfIsa(uint8_t *elf, size_t elf_size,
+bool PatchElfIsa(uint8_t *elf, size_t elf_size,
                         const std::string &target_cpu) {
   if (elf_size < 64) return false;
   if (elf[0] != 0x7f || elf[1] != 'E' || elf[2] != 'L' || elf[3] != 'F')
@@ -1064,7 +1036,7 @@ static bool PatchElfIsa(uint8_t *elf, size_t elf_size,
 
 // ── RetargetCodeObjectB0A0Grow ───────────────────────────────────────────────
 
-static amd_comgr_status_t
+amd_comgr_status_t
 RetargetCodeObjectB0A0Grow(const void *elf_data, size_t elf_size,
                            void **out_data, size_t *out_size,
                            amd_comgr_hotswap_result_t *result) {

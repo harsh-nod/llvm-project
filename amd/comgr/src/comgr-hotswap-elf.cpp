@@ -1,147 +1,17 @@
-// comgr-hotswap-elf.inc — ELF types, parsing, and binary helpers
-// Included inside the anonymous namespace of comgr-hotswap.cpp.
-// Not a standalone compilation unit.
+//===- comgr-hotswap-elf.cpp - ELF types, parsing, and binary helpers -----===//
 //
-// NOTE: ElfSection, ElfSymbol, ElfInfo, and ExtractCPU are derived from the
-// canonical shared header at:
-//   rocr-runtime/hotswap/hotswap_shared_types.h
-// This copy exists because comgr-hotswap-elf.inc is included inside an
-// anonymous namespace, so it cannot directly #include a namespaced header.
-// TODO: Unify via build-system include-path changes.
+// Part of Comgr, under the Apache License v2.0 with LLVM Exceptions. See
+// amd/comgr/LICENSE.TXT in this repository for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
 
-// ── MallocBuffer RAII wrapper ────────────────────────────────────────────────
-
-struct MallocBuffer {
-  uint8_t *data = nullptr;
-  size_t size = 0;
-
-  MallocBuffer() = default;
-  MallocBuffer(size_t n) : data(static_cast<uint8_t *>(std::malloc(n))), size(n) {}
-  ~MallocBuffer() { std::free(data); }
-
-  MallocBuffer(MallocBuffer &&o) noexcept : data(o.data), size(o.size) {
-    o.data = nullptr; o.size = 0;
-  }
-  MallocBuffer &operator=(MallocBuffer &&o) noexcept {
-    if (this != &o) { std::free(data); data = o.data; size = o.size; o.data = nullptr; o.size = 0; }
-    return *this;
-  }
-
-  MallocBuffer(const MallocBuffer &) = delete;
-  MallocBuffer &operator=(const MallocBuffer &) = delete;
-
-  explicit operator bool() const { return data != nullptr; }
-  uint8_t *release() { uint8_t *p = data; data = nullptr; size = 0; return p; }
-};
-
-// ── Logging ──────────────────────────────────────────────────────────────────
-
-enum class HotswapLogLevel : int { Silent = 0, Error = 1, Info = 2, Debug = 3 };
-
-static HotswapLogLevel GetHotswapLogLevel() {
-  static HotswapLogLevel level = []() {
-    const char *env = std::getenv("HSA_HOTSWAP_LOG_LEVEL");
-    if (env) {
-      int v = std::atoi(env);
-      if (v >= 0 && v <= 3) return static_cast<HotswapLogLevel>(v);
-    }
-    return HotswapLogLevel::Info;
-  }();
-  return level;
-}
-
-static std::ostream &HotswapLog(HotswapLogLevel level) {
-  static std::ostream null_stream(nullptr);
-  if (static_cast<int>(level) <= static_cast<int>(GetHotswapLogLevel()))
-    return std::cerr;
-  return null_stream;
-}
-
-// ── ELF types ────────────────────────────────────────────────────────────────
-
-struct ElfSection {
-  uint32_t name_idx;
-  std::string name;
-  uint32_t type;
-  uint64_t offset;
-  uint64_t size;
-  uint64_t addr;
-};
-
-struct ElfSymbol {
-  std::string name;
-  uint64_t value;
-  uint64_t size;
-  uint8_t info;
-  uint16_t shndx;
-};
-
-struct ElfInfo {
-  std::vector<ElfSection> sections;
-  std::vector<ElfSymbol> symbols;
-  int text_section_idx = -1;
-  int text_idx = -1;
-  uint64_t text_offset = 0;
-  uint64_t text_size = 0;
-  uint64_t text_addr = 0;
-};
-
-// ── Trampoline ───────────────────────────────────────────────────────────────
-
-struct Trampoline {
-  uint64_t original_offset;
-  uint32_t original_size;
-  std::vector<uint8_t> bytes;
-};
-
-// ── NOP sled ─────────────────────────────────────────────────────────────────
-
-struct NopSled {
-  uint64_t start;
-  uint64_t end;
-  uint64_t write_pos;
-};
-
-// ── Rewrite-rule types ───────────────────────────────────────────────────────
-
-struct OperandMatch {
-  enum class Kind { Wildcard, Immediate, RegClass };
-  Kind kind = Kind::Wildcard;
-  int64_t imm_value = 0;
-  std::string reg_class;
-};
-
-enum class ReplaceAction { MnemonicSwap, AsmReplace, ByteReplace };
-
-struct RewriteRule {
-  std::string name;
-  std::string match_mnemonic;
-  std::vector<OperandMatch> operands;
-  std::string match_kernel;
-  int64_t match_offset = -1;
-  ReplaceAction action = ReplaceAction::MnemonicSwap;
-  std::string replace_mnemonic;
-  bool preserve_operands = true;
-  std::vector<std::string> replace_asm;
-  std::vector<uint8_t> replace_bytes;
-  int32_t extra_vgprs = 0;
-  int32_t extra_sgprs = 0;
-};
-
-struct RulesFile {
-  uint32_t version = 0;
-  std::string target;
-  std::vector<RewriteRule> rules;
-};
+#include "comgr-hotswap-internal.h"
 
 // ── s_branch / s_nop encoding ────────────────────────────────────────────────
 
-static constexpr uint32_t S_BRANCH_GFX9  = 0xBF820000u;
-static constexpr uint32_t S_BRANCH_GFX12 = 0xBFA00000u;
-static constexpr uint32_t S_NOP_OPCODE   = 0xBF800000u;
-
-[[nodiscard]] static bool EncodeSBranch(uint64_t from_offset, uint64_t to_offset,
-                          uint8_t out_bytes[4], bool gfx12 = false) {
+[[nodiscard]] bool EncodeSBranch(uint64_t from_offset, uint64_t to_offset,
+                          uint8_t out_bytes[4], bool gfx12) {
   int64_t byte_delta = static_cast<int64_t>(to_offset) -
                        static_cast<int64_t>(from_offset) - 4;
   if (byte_delta % 4 != 0) return false;
@@ -153,14 +23,14 @@ static constexpr uint32_t S_NOP_OPCODE   = 0xBF800000u;
   return true;
 }
 
-static void EncodeSNop(uint8_t out_bytes[4]) {
+void EncodeSNop(uint8_t out_bytes[4]) {
   uint32_t encoded = S_NOP_OPCODE;
   std::memcpy(out_bytes, &encoded, 4);
 }
 
 // ── ExtractCPU ───────────────────────────────────────────────────────────────
 
-static std::string ExtractCPU(const std::string &isa_name) {
+std::string ExtractCPU(const std::string &isa_name) {
   size_t pos = isa_name.rfind("gfx");
   if (pos != std::string::npos) {
     std::string cpu;
@@ -179,7 +49,7 @@ static std::string ExtractCPU(const std::string &isa_name) {
 
 // ── ELF parsing ──────────────────────────────────────────────────────────────
 
-[[nodiscard]] static bool ParseElfInfo(const uint8_t *elf, size_t elf_size, ElfInfo &info) {
+[[nodiscard]] bool ParseElfInfo(const uint8_t *elf, size_t elf_size, ElfInfo &info) {
   using ELFT = llvm::object::ELF64LE;
   auto elf_or_err = llvm::object::ELFFile<ELFT>::create(
       llvm::StringRef(reinterpret_cast<const char *>(elf), elf_size));
@@ -260,7 +130,7 @@ static std::string ExtractCPU(const std::string &isa_name) {
   return info.text_section_idx >= 0;
 }
 
-static std::string FindKernelAtOffset(const ElfInfo &elf_info,
+std::string FindKernelAtOffset(const ElfInfo &elf_info,
                                       uint64_t text_offset) {
   for (auto &sym : elf_info.symbols) {
     uint8_t sym_type = sym.info & 0xf;
@@ -278,7 +148,7 @@ static std::string FindKernelAtOffset(const ElfInfo &elf_info,
 
 // ── ApplyByteReplace ─────────────────────────────────────────────────────────
 
-[[nodiscard]] static bool ApplyByteReplace(const RewriteRule &rule, uint64_t inst_offset,
+[[nodiscard]] bool ApplyByteReplace(const RewriteRule &rule, uint64_t inst_offset,
                              uint32_t inst_size, uint8_t *text,
                              uint64_t text_size) {
   if (inst_offset + inst_size > text_size) return false;
@@ -300,7 +170,7 @@ static std::string FindKernelAtOffset(const ElfInfo &elf_info,
 
 // ── UpdateKernelDescriptor ───────────────────────────────────────────────────
 
-static void UpdateKernelDescriptor(uint8_t *elf_data, size_t elf_size,
+void UpdateKernelDescriptor(uint8_t *elf_data, size_t elf_size,
                                    const ElfInfo &elf_info,
                                    const std::string &kernel_name,
                                    int32_t extra_vgprs, int32_t extra_sgprs) {
@@ -341,7 +211,7 @@ static void UpdateKernelDescriptor(uint8_t *elf_data, size_t elf_size,
 
 // ── NOP sled management ─────────────────────────────────────────────────────
 
-static NopSled *FindNearestSled(std::vector<NopSled> &sleds, uint64_t offset,
+NopSled *FindNearestSled(std::vector<NopSled> &sleds, uint64_t offset,
                                 uint64_t needed) {
   NopSled *best = nullptr;
   int64_t best_dist = INT64_MAX;
@@ -359,7 +229,7 @@ static NopSled *FindNearestSled(std::vector<NopSled> &sleds, uint64_t offset,
 
 // ── GrowElfWithTrampolines ──────────────────────────────────────────────────
 
-static MallocBuffer GrowElfWithTrampolines(const uint8_t *elf, size_t elf_size,
+MallocBuffer GrowElfWithTrampolines(const uint8_t *elf, size_t elf_size,
                                             const ElfInfo &elf_info,
                                             const std::vector<Trampoline> &trampolines) {
   size_t tramp_total = 0;

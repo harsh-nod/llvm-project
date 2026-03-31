@@ -1,8 +1,14 @@
-// comgr-hotswap-dwarf.inc — DWARF / debug update helpers
-// Included inside the anonymous namespace of comgr-hotswap.cpp.
-// Not a standalone compilation unit.
+//===- comgr-hotswap-dwarf.cpp - DWARF / debug update helpers -------------===//
+//
+// Part of Comgr, under the Apache License v2.0 with LLVM Exceptions. See
+// amd/comgr/LICENSE.TXT in this repository for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
 
-// ── DWARF / Debug update helpers ─────────────────────────────────────────────
+#include "comgr-hotswap-internal.h"
+
+// ── LEB128 helpers (file-local) ──────────────────────────────────────────────
 
 static void EncodeSLEB128(int64_t value, std::vector<uint8_t> &out) {
   uint8_t buf[16];
@@ -24,8 +30,10 @@ static int64_t DecodeSLEB128(const uint8_t *p, size_t *n) {
   return result;
 }
 
-static uint8_t *FindSectionHeader(uint8_t *elf, size_t elf_size,
-                                   const char *name, int *out_idx = nullptr) {
+// ── FindSectionHeader ────────────────────────────────────────────────────────
+
+uint8_t *FindSectionHeader(uint8_t *elf, size_t elf_size,
+                                   const char *name, int *out_idx) {
   if (elf_size < 64) return nullptr;
   uint64_t e_shoff;
   uint16_t e_shentsize, e_shnum, e_shstrndx;
@@ -55,7 +63,9 @@ static uint8_t *FindSectionHeader(uint8_t *elf, size_t elf_size,
   return nullptr;
 }
 
-[[nodiscard]] static bool AddTrampolineSymbols(
+// ── AddTrampolineSymbols ─────────────────────────────────────────────────────
+
+[[nodiscard]] bool AddTrampolineSymbols(
     MallocBuffer &elf_buf,
     const std::vector<Trampoline> &trampolines,
     uint64_t text_size_before, int text_section_idx) {
@@ -99,7 +109,7 @@ static uint8_t *FindSectionHeader(uint8_t *elf, size_t elf_size,
     names.push_back(oss.str());
 
     std::vector<uint8_t> entry(24, 0);
-    entry[4] = 0x02; // ELF64_ST_INFO(STB_LOCAL, STT_FUNC)
+    entry[4] = 0x02;
     uint16_t shndx = static_cast<uint16_t>(text_section_idx);
     std::memcpy(entry.data() + 6, &shndx, 2);
     std::memcpy(entry.data() + 8, &running, 8);
@@ -166,11 +176,7 @@ static uint8_t *FindSectionHeader(uint8_t *elf, size_t elf_size,
   return true;
 }
 
-struct DebugLineRow {
-  uint64_t address;
-  uint32_t file;
-  int32_t line;
-};
+// ── ScanDebugLineTable (file-local) ──────────────────────────────────────────
 
 static std::vector<DebugLineRow> ScanDebugLineTable(
     const uint8_t *data, size_t data_size) {
@@ -275,7 +281,9 @@ static std::vector<DebugLineRow> ScanDebugLineTable(
   return rows;
 }
 
-[[nodiscard]] static bool PatchDebugLine(
+// ── PatchDebugLine ───────────────────────────────────────────────────────────
+
+[[nodiscard]] bool PatchDebugLine(
     MallocBuffer &elf_buf,
     const std::vector<Trampoline> &trampolines,
     uint64_t text_size_before, uint64_t text_addr) {
@@ -315,24 +323,21 @@ static std::vector<DebugLineRow> ScanDebugLineTable(
     uint64_t tramp_end = tramp_addr + t.bytes.size();
     int32_t src_line = FindLine(t.original_offset);
 
-    // DW_LNE_set_address(tramp_addr)
     extra.push_back(0x00); extra.push_back(0x09); extra.push_back(0x02);
     for (int b = 0; b < 8; ++b)
       extra.push_back(static_cast<uint8_t>(tramp_addr >> (b * 8)));
 
     if (src_line != 1) {
-      extra.push_back(0x03); // DW_LNS_advance_line
+      extra.push_back(0x03);
       EncodeSLEB128(static_cast<int64_t>(src_line) - 1, extra);
     }
 
-    extra.push_back(0x01); // DW_LNS_copy
+    extra.push_back(0x01);
 
-    // DW_LNE_set_address(tramp_end)
     extra.push_back(0x00); extra.push_back(0x09); extra.push_back(0x02);
     for (int b = 0; b < 8; ++b)
       extra.push_back(static_cast<uint8_t>(tramp_end >> (b * 8)));
 
-    // DW_LNE_end_sequence
     extra.push_back(0x00); extra.push_back(0x01); extra.push_back(0x01);
 
     running += t.bytes.size();
@@ -367,7 +372,9 @@ static std::vector<DebugLineRow> ScanDebugLineTable(
   return true;
 }
 
-static void PatchDebugRanges(uint8_t *elf, size_t elf_size,
+// ── PatchDebugRanges ─────────────────────────────────────────────────────────
+
+void PatchDebugRanges(uint8_t *elf, size_t elf_size,
                               uint64_t text_addr, uint64_t text_size_before,
                               uint64_t tramp_total) {
   uint8_t *sh = FindSectionHeader(elf, elf_size, ".debug_ranges");
@@ -391,11 +398,9 @@ static void PatchDebugRanges(uint8_t *elf, size_t elf_size,
   }
 }
 
-// Byte-scanning heuristic: looks for 8-byte sequences matching text_addr
-// followed by a plausible DW_AT_high_pc size value, then patches in the
-// new text size that accounts for appended trampolines.  This avoids the
-// complexity of constructing a full DWARFContext for in-place mutation.
-static void PatchDebugInfo(uint8_t *elf, size_t elf_size,
+// ── PatchDebugInfo ───────────────────────────────────────────────────────────
+
+void PatchDebugInfo(uint8_t *elf, size_t elf_size,
                             uint64_t text_addr, uint64_t text_size_before,
                             uint64_t tramp_total) {
   uint8_t *sh = FindSectionHeader(elf, elf_size, ".debug_info");
@@ -413,8 +418,6 @@ static void PatchDebugInfo(uint8_t *elf, size_t elf_size,
     std::memcpy(&v, d + i, 8);
     if (v != text_addr) continue;
 
-    // DW_AT_low_pc = text_addr found; check for DW_AT_high_pc following it.
-    // Try 4-byte form (DW_FORM_data4) — common in AMDGPU DWARF
     uint32_t hp4;
     std::memcpy(&hp4, d + i + 8, 4);
     if (hp4 > 0 && hp4 <= static_cast<uint32_t>(text_size_before)) {
@@ -422,7 +425,6 @@ static void PatchDebugInfo(uint8_t *elf, size_t elf_size,
       std::memcpy(d + i + 8, &ns4, 4);
       i += 11; continue;
     }
-    // Try 8-byte size form (DW_FORM_data8)
     if (i + 16 <= size) {
       uint64_t hp8;
       std::memcpy(&hp8, d + i + 8, 8);
@@ -430,7 +432,6 @@ static void PatchDebugInfo(uint8_t *elf, size_t elf_size,
         std::memcpy(d + i + 8, &new_text_size, 8);
         i += 15; continue;
       }
-      // Absolute address form
       if (hp8 > text_addr && hp8 <= text_addr + text_size_before) {
         uint64_t new_abs = text_addr + new_text_size;
         std::memcpy(d + i + 8, &new_abs, 8);
@@ -440,7 +441,9 @@ static void PatchDebugInfo(uint8_t *elf, size_t elf_size,
   }
 }
 
-static void PatchDebugFrame(uint8_t *elf, size_t elf_size,
+// ── PatchDebugFrame ──────────────────────────────────────────────────────────
+
+void PatchDebugFrame(uint8_t *elf, size_t elf_size,
                               uint64_t text_addr, uint64_t text_size_before,
                               uint64_t tramp_total) {
   uint8_t *sh = FindSectionHeader(elf, elf_size, ".debug_frame");

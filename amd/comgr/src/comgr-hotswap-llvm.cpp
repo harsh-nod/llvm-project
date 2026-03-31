@@ -1,25 +1,18 @@
-// comgr-hotswap-llvm.inc — LLVM MC infrastructure, decode/encode, VGPR introspection
-// Included inside the anonymous namespace of comgr-hotswap.cpp.
-// Not a standalone compilation unit.
+//===- comgr-hotswap-llvm.cpp - LLVM MC infrastructure, decode/encode -----===//
+//
+// Part of Comgr, under the Apache License v2.0 with LLVM Exceptions. See
+// amd/comgr/LICENSE.TXT in this repository for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
 
-// ── LLVM MC Context ──────────────────────────────────────────────────────────
+#include "comgr-hotswap-internal.h"
 
-struct LLVMState {
-  const llvm::Target *target = nullptr;
-  std::unique_ptr<llvm::MCRegisterInfo> MRI;
-  std::unique_ptr<const llvm::MCAsmInfo> MAI;
-  std::unique_ptr<llvm::MCInstrInfo> MCII;
-  std::unique_ptr<llvm::MCSubtargetInfo> STI;
-  std::unique_ptr<llvm::MCContext> Ctx;
-  std::unique_ptr<llvm::MCObjectFileInfo> MOFI;
-  std::unique_ptr<llvm::MCDisassembler> disasm;
-  std::unique_ptr<llvm::MCInstPrinter> printer;
-  llvm::MCCodeEmitter *CE = nullptr;
-  std::string cpu;
-  bool valid = false;
-};
-
-static std::once_flag g_llvm_init_flag;
+namespace {
+std::once_flag g_llvm_init_flag;
+std::mutex g_target_cache_mutex;
+const llvm::Target *g_cached_target = nullptr;
+} // namespace
 
 static void InitLLVMTargets() {
   LLVMInitializeAMDGPUTargetInfo();
@@ -28,8 +21,8 @@ static void InitLLVMTargets() {
   LLVMInitializeAMDGPUDisassembler();
 }
 
-static LLVMState InitLLVMImpl(const std::string &isa_name,
-                              const llvm::Target *cached_target = nullptr) {
+LLVMState InitLLVMImpl(const std::string &isa_name,
+                              const llvm::Target *cached_target) {
   std::call_once(g_llvm_init_flag, InitLLVMTargets);
 
   LLVMState state;
@@ -101,10 +94,7 @@ static LLVMState InitLLVMImpl(const std::string &isa_name,
   return state;
 }
 
-static std::mutex g_target_cache_mutex;
-static const llvm::Target *g_cached_target = nullptr;
-
-static LLVMState InitLLVMCached(const std::string &isa_name) {
+LLVMState InitLLVMCached(const std::string &isa_name) {
   std::call_once(g_llvm_init_flag, InitLLVMTargets);
 
   const llvm::Target *tgt;
@@ -122,18 +112,9 @@ static LLVMState InitLLVMCached(const std::string &isa_name) {
   return InitLLVMImpl(isa_name, tgt);
 }
 
-// ── Decoded instruction with MCInst ──────────────────────────────────────────
-
-struct InternalDecodedInst {
-  uint64_t offset;
-  uint32_t size;
-  llvm::MCInst inst;
-  std::string mnemonic;
-};
-
 // ── Instruction decode ───────────────────────────────────────────────────────
 
-[[nodiscard]] static bool DecodeTextSection(const uint8_t *text, uint64_t text_size,
+[[nodiscard]] bool DecodeTextSection(const uint8_t *text, uint64_t text_size,
                               const LLVMState &llvm_state,
                               std::vector<InternalDecodedInst> &decoded) {
   uint64_t pos = 0;
@@ -175,7 +156,7 @@ struct InternalDecodedInst {
 
 // ── AssembleSingleInst ───────────────────────────────────────────────────────
 
-static std::vector<uint8_t> AssembleSingleInst(const std::string &asm_str,
+std::vector<uint8_t> AssembleSingleInst(const std::string &asm_str,
                                                const LLVMState &llvm_state) {
   llvm_state.Ctx->reset();
 
@@ -252,7 +233,7 @@ static std::vector<uint8_t> AssembleSingleInst(const std::string &asm_str,
 
 // ── ApplyMnemonicSwap ────────────────────────────────────────────────────────
 
-[[nodiscard]] static bool ApplyMnemonicSwap(const RewriteRule &rule,
+[[nodiscard]] bool ApplyMnemonicSwap(const RewriteRule &rule,
                               InternalDecodedInst &inst, uint8_t *text,
                               const LLVMState &llvm_state) {
   if (!llvm_state.printer) return false;
@@ -281,7 +262,7 @@ static std::vector<uint8_t> AssembleSingleInst(const std::string &asm_str,
 
 // ── BuildTrampoline ──────────────────────────────────────────────────────────
 
-static Trampoline BuildTrampoline(const std::vector<std::string> &asm_lines,
+Trampoline BuildTrampoline(const std::vector<std::string> &asm_lines,
                                   uint64_t original_offset,
                                   uint32_t original_size,
                                   uint64_t trampoline_text_offset,
@@ -317,7 +298,7 @@ static Trampoline BuildTrampoline(const std::vector<std::string> &asm_lines,
 
 // ── MatchRule ────────────────────────────────────────────────────────────────
 
-[[nodiscard]] static bool MatchRule(const RewriteRule &rule, const InternalDecodedInst &inst,
+[[nodiscard]] bool MatchRule(const RewriteRule &rule, const InternalDecodedInst &inst,
                       const ElfInfo &elf_info) {
   if (!rule.match_mnemonic.empty() && rule.match_mnemonic != inst.mnemonic)
     return false;
@@ -353,8 +334,7 @@ static Trampoline BuildTrampoline(const std::vector<std::string> &asm_lines,
 
 // ── VGPR introspection ───────────────────────────────────────────────────────
 
-static int __attribute__((unused))
-GetVgprNum(unsigned reg, const llvm::MCRegisterInfo &MRI) {
+int GetVgprNum(unsigned reg, const llvm::MCRegisterInfo &MRI) {
   const char *name = MRI.getName(reg);
   if (!name) return -1;
   std::string rname(name);
@@ -371,7 +351,7 @@ GetVgprNum(unsigned reg, const llvm::MCRegisterInfo &MRI) {
   return -1;
 }
 
-static std::pair<int, int> GetVgprRange(unsigned reg,
+std::pair<int, int> GetVgprRange(unsigned reg,
                                         const llvm::MCRegisterInfo &MRI) {
   const char *name = MRI.getName(reg);
   if (!name) return {-1, 0};
@@ -391,7 +371,7 @@ static std::pair<int, int> GetVgprRange(unsigned reg,
   return {base, count};
 }
 
-static std::pair<int, int>
+std::pair<int, int>
 GetOperandVgprRange(const llvm::MCInst &inst, unsigned op_idx,
                     const llvm::MCRegisterInfo &MRI) {
   if (op_idx >= inst.getNumOperands()) return {-1, 0};
@@ -400,7 +380,7 @@ GetOperandVgprRange(const llvm::MCInst &inst, unsigned op_idx,
   return GetVgprRange(op.getReg(), MRI);
 }
 
-static std::string PrintInst(const InternalDecodedInst &di,
+std::string PrintInst(const InternalDecodedInst &di,
                               const LLVMState &llvm_state) {
   std::string inst_str;
   if (llvm_state.printer) {
@@ -411,14 +391,14 @@ static std::string PrintInst(const InternalDecodedInst &di,
   return inst_str;
 }
 
-static bool RangesOverlap(int base1, int count1, int base2, int count2) {
+bool RangesOverlap(int base1, int count1, int base2, int count2) {
   if (base1 < 0 || base2 < 0) return false;
   return base1 < base2 + count2 && base2 < base1 + count1;
 }
 
 // ── WMMA co-execution hazard overlap check ──────────────────────────────────
 
-static bool CheckVgprOverlap(const llvm::MCInst &wmma_inst,
+bool CheckVgprOverlap(const llvm::MCInst &wmma_inst,
                              const llvm::MCInst &valu_inst,
                              const llvm::MCRegisterInfo &MRI) {
   std::vector<std::pair<int, int>> wmma_input_ranges;
