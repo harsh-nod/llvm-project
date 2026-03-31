@@ -73,6 +73,8 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/MC/TargetRegistry.h"
 
+#include "comgr-hotswap-opcodes.h"
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Types
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -337,6 +339,19 @@ struct PatchContext {
   std::unordered_map<std::string, KernelPatchStats> &kernel_stats;
   std::vector<ScratchPatchInfo> &out_scratch_patches;
 };
+
+// ── Opcode mapping (cross-ISA) ───────────────────────────────────────────────
+
+struct OpcodeMapper {
+  std::unordered_map<unsigned, unsigned> real_to_pseudo;
+
+  void init(unsigned src_gen);
+  unsigned toPseudo(unsigned real_opcode) const;
+  static unsigned toTarget(unsigned pseudo_opcode, unsigned tgt_gen);
+};
+
+OpcodeMapper &GetOpcodeMapper(unsigned src_gen);
+unsigned GetEncodingFamily(const std::string &cpu);
 
 // ── Transpiler types ─────────────────────────────────────────────────────────
 

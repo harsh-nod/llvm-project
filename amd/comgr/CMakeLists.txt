@@ -82,6 +82,7 @@ set(SOURCES
   src/comgr-hotswap-llvm.cpp
   src/comgr-hotswap-liveness.cpp
   src/comgr-hotswap-b0a0.cpp
+  src/comgr-hotswap-opcode-map.cpp
   src/comgr-hotswap-transpiler-tables.cpp
   src/comgr-hotswap-transpiler-helpers.cpp
   src/comgr-hotswap-transpiler-handlers.cpp
@@ -180,6 +181,18 @@ endif()
 target_include_directories(amd_comgr
   PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+# AMDGPU target headers for hotswap opcode-based transpiler
+if(LLVM_MAIN_SRC_DIR)
+  set(_AMDGPU_SRC ${LLVM_MAIN_SRC_DIR})
+else()
+  set(_AMDGPU_SRC ${CMAKE_SOURCE_DIR}/llvm)
+endif()
+target_include_directories(amd_comgr PRIVATE
+  ${CMAKE_BINARY_DIR}/lib/Target/AMDGPU
+  ${_AMDGPU_SRC}/lib/Target/AMDGPU
+  ${_AMDGPU_SRC}/lib/Target/AMDGPU/Utils
+  ${_AMDGPU_SRC}/lib/Target/AMDGPU/MCTargetDesc)
 
 message("")
 message("------------LLVM_DIR: ${LLVM_DIR}")
