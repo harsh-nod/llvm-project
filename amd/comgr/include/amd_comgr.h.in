@@ -2684,6 +2684,15 @@ amd_comgr_map_elf_virtual_address_to_code_object_offset(
  * @{
  *
  * APIs for load-time GPU ISA binary rewriting.
+ *
+ * @note Design: these APIs use raw buffer pointers (@c void*) for input and
+ * output rather than @c amd_comgr_data_t handles. This is intentional. The
+ * primary consumer is the HSA runtime loader, which does not link against
+ * Comgr and loads these symbols at runtime via @c dlsym. Using raw buffers
+ * keeps the contract to a single symbol lookup and avoids requiring the
+ * caller to also resolve @c amd_comgr_get_data and @c amd_comgr_release_data
+ * (plus replicate the @c amd_comgr_data_t type definition) just to extract
+ * the result. The caller frees the output with @c free().
  */
 
 /**
