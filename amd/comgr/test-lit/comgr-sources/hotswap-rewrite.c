@@ -10,49 +10,48 @@
 #include "common.h"
 
 int main(int argc, char *argv[]) {
-  amd_comgr_status_t Status;
+  if (argc < 2) {
+    amd_comgr_status_t Status =
+        amd_comgr_hotswap_rewrite(NULL, 0, NULL, NULL, NULL, NULL);
+    if (Status != AMD_COMGR_STATUS_ERROR_INVALID_ARGUMENT)
+      fail("rewrite with NULL args: expected INVALID_ARGUMENT");
+    printf("NULL_ARGS: INVALID_ARGUMENT\n");
+    return 0;
+  }
 
-  // Test 1: NULL arguments return INVALID_ARGUMENT
-  Status = amd_comgr_hotswap_rewrite(NULL, 0, NULL, NULL, NULL, NULL);
-  if (Status != AMD_COMGR_STATUS_ERROR_INVALID_ARGUMENT)
-    fail("rewrite with NULL args: expected INVALID_ARGUMENT");
+  if (argc < 4)
+    fail("usage: hotswap-rewrite <elf_file> <source_isa> <target_isa> [--zero-size]");
 
-  // Test 2: Unsupported ISA pair returns INVALID_ARGUMENT
-  const unsigned char TestElf[] = {
-      0x7f, 'E', 'L', 'F', 0x02, 0x01, 0x01, 0x00,
-      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+  const char *ElfFile = argv[1];
+  const char *SourceISA = argv[2];
+  const char *TargetISA = argv[3];
+  int ZeroSize = (argc > 4 && strcmp(argv[4], "--zero-size") == 0);
+
+  char *ElfBuf;
+  size_t ElfSize = (size_t)setBuf(ElfFile, &ElfBuf);
+
   void *OutElf = NULL;
   size_t OutSize = 0;
-  Status = amd_comgr_hotswap_rewrite(TestElf, sizeof(TestElf),
-                                     "amdgcn-amd-amdhsa--gfx942",
-                                     "amdgcn-amd-amdhsa--gfx942",
-                                     &OutElf, &OutSize);
-  if (Status != AMD_COMGR_STATUS_ERROR_INVALID_ARGUMENT)
-    fail("rewrite with unsupported ISA: expected INVALID_ARGUMENT");
 
-  // Test 3: Zero-size input returns INVALID_ARGUMENT
-  Status = amd_comgr_hotswap_rewrite(TestElf, 0,
-                                     "amdgcn-amd-amdhsa--gfx1250",
-                                     "amdgcn-amd-amdhsa--gfx1250",
-                                     &OutElf, &OutSize);
-  if (Status != AMD_COMGR_STATUS_ERROR_INVALID_ARGUMENT)
-    fail("rewrite with zero size: expected INVALID_ARGUMENT");
+  amd_comgr_status_t Status = amd_comgr_hotswap_rewrite(
+      ElfBuf, ZeroSize ? 0 : ElfSize, SourceISA, TargetISA, &OutElf, &OutSize);
 
-  // Test 4: Valid GFX1250 call returns input unchanged (stub behavior)
-  Status = amd_comgr_hotswap_rewrite(TestElf, sizeof(TestElf),
-                                     "amdgcn-amd-amdhsa--gfx1250",
-                                     "amdgcn-amd-amdhsa--gfx1250",
-                                     &OutElf, &OutSize);
+  if (Status == AMD_COMGR_STATUS_ERROR_INVALID_ARGUMENT) {
+    printf("RESULT: INVALID_ARGUMENT\n");
+    free(ElfBuf);
+    return 0;
+  }
+
   if (Status != AMD_COMGR_STATUS_SUCCESS)
-    fail("rewrite passthrough failed");
+    fail("unexpected error status %d", (int)Status);
 
-  if (OutSize != sizeof(TestElf))
-    fail("rewrite: output size %zu != input size %zu",
-         OutSize, sizeof(TestElf));
-  if (memcmp(OutElf, TestElf, sizeof(TestElf)) != 0)
-    fail("rewrite: output content differs from input");
+  if (OutSize != ElfSize)
+    fail("output size %zu != input size %zu", OutSize, ElfSize);
+  if (memcmp(OutElf, ElfBuf, ElfSize) != 0)
+    fail("output content differs from input");
   free(OutElf);
+  free(ElfBuf);
 
-  printf("PASSED\n");
+  printf("RESULT: SUCCESS\n");
   return 0;
 }
