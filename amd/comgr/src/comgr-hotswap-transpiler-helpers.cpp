@@ -69,6 +69,7 @@ bool IsUnsupportedOnGFX9(const std::string& mnemonic) {
   if (mnemonic.find("v_permlanex16") == 0) return true;
   if (mnemonic == "s_wait_alu") return true;
   if (mnemonic == "s_delay_alu") return true;
+  if (mnemonic == "s_set_vgpr_msb") return true;
   return false;
 }
 

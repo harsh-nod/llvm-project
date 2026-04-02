@@ -299,6 +299,13 @@ TranspileCodeObject(const void *elf_data, size_t elf_size,
     if (num_vgprs12 < 8u) num_vgprs12 = 8u;
     if (num_sgprs12 < 16u) num_sgprs12 = 16u;
 
+    if (num_vgprs12 > 256u) {
+      HotswapLog(HotswapLogLevel::Error) << "hotswap: transpile: kernel " << ki
+                << " uses " << num_vgprs12 << " VGPRs (wave32), exceeds 256 "
+                << "VGPR limit for wave64 target — cannot transpile\n";
+      return AMD_COMGR_STATUS_ERROR;
+    }
+
     // Scan MSGPACK for .sgpr_count
     {
       const char* key = ".sgpr_count";
@@ -636,6 +643,47 @@ TranspileCodeObject(const void *elf_data, size_t elf_size,
     }
     replaceAll(translated_asm, "v_add_nc_u32 ", "v_add_u32_e32 ");
     replaceAll(translated_asm, "v_sub_nc_u32 ", "v_sub_u32_e32 ");
+    // Constant bus fix: VALU with two distinct SGPR sources
+    {
+      std::string tmp;
+      std::istringstream cbus_iss(translated_asm);
+      std::string cbus_line;
+      const std::string vfix_reg = "v251";
+      while (std::getline(cbus_iss, cbus_line)) {
+        if (!cbus_line.empty() && cbus_line[0] == 'v' &&
+            cbus_line.find("v_readfirstlane") != 0 &&
+            cbus_line.find("v_writelane") != 0 &&
+            cbus_line.find("v_readlane") != 0) {
+          auto ops = ParseOperandList(cbus_line, TranspileExtractMnemonic(cbus_line));
+          if (ops.size() >= 3) {
+            std::string first_sgpr;
+            size_t fix_idx = 0;
+            for (size_t oi = 1; oi < ops.size(); ++oi) {
+              std::string s = ops[oi];
+              if (!s.empty() && s[0] == '-') s = s.substr(1);
+              if (!s.empty() && s[0] == 's' && s.size() > 1 &&
+                  (std::isdigit((unsigned char)s[1]) || s[1] == '[')) {
+                if (first_sgpr.empty()) first_sgpr = s;
+                else if (s != first_sgpr) { fix_idx = oi; break; }
+              }
+            }
+            if (fix_idx > 0) {
+              std::string op = ops[fix_idx];
+              bool neg = !op.empty() && op[0] == '-';
+              if (neg) op = op.substr(1);
+              tmp += "v_mov_b32_e32 " + vfix_reg + ", " + op + "\n";
+              ops[fix_idx] = (neg ? "-" : "") + vfix_reg;
+              std::string mnem = TranspileExtractMnemonic(cbus_line);
+              std::string fixed = mnem + " " + ops[0];
+              for (size_t oi = 1; oi < ops.size(); ++oi) fixed += ", " + ops[oi];
+              cbus_line = fixed;
+            }
+          }
+        }
+        tmp += cbus_line + "\n";
+      }
+      translated_asm = tmp;
+    }
     // Strip explicit VCC mask from v_cndmask_b32_e32
     {
       std::string tmp;

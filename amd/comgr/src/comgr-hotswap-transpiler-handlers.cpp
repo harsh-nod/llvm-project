@@ -37,6 +37,8 @@ static TranslationResult HandleUnsupportedInstruction(
     return std::vector<std::string>{};
   if (mnemonic == "s_code_end")
     return std::vector<std::string>{};
+  if (mnemonic == "s_sendmsg" && line.find("MSG_DEALLOC_VGPRS") != std::string::npos)
+    return std::vector<std::string>{};
   if (mnemonic == "s_endpgm")
     return std::vector<std::string>{".L_exit:", "s_endpgm"};
   if (mnemonic == "s_barrier_signal")
@@ -189,6 +191,47 @@ static TranslationResult HandleSALUFloat(
         op + " s" + std::to_string(d0) + ", s" + std::to_string(a0) + ", " + src_lo,
         opc + " s" + std::to_string(d1) + ", s" + std::to_string(a1) + ", " + src_hi
       };
+    }
+    return std::vector<std::string>{"s_nop 0 ; UNSUPPORTED: " + line};
+  }
+
+  // s_mul_u64: expand to 32-bit partial products via VALU scratch VGPRs.
+  // d[lo:hi] = a[lo:hi] * b[lo:hi] (low 64 bits of 128-bit product)
+  if (mnemonic == "s_mul_u64") {
+    auto operands = ParseOperandList(line, mnemonic);
+    if (operands.size() >= 3) {
+      auto parseSpair = [](const std::string& s) -> std::pair<int,int> {
+        auto bracket = s.find('[');
+        if (bracket == std::string::npos) return {-1,-1};
+        int lo=0, hi=0; size_t p = bracket+1;
+        while (p<s.size()&&s[p]>='0'&&s[p]<='9') lo=lo*10+(s[p++]-'0');
+        if (p<s.size()&&s[p]==':') ++p;
+        while (p<s.size()&&s[p]>='0'&&s[p]<='9') hi=hi*10+(s[p++]-'0');
+        return {lo,hi};
+      };
+      auto [dl,dh] = parseSpair(operands[0]);
+      auto [al,ah] = parseSpair(operands[1]);
+      auto [bl,bh] = parseSpair(operands[2]);
+      if (dl >= 0 && al >= 0 && bl >= 0) {
+        std::string sd_lo = "s" + std::to_string(dl);
+        std::string sd_hi = "s" + std::to_string(dh);
+        std::string sa_lo = "s" + std::to_string(al);
+        std::string sa_hi = "s" + std::to_string(ah);
+        std::string sb_lo = "s" + std::to_string(bl);
+        std::string sb_hi = "s" + std::to_string(bh);
+        std::vector<std::string> result;
+        result.push_back("v_mov_b32_e32 " + vtemp + ", " + sa_lo);
+        result.push_back("v_mul_lo_u32 v252, " + vtemp + ", " + sb_lo);
+        result.push_back("v_mul_hi_u32 v253, " + vtemp + ", " + sb_lo);
+        result.push_back("v_mul_lo_u32 " + vtemp + ", " + sa_hi + ", " + sb_lo);
+        result.push_back("v_add_u32_e32 v253, v253, " + vtemp);
+        result.push_back("v_mov_b32_e32 " + vtemp + ", " + sa_lo);
+        result.push_back("v_mul_lo_u32 " + vtemp + ", " + vtemp + ", " + sb_hi);
+        result.push_back("v_add_u32_e32 v253, v253, " + vtemp);
+        result.push_back("v_readfirstlane_b32 " + sd_lo + ", v252");
+        result.push_back("v_readfirstlane_b32 " + sd_hi + ", v253");
+        return result;
+      }
     }
     return std::vector<std::string>{"s_nop 0 ; UNSUPPORTED: " + line};
   }
@@ -407,6 +450,50 @@ static TranslationResult Handle64BitVALU(
     return std::vector<std::string>{"s_nop 0 ; UNSUPPORTED: " + line};
   }
 
+  // v_mul_u64: expand to 32-bit partial products
+  if (mnemonic == "v_mul_u64_e32" || mnemonic == "v_mul_u64") {
+    std::string ops = line.substr(line.find(mnemonic) + mnemonic.size());
+    auto parseOperand = [](const std::string& s, size_t& pos) -> std::pair<char, std::string> {
+      while (pos < s.size() && (s[pos]==' '||s[pos]==','||s[pos]=='\t')) ++pos;
+      if (pos >= s.size()) return {'?', ""};
+      size_t start = pos;
+      if (s[pos] == 'v' || s[pos] == 's') {
+        char prefix = s[pos]; ++pos;
+        if (pos < s.size() && s[pos] == '[') {
+          while (pos < s.size() && s[pos] != ']') ++pos;
+          if (pos < s.size()) ++pos;
+        } else {
+          while (pos < s.size() && std::isdigit(s[pos])) ++pos;
+        }
+        return {prefix, s.substr(start, pos - start)};
+      }
+      while (pos < s.size() && !std::isspace(s[pos]) && s[pos] != ',') ++pos;
+      return {'#', s.substr(start, pos - start)};
+    };
+    size_t pos = 0;
+    auto [dc, dst] = parseOperand(ops, pos);
+    auto [ac, src0] = parseOperand(ops, pos);
+    auto [bc, src1] = parseOperand(ops, pos);
+    if (dc == 'v' && dst.find('[') != std::string::npos) {
+      auto parsePair = [](const std::string& s) -> std::pair<int,int> {
+        auto br = s.find('[');
+        if (br == std::string::npos) return {-1,-1};
+        int lo=0, hi=0; size_t p = br+1;
+        while (p<s.size()&&s[p]>='0'&&s[p]<='9') lo=lo*10+(s[p++]-'0');
+        if (p<s.size()&&s[p]==':') ++p;
+        while (p<s.size()&&s[p]>='0'&&s[p]<='9') hi=hi*10+(s[p++]-'0');
+        return {lo,hi};
+      };
+      auto [dl, dh] = parsePair(dst);
+      std::string d_lo = "v" + std::to_string(dl);
+      std::string d_hi = "v" + std::to_string(dh);
+      std::vector<std::string> result;
+      result.push_back("v_mul_lo_u32 " + d_lo + ", " + src0 + ", " + src1);
+      result.push_back("v_mul_hi_u32 " + d_hi + ", " + src0 + ", " + src1);
+      return result;
+    }
+  }
+
   if (mnemonic == "v_mad_u32") {
     auto operands = ParseOperandList(line, mnemonic);
     if (operands.size() >= 4) {
@@ -529,15 +616,35 @@ static TranslationResult HandleConstantBusFix(
         mnemonic == "v_fma_f64" || mnemonic == "v_ldexp_f32" ||
         mnemonic == "v_div_fmas_f32" || mnemonic == "v_div_fixup_f32" ||
         mnemonic == "v_med3_f32" || mnemonic == "v_med3_i32" ||
-        mnemonic == "v_bfi_b32" || mnemonic == "v_alignbit_b32";
+        mnemonic == "v_bfi_b32" || mnemonic == "v_alignbit_b32" ||
+        mnemonic == "v_add3_u32" || mnemonic == "v_and_or_b32" ||
+        mnemonic == "v_or3_b32" || mnemonic == "v_xad_u32" ||
+        mnemonic == "v_add_lshl_u32" || mnemonic == "v_lshl_add_u32" ||
+        mnemonic == "v_lshl_or_b32" ||
+        mnemonic == "v_mul_lo_u32" || mnemonic == "v_mul_hi_u32" ||
+        mnemonic == "v_mul_hi_i32";
     if (is_vop3_candidate) {
       auto operands = ParseOperandList(line, mnemonic);
       if (operands.size() >= 3) {
+        auto isSGPR = [](const std::string& op) -> bool {
+          if (op.empty()) return false;
+          std::string s = op;
+          if (s[0] == '-') s = s.substr(1);
+          return !s.empty() && s[0] == 's' && s.size() > 1 &&
+                 (std::isdigit((unsigned char)s[1]) || s[1] == '[');
+        };
+        auto isLiteral = [](const std::string& op) -> bool {
+          std::string s = op;
+          if (!s.empty() && s[0] == '-') s = s.substr(1);
+          return s.size() > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X');
+        };
+
+        // Fix 32-bit hex literals
         for (size_t i = 1; i < operands.size(); ++i) {
-          std::string op = operands[i];
-          bool neg = !op.empty() && op[0] == '-';
-          if (neg) op = op.substr(1);
-          if (op.size() > 2 && op[0] == '0' && (op[1] == 'x' || op[1] == 'X')) {
+          if (isLiteral(operands[i])) {
+            std::string op = operands[i];
+            bool neg = !op.empty() && op[0] == '-';
+            if (neg) op = op.substr(1);
             std::vector<std::string> result;
             result.push_back("v_mov_b32_e32 " + vtemp + ", " + op);
             operands[i] = (neg ? "-" : "") + vtemp;
@@ -546,6 +653,31 @@ static TranslationResult HandleConstantBusFix(
             result.push_back(fixed);
             return result;
           }
+        }
+
+        // Fix constant bus violation: two different SGPRs as sources
+        int sgpr_count = 0;
+        size_t second_sgpr_idx = 0;
+        std::string first_sgpr;
+        for (size_t i = 1; i < operands.size(); ++i) {
+          if (isSGPR(operands[i])) {
+            std::string base = operands[i];
+            if (base[0] == '-') base = base.substr(1);
+            if (sgpr_count == 0) { first_sgpr = base; ++sgpr_count; }
+            else if (base != first_sgpr) { second_sgpr_idx = i; ++sgpr_count; break; }
+          }
+        }
+        if (sgpr_count >= 2 && second_sgpr_idx > 0) {
+          std::vector<std::string> result;
+          std::string op = operands[second_sgpr_idx];
+          bool neg = !op.empty() && op[0] == '-';
+          if (neg) op = op.substr(1);
+          result.push_back("v_mov_b32_e32 " + vtemp + ", " + op);
+          operands[second_sgpr_idx] = (neg ? "-" : "") + vtemp;
+          std::string fixed = mnemonic + " " + operands[0];
+          for (size_t j = 1; j < operands.size(); ++j) fixed += ", " + operands[j];
+          result.push_back(fixed);
+          return result;
         }
       }
     }
@@ -1084,6 +1216,19 @@ std::vector<std::string> TranslateInstruction(const std::string& asm_line,
 
   // ── Post-dispatch: common transforms ──
 
+  // Strip bitop3: modifier from non-v_bitop instructions (GFX12 allows bitop3
+  // on regular VALU like v_and_b32_e32; GFX9 does not understand this modifier)
+  if (line.find("bitop3:") != std::string::npos && mnemonic.find("v_bitop") != 0) {
+    size_t bp = line.find("bitop3:");
+    size_t bp_start = bp;
+    if (bp_start > 0 && line[bp_start - 1] == ' ') --bp_start;
+    size_t bp_end = bp + 7;
+    while (bp_end < line.size() && (std::isxdigit(line[bp_end]) ||
+           line[bp_end] == 'x' || line[bp_end] == 'X'))
+      ++bp_end;
+    line.erase(bp_start, bp_end - bp_start);
+  }
+
   // Remaining _nc_ cleanup
   if (mnemonic.find("_nc_") != std::string::npos && mnemonic[0] == 'v') {
     std::string fixed_mnem = mnemonic;
@@ -1160,6 +1305,48 @@ std::vector<std::string> TranslateInstruction(const std::string& asm_line,
         pos += 6;
       }
       line = line.substr(0, mnem_end) + ops_part;
+    }
+  }
+
+  // General constant bus fix: catch any VALU with two distinct SGPR sources
+  if (mnemonic[0] == 'v' && mnemonic.find("v_readfirstlane") != 0 &&
+      mnemonic.find("v_writelane") != 0 && mnemonic.find("v_readlane") != 0) {
+    auto operands = ParseOperandList(line, mnemonic);
+    if (operands.size() >= 3) {
+      auto isSGPR = [](const std::string& op) -> bool {
+        std::string s = op;
+        if (!s.empty() && s[0] == '-') s = s.substr(1);
+        if (!s.empty() && s[0] == '|') s = s.substr(1);
+        return !s.empty() && s[0] == 's' && s.size() > 1 &&
+               (std::isdigit((unsigned char)s[1]) || s[1] == '[');
+      };
+      auto sgprBase = [](const std::string& op) -> std::string {
+        std::string s = op;
+        if (!s.empty() && (s[0] == '-' || s[0] == '|')) s = s.substr(1);
+        if (s.find('[') != std::string::npos) return s.substr(0, s.find(']') + 1);
+        size_t e = 1;
+        while (e < s.size() && std::isdigit((unsigned char)s[e])) ++e;
+        return s.substr(0, e);
+      };
+      std::string first_sgpr;
+      for (size_t i = 1; i < operands.size(); ++i) {
+        if (isSGPR(operands[i])) {
+          std::string base = sgprBase(operands[i]);
+          if (first_sgpr.empty()) { first_sgpr = base; }
+          else if (base != first_sgpr) {
+            const std::string vtemp_fix = "v" + std::to_string(scale_temp_vgpr);
+            std::string op = operands[i];
+            bool neg = !op.empty() && op[0] == '-';
+            if (neg) op = op.substr(1);
+            result.push_back("v_mov_b32_e32 " + vtemp_fix + ", " + op);
+            operands[i] = (neg ? "-" : "") + vtemp_fix;
+            std::string fixed = mnemonic + " " + operands[0];
+            for (size_t j = 1; j < operands.size(); ++j) fixed += ", " + operands[j];
+            line = fixed;
+            break;
+          }
+        }
+      }
     }
   }
 
