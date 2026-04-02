@@ -2683,7 +2683,7 @@ amd_comgr_map_elf_virtual_address_to_code_object_offset(
  * \defgroup hotswap HotSwap ISA Rewriting
  * @{
  *
- * APIs for load-time GPU ISA binary rewriting.
+ * APIs for load-time GPU ISA binary rewriting and transpilation.
  *
  * @note Design: these APIs use raw buffer pointers (@c void*) for input and
  * output rather than @c amd_comgr_data_t handles. This is intentional. The
@@ -2696,29 +2696,46 @@ amd_comgr_map_elf_virtual_address_to_code_object_offset(
  */
 
 /**
- * @brief Apply GFX1250 B0-to-A0 silicon stepping patches to a code object.
+ * @brief Rewrite a code object from one ISA to another.
  *
- * Rewrites GPU instructions in the ELF code object to work around
- * differences between B0 and A0 silicon steppings of the GFX1250 GPU.
+ * Rewrites GPU instructions in the ELF code object so that it can execute
+ * on a different target ISA. This includes both same-family stepping
+ * patches (e.g. B0 to A0) and cross-family transpilation.
  * The input ELF is not modified; a new buffer is allocated and returned.
  * The caller must free the output buffer with @c free().
  *
  * If no patches are needed, the output is a copy of the input.
  *
+ * Currently supported transformations:
+ *   - GFX1250 B0 to A0
+ *
+ * Additional source/target ISA pairs may be added in future releases.
+ * Unsupported @p source_isa_name / @p target_isa_name combinations return
+ * @c AMD_COMGR_STATUS_ERROR_INVALID_ARGUMENT.
+ *
  * @param[in] elf_data Pointer to the input ELF code object.
  * @param[in] elf_size Size of the input ELF in bytes.
+ * @param[in] source_isa_name A null terminated string that is the isa name
+ *   the code object was compiled for. The isa name is defined as the Code
+ *   Object Target Identification string, described at
+ *   https://llvm.org/docs/AMDGPUUsage.html#code-object-target-identification
+ * @param[in] target_isa_name A null terminated string that is the isa name
+ *   of the target GPU.
  * @param[out] out_elf On success, set to a newly allocated buffer
  *   containing the patched ELF. Caller must @c free() this buffer.
  * @param[out] out_elf_size On success, set to the size of the output ELF.
  *
  * @retval ::AMD_COMGR_STATUS_SUCCESS Patching completed successfully.
  * @retval ::AMD_COMGR_STATUS_ERROR An internal error occurred.
- * @retval ::AMD_COMGR_STATUS_ERROR_INVALID_ARGUMENT An argument is invalid.
+ * @retval ::AMD_COMGR_STATUS_ERROR_INVALID_ARGUMENT An argument is invalid
+ *   or the source/target isa name combination is not supported.
  */
 amd_comgr_status_t AMD_COMGR_API
-amd_comgr_hotswap_rewrite_b0a0(
+amd_comgr_hotswap_rewrite(
     const void *elf_data,
     size_t elf_size,
+    const char *source_isa_name,
+    const char *target_isa_name,
     void **out_elf,
     size_t *out_elf_size) AMD_COMGR_VERSION_3_2;
 
