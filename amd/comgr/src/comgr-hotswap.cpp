@@ -7,15 +7,14 @@
 
 #include "amd_comgr.h"
 #include "comgr.h"
-#include <cstdlib>
-#include <cstring>
 
 amd_comgr_status_t AMD_COMGR_API amd_comgr_hotswap_rewrite(
-    const void *elf_data, size_t elf_size,
+    amd_comgr_data_t input,
     const char *source_isa_name, const char *target_isa_name,
-    void **out_elf, size_t *out_elf_size) {
-  if (!elf_data || elf_size == 0 || !source_isa_name || !target_isa_name ||
-      !out_elf || !out_elf_size)
+    amd_comgr_data_t *output) {
+  COMGR::DataObject *InputP = COMGR::DataObject::convert(input);
+  if (!InputP || !InputP->Data || !InputP->hasValidDataKind() ||
+      !source_isa_name || !target_isa_name || !output)
     return AMD_COMGR_STATUS_ERROR_INVALID_ARGUMENT;
 
   // Validate and parse both ISA names.
@@ -30,11 +29,17 @@ amd_comgr_status_t AMD_COMGR_API amd_comgr_hotswap_rewrite(
 
   // Stub: return a copy of the input unchanged.
   // Full B0-to-A0 patching implementation follows in subsequent commits.
-  void *copy = std::malloc(elf_size);
-  if (!copy)
-    return AMD_COMGR_STATUS_ERROR;
-  std::memcpy(copy, elf_data, elf_size);
-  *out_elf = copy;
-  *out_elf_size = elf_size;
+  COMGR::DataObject *OutputP =
+      COMGR::DataObject::allocate(AMD_COMGR_DATA_KIND_EXECUTABLE);
+  if (!OutputP)
+    return AMD_COMGR_STATUS_ERROR_OUT_OF_RESOURCES;
+
+  if (auto Status =
+          OutputP->setData(llvm::StringRef(InputP->Data, InputP->Size))) {
+    OutputP->release();
+    return Status;
+  }
+
+  *output = COMGR::DataObject::convert(OutputP);
   return AMD_COMGR_STATUS_SUCCESS;
 }

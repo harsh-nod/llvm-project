@@ -11,8 +11,10 @@
 
 int main(int argc, char *argv[]) {
   if (argc < 2) {
+    amd_comgr_data_t dummy_output;
+    amd_comgr_data_t dummy_input = {0};
     amd_comgr_status_t Status =
-        amd_comgr_hotswap_rewrite(NULL, 0, NULL, NULL, NULL, NULL);
+        amd_comgr_hotswap_rewrite(dummy_input, NULL, NULL, &dummy_output);
     if (Status != AMD_COMGR_STATUS_ERROR_INVALID_ARGUMENT)
       fail("rewrite with NULL args: expected INVALID_ARGUMENT");
     printf("NULL_ARGS: INVALID_ARGUMENT\n");
@@ -30,14 +32,19 @@ int main(int argc, char *argv[]) {
   char *ElfBuf;
   size_t ElfSize = (size_t)setBuf(ElfFile, &ElfBuf);
 
-  void *OutElf = NULL;
-  size_t OutSize = 0;
+  amd_comgr_data_t InputData;
+  amd_comgr_(create_data(AMD_COMGR_DATA_KIND_EXECUTABLE, &InputData));
+  if (!ZeroSize) {
+    amd_comgr_(set_data(InputData, ElfSize, ElfBuf));
+  }
 
-  amd_comgr_status_t Status = amd_comgr_hotswap_rewrite(
-      ElfBuf, ZeroSize ? 0 : ElfSize, SourceISA, TargetISA, &OutElf, &OutSize);
+  amd_comgr_data_t OutputData;
+  amd_comgr_status_t Status =
+      amd_comgr_hotswap_rewrite(InputData, SourceISA, TargetISA, &OutputData);
 
   if (Status == AMD_COMGR_STATUS_ERROR_INVALID_ARGUMENT) {
     printf("RESULT: INVALID_ARGUMENT\n");
+    amd_comgr_(release_data(InputData));
     free(ElfBuf);
     return 0;
   }
@@ -45,11 +52,23 @@ int main(int argc, char *argv[]) {
   if (Status != AMD_COMGR_STATUS_SUCCESS)
     fail("unexpected error status %d", (int)Status);
 
+  size_t OutSize = 0;
+  amd_comgr_(get_data(OutputData, &OutSize, NULL));
+
   if (OutSize != ElfSize)
     fail("output size %zu != input size %zu", OutSize, ElfSize);
-  if (memcmp(OutElf, ElfBuf, ElfSize) != 0)
+
+  char *OutBuf = (char *)malloc(OutSize);
+  if (!OutBuf)
+    fail("malloc failed");
+  amd_comgr_(get_data(OutputData, &OutSize, OutBuf));
+
+  if (memcmp(OutBuf, ElfBuf, ElfSize) != 0)
     fail("output content differs from input");
-  free(OutElf);
+
+  free(OutBuf);
+  amd_comgr_(release_data(OutputData));
+  amd_comgr_(release_data(InputData));
   free(ElfBuf);
 
   printf("RESULT: SUCCESS\n");
