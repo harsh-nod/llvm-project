@@ -2703,8 +2703,8 @@ amd_comgr_map_elf_virtual_address_to_code_object_offset(
  * Unsupported @p source_isa_name / @p target_isa_name combinations return
  * @c AMD_COMGR_STATUS_ERROR_INVALID_ARGUMENT.
  *
- * @param[in] input A valid data object containing the input ELF code object
- *   bytes.
+ * @param[in] input A data object of kind @p AMD_COMGR_DATA_KIND_EXECUTABLE
+ *   containing the input ELF code object bytes.
  * @param[in] source_isa_name A null terminated string that is the isa name
  *   the code object was compiled for. The isa name is defined as the Code
  *   Object Target Identification string, described at
@@ -2719,9 +2719,9 @@ amd_comgr_map_elf_virtual_address_to_code_object_offset(
  * @retval ::AMD_COMGR_STATUS_SUCCESS Patching completed successfully.
  * @retval ::AMD_COMGR_STATUS_ERROR An internal error occurred.
  * @retval ::AMD_COMGR_STATUS_ERROR_INVALID_ARGUMENT @p input is an invalid
- *   data object, has kind @p AMD_COMGR_DATA_KIND_UNDEF, does not contain
- *   data bytes, or @p source_isa_name or @p target_isa_name is NULL, or the
- *   source/target isa name combination is not supported.
+ *   data object, is not of kind @p AMD_COMGR_DATA_KIND_EXECUTABLE, does not
+ *   contain data bytes, or @p source_isa_name or @p target_isa_name is NULL,
+ *   or the source/target isa name combination is not supported.
  * @retval ::AMD_COMGR_STATUS_ERROR_OUT_OF_RESOURCES Unable to allocate
  *   the output data object.
  */

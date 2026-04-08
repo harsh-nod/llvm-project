@@ -15,7 +15,8 @@ amd_comgr_status_t AMD_COMGR_API amd_comgr_hotswap_rewrite(
     const char *source_isa_name, const char *target_isa_name,
     amd_comgr_data_t *output) {
   DataObject *InputP = DataObject::convert(input);
-  if (!InputP || !InputP->Data || !InputP->hasValidDataKind() ||
+  if (!InputP || !InputP->Data ||
+      InputP->DataKind != AMD_COMGR_DATA_KIND_EXECUTABLE ||
       !source_isa_name || !target_isa_name || !output)
     return AMD_COMGR_STATUS_ERROR_INVALID_ARGUMENT;
 
