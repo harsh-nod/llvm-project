@@ -70,7 +70,7 @@ LLVMState InitLLVMImpl(const std::string &isa_name,
   state.printer.reset(state.target->createMCInstPrinter(
       triple, asm_variant, *state.MAI, *state.MCII, *state.MRI));
 
-  state.CE = state.target->createMCCodeEmitter(*state.MCII, *state.Ctx);
+  state.CE.reset(state.target->createMCCodeEmitter(*state.MCII, *state.Ctx));
 
   state.valid = true;
   return state;

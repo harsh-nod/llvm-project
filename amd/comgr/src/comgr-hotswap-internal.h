@@ -77,7 +77,7 @@ struct MallocBuffer {
 
   MallocBuffer() = default;
   MallocBuffer(size_t n)
-      : data(static_cast<uint8_t *>(std::malloc(n))), size(n) {}
+      : data(static_cast<uint8_t *>(std::malloc(n))), size(data ? n : 0) {}
   ~MallocBuffer() { std::free(data); }
 
   MallocBuffer(MallocBuffer &&o) noexcept : data(o.data), size(o.size) {
@@ -125,7 +125,12 @@ inline HotswapLogLevel GetHotswapLogLevel() {
 }
 
 inline std::ostream &HotswapLog(HotswapLogLevel level) {
-  static std::ostream null_stream(nullptr);
+  class NullBuf : public std::streambuf {
+  protected:
+    int overflow(int c) override { return c; }
+  };
+  static NullBuf null_buf;
+  static std::ostream null_stream(&null_buf);
   if (static_cast<int>(level) <= static_cast<int>(GetHotswapLogLevel()))
     return std::cerr;
   return null_stream;
@@ -178,11 +183,18 @@ struct NopSled {
 
 // ── Rewrite-rule types (used by ApplyByteReplace / ApplyMnemonicSwap) ────────
 
+struct OperandMatch {
+  enum class Kind { Wildcard, Immediate, RegClass };
+  Kind kind = Kind::Wildcard;
+  int64_t imm_value = 0;
+};
+
 struct RewriteRule {
   std::string name;
   std::string match_mnemonic;
   std::string match_kernel;
   int64_t match_offset = -1;
+  std::vector<OperandMatch> operands;
   std::string replace_mnemonic;
   bool preserve_operands = true;
   std::vector<std::string> replace_asm;
@@ -223,7 +235,7 @@ struct LLVMState {
   std::unique_ptr<llvm::MCObjectFileInfo> MOFI;
   std::unique_ptr<llvm::MCDisassembler> disasm;
   std::unique_ptr<llvm::MCInstPrinter> printer;
-  llvm::MCCodeEmitter *CE = nullptr;
+  std::unique_ptr<llvm::MCCodeEmitter> CE;
   std::string cpu;
   bool valid = false;
 };
