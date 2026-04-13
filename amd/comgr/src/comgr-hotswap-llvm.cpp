@@ -273,42 +273,6 @@ Trampoline BuildTrampoline(const std::vector<std::string> &asm_lines,
   return result;
 }
 
-// ── MatchRule ────────────────────────────────────────────────────────────────
-
-[[nodiscard]] bool MatchRule(const RewriteRule &rule, const InternalDecodedInst &inst,
-                      const ElfInfo &elf_info) {
-  if (!rule.match_mnemonic.empty() && rule.match_mnemonic != inst.mnemonic)
-    return false;
-  if (rule.match_offset >= 0 &&
-      static_cast<uint64_t>(rule.match_offset) != inst.offset)
-    return false;
-  if (!rule.match_kernel.empty()) {
-    std::string kernel = FindKernelAtOffset(elf_info, inst.offset);
-    if (kernel != rule.match_kernel) return false;
-  }
-  if (!rule.operands.empty()) {
-    if (rule.operands.size() >
-        static_cast<size_t>(inst.inst.getNumOperands()))
-      return false;
-    for (size_t i = 0; i < rule.operands.size(); ++i) {
-      auto &match = rule.operands[i];
-      auto &operand = inst.inst.getOperand(static_cast<unsigned>(i));
-      switch (match.kind) {
-      case OperandMatch::Kind::Wildcard:
-        break;
-      case OperandMatch::Kind::Immediate:
-        if (!operand.isImm() || operand.getImm() != match.imm_value)
-          return false;
-        break;
-      case OperandMatch::Kind::RegClass:
-        if (!operand.isReg()) return false;
-        break;
-      }
-    }
-  }
-  return true;
-}
-
 // ── VGPR introspection ───────────────────────────────────────────────────────
 
 int GetVgprNum(unsigned reg, const llvm::MCRegisterInfo &MRI) {

@@ -183,24 +183,10 @@ struct NopSled {
 
 // ── Rewrite-rule types (used by ApplyByteReplace / ApplyMnemonicSwap) ────────
 
-struct OperandMatch {
-  enum class Kind { Wildcard, Immediate, RegClass };
-  Kind kind = Kind::Wildcard;
-  int64_t imm_value = 0;
-};
-
 struct RewriteRule {
-  std::string name;
-  std::string match_mnemonic;
-  std::string match_kernel;
-  int64_t match_offset = -1;
-  std::vector<OperandMatch> operands;
   std::string replace_mnemonic;
   bool preserve_operands = true;
-  std::vector<std::string> replace_asm;
   std::vector<uint8_t> replace_bytes;
-  int32_t extra_vgprs = 0;
-  int32_t extra_sgprs = 0;
 };
 
 // ── s_branch / s_nop constants ───────────────────────────────────────────────
