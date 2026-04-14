@@ -173,46 +173,51 @@ std::string FindKernelAtOffset(const ElfInfo &elf_info,
   return true;
 }
 
+// ── Kernel descriptor lookup ─────────────────────────────────────────────────
+
+static uint8_t *FindKernelDescriptor(uint8_t *elf_data, size_t elf_size,
+                                     const ElfInfo &elf_info,
+                                     const std::string &kernel_name) {
+  std::string kd_name = kernel_name + ".kd";
+  for (const auto &sym : elf_info.symbols) {
+    if (sym.name != kd_name) continue;
+    if (sym.shndx >= elf_info.sections.size()) continue;
+    const auto &sec = elf_info.sections[sym.shndx];
+    if (sym.value < sec.addr) continue;
+    uint64_t kd_file_offset = sec.offset + (sym.value - sec.addr);
+    if (kd_file_offset + kKdSize > elf_size) continue;
+    return elf_data + kd_file_offset;
+  }
+  return nullptr;
+}
+
 // ── UpdateKernelDescriptor ───────────────────────────────────────────────────
 
 void UpdateKernelDescriptor(uint8_t *elf_data, size_t elf_size,
                             const ElfInfo &elf_info,
                             const std::string &kernel_name,
                             int32_t extra_vgprs, int32_t extra_sgprs) {
-  std::string kd_name = kernel_name + ".kd";
-  for (auto &sym : elf_info.symbols) {
-    if (sym.name != kd_name)
-      continue;
-    if (sym.shndx >= elf_info.sections.size())
-      continue;
-    auto &sec = elf_info.sections[sym.shndx];
-    if (sym.value < sec.addr) continue;
-    uint64_t kd_file_offset = sec.offset + (sym.value - sec.addr);
-    if (kd_file_offset + kKdSize > elf_size)
-      continue;
-    uint8_t *kd = elf_data + kd_file_offset;
-    uint32_t rsrc1;
-    std::memcpy(&rsrc1, kd + kKdRsrc1Offset, 4);
-    if (extra_vgprs > 0) {
-      uint32_t current = rsrc1 & KD_RSRC1_VGPR_MASK;
-      uint32_t extra_granules =
-          (static_cast<uint32_t>(extra_vgprs) + 3) / 4;
-      uint32_t new_val = current + extra_granules;
-      if (new_val > 63) new_val = 63;
-      rsrc1 = (rsrc1 & ~KD_RSRC1_VGPR_MASK) | new_val;
-    }
-    if (extra_sgprs > 0) {
-      uint32_t current = (rsrc1 >> KD_RSRC1_SGPR_SHIFT) & KD_RSRC1_SGPR_MASK;
-      uint32_t extra_granules =
-          (static_cast<uint32_t>(extra_sgprs) + 7) / 8;
-      uint32_t new_val = current + extra_granules;
-      if (new_val > 15) new_val = 15;
-      rsrc1 = (rsrc1 & ~(KD_RSRC1_SGPR_MASK << KD_RSRC1_SGPR_SHIFT)) |
-              (new_val << KD_RSRC1_SGPR_SHIFT);
-    }
-    std::memcpy(kd + kKdRsrc1Offset, &rsrc1, 4);
-    return;
+  uint8_t *kd = FindKernelDescriptor(elf_data, elf_size, elf_info, kernel_name);
+  if (!kd) return;
+
+  uint32_t rsrc1;
+  std::memcpy(&rsrc1, kd + kKdRsrc1Offset, 4);
+  if (extra_vgprs > 0) {
+    uint32_t current = rsrc1 & KD_RSRC1_VGPR_MASK;
+    uint32_t extra_granules = (static_cast<uint32_t>(extra_vgprs) + 3) / 4;
+    uint32_t new_val = current + extra_granules;
+    if (new_val > 63) new_val = 63;
+    rsrc1 = (rsrc1 & ~KD_RSRC1_VGPR_MASK) | new_val;
   }
+  if (extra_sgprs > 0) {
+    uint32_t current = (rsrc1 >> KD_RSRC1_SGPR_SHIFT) & KD_RSRC1_SGPR_MASK;
+    uint32_t extra_granules = (static_cast<uint32_t>(extra_sgprs) + 7) / 8;
+    uint32_t new_val = current + extra_granules;
+    if (new_val > 15) new_val = 15;
+    rsrc1 = (rsrc1 & ~(KD_RSRC1_SGPR_MASK << KD_RSRC1_SGPR_SHIFT)) |
+            (new_val << KD_RSRC1_SGPR_SHIFT);
+  }
+  std::memcpy(kd + kKdRsrc1Offset, &rsrc1, 4);
 }
 
 // ── NOP sled management ──────────────────────────────────────────────────────
@@ -235,93 +240,99 @@ NopSled *FindNearestSled(std::vector<NopSled> &sleds, uint64_t offset,
 
 // ── GrowElfWithTrampolines ──────────────────────────────────────────────────
 
+static void AdjustSectionHeaders(uint8_t *elf, uint64_t text_offset,
+                                 uint64_t text_size, size_t tramp_total) {
+  using Ehdr = llvm::ELF::Elf64_Ehdr;
+  using Shdr = llvm::ELF::Elf64_Shdr;
+
+  uint64_t text_end = text_offset + text_size;
+  uint64_t e_shoff;
+  uint16_t e_shentsize, e_shnum;
+  std::memcpy(&e_shoff, elf + offsetof(Ehdr, e_shoff), 8);
+  std::memcpy(&e_shentsize, elf + offsetof(Ehdr, e_shentsize), 2);
+
+  if (e_shoff >= text_end) {
+    uint64_t new_shoff = e_shoff + tramp_total;
+    std::memcpy(elf + offsetof(Ehdr, e_shoff), &new_shoff, 8);
+    e_shoff = new_shoff;
+  }
+
+  std::memcpy(&e_shnum, elf + offsetof(Ehdr, e_shnum), 2);
+
+  for (uint16_t i = 0; i < e_shnum; ++i) {
+    uint8_t *sh = elf + e_shoff + i * e_shentsize;
+    uint64_t sh_offset;
+    std::memcpy(&sh_offset, sh + offsetof(Shdr, sh_offset), 8);
+
+    if (sh_offset == text_offset) {
+      uint64_t new_text_size = text_size + tramp_total;
+      std::memcpy(sh + offsetof(Shdr, sh_size), &new_text_size, 8);
+    } else if (sh_offset > text_offset) {
+      uint64_t new_offset = sh_offset + tramp_total;
+      std::memcpy(sh + offsetof(Shdr, sh_offset), &new_offset, 8);
+    }
+  }
+}
+
+static void AdjustProgramHeaders(uint8_t *elf, uint64_t text_offset,
+                                 uint64_t text_size, size_t tramp_total) {
+  using Ehdr = llvm::ELF::Elf64_Ehdr;
+  using Phdr = llvm::ELF::Elf64_Phdr;
+
+  uint64_t text_end = text_offset + text_size;
+  uint64_t e_phoff;
+  uint16_t e_phentsize, e_phnum;
+  std::memcpy(&e_phoff, elf + offsetof(Ehdr, e_phoff), 8);
+  std::memcpy(&e_phentsize, elf + offsetof(Ehdr, e_phentsize), 2);
+  std::memcpy(&e_phnum, elf + offsetof(Ehdr, e_phnum), 2);
+
+  for (uint16_t i = 0; i < e_phnum; ++i) {
+    uint8_t *ph = elf + e_phoff + i * e_phentsize;
+    uint64_t p_offset, p_filesz, p_memsz;
+    std::memcpy(&p_offset, ph + offsetof(Phdr, p_offset), 8);
+    std::memcpy(&p_filesz, ph + offsetof(Phdr, p_filesz), 8);
+    std::memcpy(&p_memsz, ph + offsetof(Phdr, p_memsz), 8);
+
+    if (p_offset <= text_offset && p_offset + p_filesz >= text_end) {
+      p_filesz += tramp_total;
+      p_memsz += tramp_total;
+      std::memcpy(ph + offsetof(Phdr, p_filesz), &p_filesz, 8);
+      std::memcpy(ph + offsetof(Phdr, p_memsz), &p_memsz, 8);
+    } else if (p_offset > text_offset) {
+      p_offset += tramp_total;
+      std::memcpy(ph + offsetof(Phdr, p_offset), &p_offset, 8);
+    }
+  }
+}
+
 MallocBuffer GrowElfWithTrampolines(const uint8_t *elf, size_t elf_size,
                                     const ElfInfo &elf_info,
                                     const std::vector<Trampoline> &trampolines) {
   size_t tramp_total = 0;
   for (auto &t : trampolines)
     tramp_total += t.bytes.size();
-  if (tramp_total == 0)
-    return {};
-  if (tramp_total > SIZE_MAX - elf_size)
+  if (tramp_total == 0 || tramp_total > SIZE_MAX - elf_size)
     return {};
 
-  size_t new_elf_size = elf_size + tramp_total;
-  MallocBuffer buf(new_elf_size);
-  if (!buf)
-    return {};
+  MallocBuffer buf(elf_size + tramp_total);
+  if (!buf) return {};
 
-  uint8_t *new_elf = buf.get();
-
+  uint8_t *out = buf.get();
   uint64_t text_end = elf_info.text_offset + elf_info.text_size;
-  std::memcpy(new_elf, elf, text_end);
 
-  uint64_t tramp_pos = text_end;
+  std::memcpy(out, elf, text_end);
+  uint64_t pos = text_end;
   for (auto &t : trampolines) {
-    std::memcpy(new_elf + tramp_pos, t.bytes.data(), t.bytes.size());
-    tramp_pos += t.bytes.size();
+    std::memcpy(out + pos, t.bytes.data(), t.bytes.size());
+    pos += t.bytes.size();
   }
-
   if (text_end < elf_size)
-    std::memcpy(new_elf + tramp_pos, elf + text_end, elf_size - text_end);
+    std::memcpy(out + pos, elf + text_end, elf_size - text_end);
 
-  using Ehdr = llvm::ELF::Elf64_Ehdr;
-  using Shdr = llvm::ELF::Elf64_Shdr;
-  using Phdr = llvm::ELF::Elf64_Phdr;
-
-  uint64_t e_shoff;
-  uint16_t e_shentsize;
-  std::memcpy(&e_shoff, new_elf + offsetof(Ehdr, e_shoff), 8);
-  std::memcpy(&e_shentsize, new_elf + offsetof(Ehdr, e_shentsize), 2);
-
-  if (e_shoff >= text_end) {
-    uint64_t new_shoff = e_shoff + tramp_total;
-    std::memcpy(new_elf + offsetof(Ehdr, e_shoff), &new_shoff, 8);
-    e_shoff = new_shoff;
-  }
-
-  uint16_t e_shnum;
-  std::memcpy(&e_shnum, new_elf + offsetof(Ehdr, e_shnum), 2);
-
-  for (uint16_t i = 0; i < e_shnum; ++i) {
-    uint8_t *sh = new_elf + e_shoff + i * e_shentsize;
-    uint64_t sh_offset;
-    std::memcpy(&sh_offset, sh + offsetof(Shdr, sh_offset), 8);
-
-    if (sh_offset == elf_info.text_offset) {
-      uint64_t new_text_size = elf_info.text_size + tramp_total;
-      std::memcpy(sh + offsetof(Shdr, sh_size), &new_text_size, 8);
-    } else if (sh_offset > elf_info.text_offset) {
-      uint64_t new_offset = sh_offset + tramp_total;
-      std::memcpy(sh + offsetof(Shdr, sh_offset), &new_offset, 8);
-    }
-  }
-
-  uint64_t e_phoff;
-  uint16_t e_phentsize, e_phnum;
-  std::memcpy(&e_phoff, new_elf + offsetof(Ehdr, e_phoff), 8);
-  std::memcpy(&e_phentsize, new_elf + offsetof(Ehdr, e_phentsize), 2);
-  std::memcpy(&e_phnum, new_elf + offsetof(Ehdr, e_phnum), 2);
-
-  for (uint16_t i = 0; i < e_phnum; ++i) {
-    uint8_t *ph = new_elf + e_phoff + i * e_phentsize;
-    uint64_t p_offset, p_filesz, p_memsz;
-    std::memcpy(&p_offset, ph + offsetof(Phdr, p_offset), 8);
-    std::memcpy(&p_filesz, ph + offsetof(Phdr, p_filesz), 8);
-    std::memcpy(&p_memsz, ph + offsetof(Phdr, p_memsz), 8);
-
-    if (p_offset <= elf_info.text_offset &&
-        p_offset + p_filesz >= text_end) {
-      p_filesz += tramp_total;
-      p_memsz += tramp_total;
-      std::memcpy(ph + offsetof(Phdr, p_filesz), &p_filesz, 8);
-      std::memcpy(ph + offsetof(Phdr, p_memsz), &p_memsz, 8);
-    } else if (p_offset > elf_info.text_offset) {
-      p_offset += tramp_total;
-      std::memcpy(ph + offsetof(Phdr, p_offset), &p_offset, 8);
-    }
-  }
-
+  AdjustSectionHeaders(out, elf_info.text_offset, elf_info.text_size,
+                        tramp_total);
+  AdjustProgramHeaders(out, elf_info.text_offset, elf_info.text_size,
+                        tramp_total);
   return buf;
 }
 
@@ -404,18 +415,11 @@ bool PatchElfIsa(uint8_t *elf, size_t elf_size,
 int GetKernelVgprCount(const uint8_t *elf_data, size_t elf_size,
                        const ElfInfo &elf_info,
                        const std::string &kernel_name) {
-  std::string kd_name = kernel_name + ".kd";
-  for (const auto &sym : elf_info.symbols) {
-    if (sym.name != kd_name) continue;
-    if (sym.shndx >= elf_info.sections.size()) continue;
-    const auto &sec = elf_info.sections[sym.shndx];
-    if (sym.value < sec.addr) continue;
-    uint64_t kd_file_offset = sec.offset + (sym.value - sec.addr);
-    if (kd_file_offset + kKdSize > elf_size) continue;
-    uint32_t rsrc1;
-    std::memcpy(&rsrc1, elf_data + kd_file_offset + kKdRsrc1Offset, 4);
-    uint32_t granulated = rsrc1 & KD_RSRC1_VGPR_MASK;
-    return static_cast<int>((granulated + 1) * 8);
-  }
-  return -1;
+  const uint8_t *kd = FindKernelDescriptor(
+      const_cast<uint8_t *>(elf_data), elf_size, elf_info, kernel_name);
+  if (!kd) return -1;
+  uint32_t rsrc1;
+  std::memcpy(&rsrc1, kd + kKdRsrc1Offset, 4);
+  uint32_t granulated = rsrc1 & KD_RSRC1_VGPR_MASK;
+  return static_cast<int>((granulated + 1) * 8);
 }

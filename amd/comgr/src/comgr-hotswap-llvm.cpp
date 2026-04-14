@@ -102,6 +102,24 @@ LLVMState InitLLVMCached(const std::string &isa_name) {
   return InitLLVMImpl(isa_name, tgt);
 }
 
+// ── Instruction helpers ──────────────────────────────────────────────────────
+
+static std::string ExtractMnemonic(const std::string &printed) {
+  size_t s = printed.find_first_not_of(" \t");
+  if (s == std::string::npos) return "";
+  size_t e = printed.find_first_of(" \t", s);
+  return printed.substr(s, e - s);
+}
+
+static std::string PrintInstStr(const llvm::MCInst &inst,
+                                const LLVMState &llvm_state) {
+  std::string str;
+  llvm::raw_string_ostream rso(str);
+  llvm_state.printer->printInst(&inst, 0, "", *llvm_state.STI, rso);
+  rso.flush();
+  return str;
+}
+
 // ── Instruction decode ───────────────────────────────────────────────────────
 
 [[nodiscard]] bool DecodeTextSection(const uint8_t *text, uint64_t text_size,
@@ -124,19 +142,10 @@ LLVMState InitLLVMCached(const std::string &isa_name) {
       pos += 4;
     } else {
       di.size = static_cast<uint32_t>(inst_size);
-      if (llvm_state.printer) {
-        std::string str;
-        llvm::raw_string_ostream rso(str);
-        llvm_state.printer->printInst(&di.inst, 0, "", *llvm_state.STI, rso);
-        rso.flush();
-        size_t s = str.find_first_not_of(" \t");
-        if (s != std::string::npos) {
-          size_t e = str.find_first_of(" \t", s);
-          di.mnemonic = str.substr(s, e - s);
-        }
-      } else {
+      if (llvm_state.printer)
+        di.mnemonic = ExtractMnemonic(PrintInstStr(di.inst, llvm_state));
+      else
         di.mnemonic = llvm_state.MCII->getName(di.inst.getOpcode()).str();
-      }
       pos += inst_size;
     }
     decoded.push_back(std::move(di));
@@ -212,20 +221,14 @@ std::vector<uint8_t> AssembleSingleInst(const std::string &asm_str,
                                      const LLVMState &llvm_state) {
   if (!llvm_state.printer) return false;
 
-  std::string orig_str;
-  llvm::raw_string_ostream rso(orig_str);
-  llvm_state.printer->printInst(&inst.inst, 0, "", *llvm_state.STI, rso);
-  rso.flush();
-
-  size_t start = orig_str.find_first_not_of(" \t");
+  std::string printed = PrintInstStr(inst.inst, llvm_state);
+  size_t start = printed.find_first_not_of(" \t");
   if (start == std::string::npos) return false;
-  size_t end = orig_str.find_first_of(" \t", start);
+  size_t end = printed.find_first_of(" \t", start);
 
-  std::string new_asm;
-  if (end != std::string::npos)
-    new_asm = rule.replace_mnemonic + orig_str.substr(end);
-  else
-    new_asm = rule.replace_mnemonic;
+  std::string new_asm = (end != std::string::npos)
+                            ? rule.replace_mnemonic + printed.substr(end)
+                            : rule.replace_mnemonic;
 
   auto bytes = AssembleSingleInst(new_asm, llvm_state);
   if (bytes.empty() || bytes.size() != inst.size) return false;
@@ -319,13 +322,9 @@ GetOperandVgprRange(const llvm::MCInst &inst, unsigned op_idx,
 
 std::string PrintInst(const InternalDecodedInst &di,
                       const LLVMState &llvm_state) {
-  std::string inst_str;
-  if (llvm_state.printer) {
-    llvm::raw_string_ostream rso(inst_str);
-    llvm_state.printer->printInst(&di.inst, 0, "", *llvm_state.STI, rso);
-    rso.flush();
-  }
-  return inst_str;
+  if (llvm_state.printer)
+    return PrintInstStr(di.inst, llvm_state);
+  return "";
 }
 
 bool RangesOverlap(int base1, int count1, int base2, int count2) {

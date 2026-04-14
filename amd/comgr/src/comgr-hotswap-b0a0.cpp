@@ -147,36 +147,37 @@ BuildNopSledMap(const std::vector<InternalDecodedInst> &decoded) {
 
 // ── Sled-or-trampoline code emission ─────────────────────────────────────────
 
-[[nodiscard]] static bool EmitReplacementCode(
-    PatchContext &ctx, uint64_t inst_offset, uint32_t inst_size,
-    const std::vector<uint8_t> &replacement, const char *desc = nullptr) {
+[[nodiscard]] static bool EmitToNopSled(
+    PatchContext &ctx, NopSled &sled, uint64_t inst_offset, uint32_t inst_size,
+    const std::vector<uint8_t> &replacement) {
   const auto &cfg = ctx.config;
-  uint64_t needed = replacement.size() + 4;
-  NopSled *sled = FindNearestSled(ctx.nop_sleds, inst_offset, needed);
+  std::memcpy(ctx.text + sled.write_pos, replacement.data(),
+              replacement.size());
 
-  if (sled && replacement.size() + 4 <= sled->end - sled->write_pos) {
-    std::memcpy(ctx.text + sled->write_pos, replacement.data(),
-                replacement.size());
-    uint8_t br_back[4];
-    if (!EncodeSBranch(sled->write_pos + replacement.size(),
-                       inst_offset + inst_size, br_back, cfg.s_branch_opcode))
-      return false;
-    std::memcpy(ctx.text + sled->write_pos + replacement.size(), br_back, 4);
+  uint8_t br_back[4];
+  if (!EncodeSBranch(sled.write_pos + replacement.size(),
+                     inst_offset + inst_size, br_back, cfg.s_branch_opcode))
+    return false;
+  std::memcpy(ctx.text + sled.write_pos + replacement.size(), br_back, 4);
 
-    uint8_t br_fwd[4];
-    if (!EncodeSBranch(inst_offset, sled->write_pos, br_fwd,
-                       cfg.s_branch_opcode))
-      return false;
-    std::memcpy(ctx.text + inst_offset, br_fwd, 4);
-    for (uint32_t i = 4; i < inst_size; i += 4) {
-      uint8_t nop[4];
-      EncodeSNop(nop, cfg.s_nop_opcode);
-      std::memcpy(ctx.text + inst_offset + i, nop, 4);
-    }
-    sled->write_pos += replacement.size() + 4;
-    return true;
+  uint8_t br_fwd[4];
+  if (!EncodeSBranch(inst_offset, sled.write_pos, br_fwd,
+                     cfg.s_branch_opcode))
+    return false;
+  std::memcpy(ctx.text + inst_offset, br_fwd, 4);
+
+  for (uint32_t i = 4; i < inst_size; i += 4) {
+    uint8_t nop[4];
+    EncodeSNop(nop, cfg.s_nop_opcode);
+    std::memcpy(ctx.text + inst_offset + i, nop, 4);
   }
+  sled.write_pos += replacement.size() + 4;
+  return true;
+}
 
+[[nodiscard]] static bool EmitToTrampoline(
+    PatchContext &ctx, uint64_t inst_offset, uint32_t inst_size,
+    const std::vector<uint8_t> &replacement) {
   uint64_t tramp_offset = ctx.text_size;
   for (auto &t : ctx.out_trampolines)
     tramp_offset += t.bytes.size();
@@ -188,12 +189,24 @@ BuildNopSledMap(const std::vector<InternalDecodedInst> &decoded) {
 
   uint8_t br_back[4];
   if (!EncodeSBranch(tramp_offset + t.bytes.size(), inst_offset + inst_size,
-                     br_back, cfg.s_branch_opcode))
+                     br_back, ctx.config.s_branch_opcode))
     return false;
   t.bytes.insert(t.bytes.end(), br_back, br_back + 4);
 
   ctx.out_trampolines.push_back(std::move(t));
   return true;
+}
+
+[[nodiscard]] static bool EmitReplacementCode(
+    PatchContext &ctx, uint64_t inst_offset, uint32_t inst_size,
+    const std::vector<uint8_t> &replacement, const char *desc = nullptr) {
+  uint64_t needed = replacement.size() + 4;
+  NopSled *sled = FindNearestSled(ctx.nop_sleds, inst_offset, needed);
+
+  if (sled && replacement.size() + 4 <= sled->end - sled->write_pos)
+    return EmitToNopSled(ctx, *sled, inst_offset, inst_size, replacement);
+
+  return EmitToTrampoline(ctx, inst_offset, inst_size, replacement);
 }
 
 // ── ApplyGfx1250B0toA0Rules ──────────────────────────────────────────────────
@@ -276,6 +289,73 @@ ApplyGfx1250B0toA0Rules(std::vector<InternalDecodedInst> &decoded,
   return patched;
 }
 
+// ── RetargetCodeObjectB0A0 — helpers ─────────────────────────────────────────
+
+static void FixupTrampolineBranches(
+    std::vector<Trampoline> &trampolines, uint8_t *text,
+    uint64_t text_size, const RewriteConfig &config) {
+  uint64_t tramp_text_offset = text_size;
+  for (auto &t : trampolines) {
+    uint64_t tp = tramp_text_offset;
+    tramp_text_offset += t.bytes.size();
+
+    uint8_t br_back[4];
+    if (!EncodeSBranch(tp + t.bytes.size() - 4,
+                       t.original_offset + t.original_size, br_back,
+                       config.s_branch_opcode))
+      continue;
+    std::memcpy(t.bytes.data() + t.bytes.size() - 4, br_back, 4);
+
+    uint8_t br_fwd[4];
+    if (!EncodeSBranch(t.original_offset, tp, br_fwd,
+                       config.s_branch_opcode))
+      continue;
+    std::memcpy(text + t.original_offset, br_fwd, 4);
+    for (uint32_t i = 4; i < t.original_size; i += 4) {
+      uint8_t nop[4];
+      EncodeSNop(nop, config.s_nop_opcode);
+      std::memcpy(text + t.original_offset + i, nop, 4);
+    }
+  }
+}
+
+static void PatchDebugSections(MallocBuffer &elf_buf,
+                               const std::vector<Trampoline> &trampolines,
+                               const ElfInfo &elf_info,
+                               size_t tramp_total) {
+  if (!AddTrampolineSymbols(elf_buf, trampolines, elf_info.text_size,
+                            elf_info.text_section_idx))
+    HotswapLog(HotswapLogLevel::Error)
+        << "hotswap: WARNING: AddTrampolineSymbols failed\n";
+  PatchDebugRanges(elf_buf.get(), elf_buf.size, elf_info.text_addr,
+                   elf_info.text_size, tramp_total);
+  PatchDebugInfo(elf_buf.get(), elf_buf.size, elf_info.text_addr,
+                 elf_info.text_size, tramp_total);
+  PatchDebugFrame(elf_buf.get(), elf_buf.size, elf_info.text_addr,
+                  elf_info.text_size, tramp_total);
+  if (!PatchDebugLine(elf_buf, trampolines, elf_info.text_size,
+                      elf_info.text_addr))
+    HotswapLog(HotswapLogLevel::Error)
+        << "hotswap: WARNING: PatchDebugLine failed\n";
+}
+
+static void RunScratchVerification(
+    const void *out_data, size_t out_size, const LLVMState &llvm_state,
+    const std::vector<ScratchPatchInfo> &scratch_patches,
+    unsigned max_vgprs) {
+  ElfInfo verify_elf_info;
+  const uint8_t *verify_elf = static_cast<const uint8_t *>(out_data);
+  if (!ParseElfInfo(verify_elf, out_size, verify_elf_info) ||
+      verify_elf_info.text_size == 0)
+    return;
+  if (!VerifyPatchCorrectness(verify_elf + verify_elf_info.text_offset,
+                              verify_elf_info.text_size, llvm_state,
+                              scratch_patches, max_vgprs))
+    HotswapLog(HotswapLogLevel::Error)
+        << "hotswap: WARNING: post-patch verification detected "
+           "possible scratch conflicts\n";
+}
+
 // ── RetargetCodeObjectB0A0 ───────────────────────────────────────────────────
 
 amd_comgr_status_t RetargetCodeObjectB0A0(const void *elf_data,
@@ -285,8 +365,7 @@ amd_comgr_status_t RetargetCodeObjectB0A0(const void *elf_data,
   const uint8_t *elf = static_cast<const uint8_t *>(elf_data);
   if (!ParseElfInfo(elf, elf_size, elf_info) || elf_info.text_size == 0) {
     MallocBuffer copy(elf_size);
-    if (!copy)
-      return AMD_COMGR_STATUS_ERROR;
+    if (!copy) return AMD_COMGR_STATUS_ERROR;
     std::memcpy(copy.get(), elf_data, elf_size);
     *out_size = elf_size;
     *out_data = copy.release();
@@ -295,8 +374,7 @@ amd_comgr_status_t RetargetCodeObjectB0A0(const void *elf_data,
 
   const std::string isa = "amdgcn-amd-amdhsa--gfx1250";
   LLVMState llvm_state = InitLLVMCached(isa);
-  if (!llvm_state.valid)
-    return AMD_COMGR_STATUS_ERROR;
+  if (!llvm_state.valid) return AMD_COMGR_STATUS_ERROR;
 
   RewriteConfig config = MakeGfx1250B0A0Config(llvm_state);
 
@@ -315,84 +393,33 @@ amd_comgr_status_t RetargetCodeObjectB0A0(const void *elf_data,
                               scratch_patches, config);
 
   HotswapLog(HotswapLogLevel::Info)
-      << "hotswap: applied " << count << " B0-to-A0 patches\n";
+      << "hotswap: applied " << count << " patches\n";
 
   if (!deferred.empty()) {
-    uint64_t tramp_text_offset = elf_info.text_size;
-    for (auto &t : deferred) {
-      uint64_t tp = tramp_text_offset;
-      tramp_text_offset += t.bytes.size();
-
-      uint8_t br_back[4];
-      uint64_t br_from = tp + t.bytes.size() - 4;
-      uint64_t br_to = t.original_offset + t.original_size;
-      if (!EncodeSBranch(br_from, br_to, br_back, config.s_branch_opcode))
-        continue;
-      std::memcpy(t.bytes.data() + t.bytes.size() - 4, br_back, 4);
-
-      uint8_t br_fwd[4];
-      if (!EncodeSBranch(t.original_offset, tp, br_fwd,
-                         config.s_branch_opcode))
-        continue;
-      std::memcpy(text + t.original_offset, br_fwd, 4);
-      for (uint32_t i = 4; i < t.original_size; i += 4) {
-        uint8_t nop[4];
-        EncodeSNop(nop, config.s_nop_opcode);
-        std::memcpy(text + t.original_offset + i, nop, 4);
-      }
-    }
+    FixupTrampolineBranches(deferred, text, elf_info.text_size, config);
 
     MallocBuffer new_buf =
         GrowElfWithTrampolines(buf.data(), elf_size, elf_info, deferred);
-    if (!new_buf)
-      return AMD_COMGR_STATUS_ERROR;
+    if (!new_buf) return AMD_COMGR_STATUS_ERROR;
 
     size_t tramp_total = 0;
-    for (auto &t : deferred)
-      tramp_total += t.bytes.size();
+    for (auto &t : deferred) tramp_total += t.bytes.size();
 
-    if (!AddTrampolineSymbols(new_buf, deferred, elf_info.text_size,
-                              elf_info.text_section_idx))
-      HotswapLog(HotswapLogLevel::Error)
-          << "hotswap: WARNING: AddTrampolineSymbols failed\n";
-    PatchDebugRanges(new_buf.get(), new_buf.size, elf_info.text_addr,
-                     elf_info.text_size, tramp_total);
-    PatchDebugInfo(new_buf.get(), new_buf.size, elf_info.text_addr,
-                   elf_info.text_size, tramp_total);
-    PatchDebugFrame(new_buf.get(), new_buf.size, elf_info.text_addr,
-                    elf_info.text_size, tramp_total);
-    if (!PatchDebugLine(new_buf, deferred, elf_info.text_size,
-                        elf_info.text_addr))
-      HotswapLog(HotswapLogLevel::Error)
-          << "hotswap: WARNING: PatchDebugLine failed\n";
+    PatchDebugSections(new_buf, deferred, elf_info, tramp_total);
 
     *out_size = new_buf.size;
     *out_data = new_buf.release();
   } else {
     MallocBuffer out(elf_size);
-    if (!out)
-      return AMD_COMGR_STATUS_ERROR;
+    if (!out) return AMD_COMGR_STATUS_ERROR;
     std::memcpy(out.get(), buf.data(), elf_size);
     *out_data = out.release();
     *out_size = elf_size;
   }
 
-  if (!scratch_patches.empty()) {
-    ElfInfo verify_elf_info;
-    const uint8_t *verify_elf = static_cast<const uint8_t *>(*out_data);
-    if (ParseElfInfo(verify_elf, *out_size, verify_elf_info) &&
-        verify_elf_info.text_size > 0) {
-      bool ok = VerifyPatchCorrectness(
-          verify_elf + verify_elf_info.text_offset,
-          verify_elf_info.text_size, llvm_state, scratch_patches,
-          config.max_vgprs);
-      if (!ok) {
-        HotswapLog(HotswapLogLevel::Error)
-            << "hotswap: WARNING: post-patch verification detected "
-               "possible scratch conflicts\n";
-      }
-    }
-  }
+  if (!scratch_patches.empty())
+    RunScratchVerification(*out_data, *out_size, llvm_state, scratch_patches,
+                           config.max_vgprs);
 
   return AMD_COMGR_STATUS_SUCCESS;
 }
