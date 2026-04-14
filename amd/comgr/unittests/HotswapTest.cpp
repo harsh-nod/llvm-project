@@ -189,7 +189,6 @@ TEST(NopSled, StructDefaults) {
 TEST(RewriteRule, Defaults) {
   RewriteRule rule;
   EXPECT_TRUE(rule.replace_mnemonic.empty());
-  EXPECT_TRUE(rule.preserve_operands);
   EXPECT_TRUE(rule.replace_bytes.empty());
 }
 

@@ -185,7 +185,6 @@ struct NopSled {
 
 struct RewriteRule {
   std::string replace_mnemonic;
-  bool preserve_operands = true;
   std::vector<uint8_t> replace_bytes;
 };
 
@@ -436,10 +435,30 @@ amd_comgr_status_t RetargetCodeObjectB0A0(const void *elf_data,
 // Patch .cpp files provide strong definitions that override the stubs at link
 // time, allowing patches to land as independent PRs.
 
+/// Per-instruction patches that rewrite in place without changing code size:
+///  - cluster_load → global_load mnemonic swap
+///  - s_clause → s_nop byte overwrite
 uint32_t ApplyInPlacePatches(PatchContext &ctx, size_t idx);
+
+/// Per-instruction patches that expand one instruction into multiple via NOP
+/// sled or trampoline: ds_2addr stride64 expansion and tensor_load_to_lds
+/// s_pack_hh prepend.
 uint32_t ApplyTrampolinePatches(PatchContext &ctx, size_t idx);
+
+/// Whole-kernel pass: detect WMMA/SWMMAC followed by VALU with overlapping
+/// VGPR ranges and insert v_nop instructions to resolve the co-execution
+/// hazard. Runs after all per-instruction patches.
 uint32_t ApplyWmmaHazardPatch(PatchContext &ctx);
+
+/// Per-instruction decomposition of unsupported WMMA variants into narrower
+/// operations: split 16x16x128 FP8/BF8 WMMA into two 16x16x64 halves and
+/// split 32x16x128_f4 WMMA into two 16x16x128 f8f6f4 WMMAs with FP4 format
+/// modifiers.
 uint32_t ApplyWmmaSplitPatches(PatchContext &ctx, size_t idx);
+
+/// Per-instruction patches requiring dynamically allocated VGPRs via
+/// ScratchAllocator backed by backward liveness analysis: CVT E5M3 CLAMP
+/// emulation (4 scratch VGPRs) and Scale16 decomposition (2 scratch VGPRs).
 uint32_t ApplyScratchPatches(PatchContext &ctx, size_t idx);
 
 #endif // COMGR_HOTSWAP_INTERNAL_H

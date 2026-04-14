@@ -105,8 +105,7 @@ __attribute__((weak)) void PatchDebugFrame(uint8_t *, size_t, uint64_t,
 // ── NOP sled scanning ────────────────────────────────────────────────────────
 
 static std::vector<NopSled>
-BuildNopSledMap(const std::vector<InternalDecodedInst> &decoded,
-                const llvm::MCInstrInfo &MCII) {
+BuildNopSledMap(const std::vector<InternalDecodedInst> &decoded) {
   std::vector<NopSled> sleds;
   size_t i = 0;
   while (i < decoded.size()) {
@@ -186,7 +185,7 @@ ApplyGfx1250B0toA0Rules(std::vector<InternalDecodedInst> &decoded,
                         const ElfInfo &elf_info,
                         std::vector<ScratchPatchInfo> &out_scratch_patches) {
   uint32_t patched = 0;
-  std::vector<NopSled> nop_sleds = BuildNopSledMap(decoded, *llvm_state.MCII);
+  std::vector<NopSled> nop_sleds = BuildNopSledMap(decoded);
 
   CFG cfg = BuildCFG(decoded, *llvm_state.MCII);
   LivenessInfo liveness =
@@ -215,7 +214,7 @@ ApplyGfx1250B0toA0Rules(std::vector<InternalDecodedInst> &decoded,
 
   for (size_t idx = 0; idx < decoded.size(); ++idx) {
     auto &di = decoded[idx];
-    if (di.mnemonic == "<unknown>" || di.mnemonic == "<replaced>")
+    if (di.mnemonic == "<unknown>")
       continue;
 
     uint32_t p = 0;
@@ -327,16 +326,20 @@ amd_comgr_status_t RetargetCodeObjectB0A0(const void *elf_data,
     for (auto &t : deferred)
       tramp_total += t.bytes.size();
 
-    AddTrampolineSymbols(new_buf, deferred, elf_info.text_size,
-                         elf_info.text_section_idx);
+    if (!AddTrampolineSymbols(new_buf, deferred, elf_info.text_size,
+                              elf_info.text_section_idx))
+      HotswapLog(HotswapLogLevel::Error)
+          << "hotswap: WARNING: AddTrampolineSymbols failed\n";
     PatchDebugRanges(new_buf.data, new_buf.size, elf_info.text_addr,
                      elf_info.text_size, tramp_total);
     PatchDebugInfo(new_buf.data, new_buf.size, elf_info.text_addr,
                    elf_info.text_size, tramp_total);
     PatchDebugFrame(new_buf.data, new_buf.size, elf_info.text_addr,
                     elf_info.text_size, tramp_total);
-    PatchDebugLine(new_buf, deferred, elf_info.text_size,
-                   elf_info.text_addr);
+    if (!PatchDebugLine(new_buf, deferred, elf_info.text_size,
+                        elf_info.text_addr))
+      HotswapLog(HotswapLogLevel::Error)
+          << "hotswap: WARNING: PatchDebugLine failed\n";
 
     *out_size = new_buf.size;
     *out_data = new_buf.release();

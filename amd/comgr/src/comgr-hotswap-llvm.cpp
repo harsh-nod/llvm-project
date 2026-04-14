@@ -262,7 +262,8 @@ Trampoline BuildTrampoline(const std::vector<std::string> &asm_lines,
   uint64_t branch_back_to = original_offset + original_size;
 
   uint8_t branch_bytes[4];
-  bool is_gfx12 = !(cpu.find("gfx9") == 0 || cpu.find("gfx10") == 0);
+  llvm::StringRef cpu_ref(cpu);
+  bool is_gfx12 = !(cpu_ref.starts_with("gfx9") || cpu_ref.starts_with("gfx10"));
   if (!EncodeSBranch(branch_back_from, branch_back_to, branch_bytes,
                      is_gfx12)) {
     result.bytes.clear();
@@ -278,35 +279,34 @@ Trampoline BuildTrampoline(const std::vector<std::string> &asm_lines,
 int GetVgprNum(unsigned reg, const llvm::MCRegisterInfo &MRI) {
   const char *name = MRI.getName(reg);
   if (!name) return -1;
-  std::string rname(name);
-  if (rname.find("VGPR") == 0) {
-    size_t numstart = 4;
-    size_t underscore = rname.find('_', numstart);
-    std::string numstr = rname.substr(
-        numstart, underscore == std::string::npos ? std::string::npos
-                                                  : underscore - numstart);
-    int val = -1;
-    std::from_chars(numstr.data(), numstr.data() + numstr.size(), val);
-    return val;
-  }
-  return -1;
+  llvm::StringRef rname(name);
+  if (!rname.starts_with("VGPR")) return -1;
+  llvm::StringRef numpart = rname.drop_front(4);
+  size_t underscore = numpart.find('_');
+  if (underscore != llvm::StringRef::npos)
+    numpart = numpart.take_front(underscore);
+  int val = -1;
+  auto [ptr, ec] =
+      std::from_chars(numpart.data(), numpart.data() + numpart.size(), val);
+  if (ec != std::errc()) return -1;
+  return val;
 }
 
 std::pair<int, int> GetVgprRange(unsigned reg,
                                         const llvm::MCRegisterInfo &MRI) {
   const char *name = MRI.getName(reg);
   if (!name) return {-1, 0};
-  std::string rname(name);
-  if (rname.find("VGPR") != 0) return {-1, 0};
+  llvm::StringRef rname(name);
+  if (!rname.starts_with("VGPR")) return {-1, 0};
   int count = 1;
   for (char c : rname)
     if (c == '_') count++;
-  size_t numstart = 4;
-  size_t numend = rname.find_first_not_of("0123456789", numstart);
-  if (numend == std::string::npos) numend = rname.size();
-  std::string numstr = rname.substr(numstart, numend - numstart);
+  llvm::StringRef numpart = rname.drop_front(4);
+  size_t numend = numpart.find_first_not_of("0123456789");
+  if (numend != llvm::StringRef::npos)
+    numpart = numpart.take_front(numend);
   int base = -1;
-  auto [p, ec] = std::from_chars(numstr.data(), numstr.data() + numstr.size(), base);
+  auto [p, ec] = std::from_chars(numpart.data(), numpart.data() + numpart.size(), base);
   if (ec != std::errc())
     return {-1, 0};
   return {base, count};
