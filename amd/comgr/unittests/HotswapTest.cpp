@@ -10,11 +10,15 @@
 #include "gtest/gtest.h"
 #include <cstring>
 
+static constexpr uint32_t kTestBranchGFX9 = 0xBF820000u;
+static constexpr uint32_t kTestBranchGFX12 = 0xBFA00000u;
+static constexpr uint32_t kTestNopOpcode = 0xBF800000u;
+
 // ── EncodeSBranch ────────────────────────────────────────────────────────────
 
 TEST(EncodeSBranch, ForwardBranchGFX9) {
   uint8_t out[4] = {};
-  ASSERT_TRUE(EncodeSBranch(0, 8, out, /*gfx12=*/false));
+  ASSERT_TRUE(EncodeSBranch(0, 8, out, kTestBranchGFX9));
   uint32_t encoded;
   std::memcpy(&encoded, out, 4);
   EXPECT_EQ(encoded, 0xBF820001u);
@@ -22,7 +26,7 @@ TEST(EncodeSBranch, ForwardBranchGFX9) {
 
 TEST(EncodeSBranch, BackwardBranchGFX9) {
   uint8_t out[4] = {};
-  ASSERT_TRUE(EncodeSBranch(16, 0, out, /*gfx12=*/false));
+  ASSERT_TRUE(EncodeSBranch(16, 0, out, kTestBranchGFX9));
   uint32_t encoded;
   std::memcpy(&encoded, out, 4);
   EXPECT_EQ(encoded, 0xBF82FFFBu);
@@ -30,7 +34,7 @@ TEST(EncodeSBranch, BackwardBranchGFX9) {
 
 TEST(EncodeSBranch, ForwardBranchGFX12) {
   uint8_t out[4] = {};
-  ASSERT_TRUE(EncodeSBranch(0, 8, out, /*gfx12=*/true));
+  ASSERT_TRUE(EncodeSBranch(0, 8, out, kTestBranchGFX12));
   uint32_t encoded;
   std::memcpy(&encoded, out, 4);
   EXPECT_EQ(encoded, 0xBFA00001u);
@@ -38,30 +42,30 @@ TEST(EncodeSBranch, ForwardBranchGFX12) {
 
 TEST(EncodeSBranch, UnalignedDeltaFails) {
   uint8_t out[4] = {};
-  EXPECT_FALSE(EncodeSBranch(0, 7, out));
+  EXPECT_FALSE(EncodeSBranch(0, 7, out, kTestBranchGFX9));
 }
 
 TEST(EncodeSBranch, OutOfRangeFails) {
   uint8_t out[4] = {};
-  EXPECT_FALSE(EncodeSBranch(0, 500000, out));
+  EXPECT_FALSE(EncodeSBranch(0, 500000, out, kTestBranchGFX9));
 }
 
 TEST(EncodeSBranch, ZeroOffsetBranch) {
   uint8_t out[4] = {};
-  ASSERT_TRUE(EncodeSBranch(0, 4, out, /*gfx12=*/false));
+  ASSERT_TRUE(EncodeSBranch(0, 4, out, kTestBranchGFX9));
   uint32_t encoded;
   std::memcpy(&encoded, out, 4);
-  EXPECT_EQ(encoded, S_BRANCH_GFX9);
+  EXPECT_EQ(encoded, kTestBranchGFX9);
 }
 
 // ── EncodeSNop ───────────────────────────────────────────────────────────────
 
 TEST(EncodeSNop, ProducesCorrectEncoding) {
   uint8_t out[4] = {};
-  EncodeSNop(out);
+  EncodeSNop(out, kTestNopOpcode);
   uint32_t encoded;
   std::memcpy(&encoded, out, 4);
-  EXPECT_EQ(encoded, S_NOP_OPCODE);
+  EXPECT_EQ(encoded, kTestNopOpcode);
 }
 
 // ── ExtractCPU ───────────────────────────────────────────────────────────────

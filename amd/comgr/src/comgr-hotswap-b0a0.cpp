@@ -8,7 +8,7 @@
 /// \file
 /// Dispatcher for B0-to-A0 silicon stepping patches and the
 /// RetargetCodeObjectB0A0 orchestrator that drives the full pipeline:
-/// decode → patch → trampoline growth → DWARF update.
+/// decode -> patch -> trampoline growth -> DWARF update.
 ///
 /// Patch entry points are declared as weak symbols returning 0. Each
 /// comgr-hotswap-patch-*.cpp file provides a strong override, allowing
@@ -17,6 +17,24 @@
 //===----------------------------------------------------------------------===//
 
 #include "comgr-hotswap-internal.h"
+
+#include "Utils/AMDGPUBaseInfo.h"
+
+// ── GFX1250 B0-to-A0 constants ──────────────────────────────────────────────
+
+static constexpr uint32_t kSBranchGFX12 = 0xBFA00000u;
+static constexpr uint32_t kSNopOpcode = 0xBF800000u;
+
+static RewriteConfig MakeGfx1250B0A0Config(const LLVMState &state) {
+  unsigned max_vgprs =
+      llvm::AMDGPU::IsaInfo::getTotalNumVGPRs(state.STI.get());
+  return {"amdgcn-amd-amdhsa--gfx1250",
+          "amdgcn-amd-amdhsa--gfx1250",
+          "gfx1250",
+          kSBranchGFX12,
+          kSNopOpcode,
+          max_vgprs};
+}
 
 // ── Weak-symbol patch stubs ──────────────────────────────────────────────────
 //
@@ -41,7 +59,7 @@ __attribute__((weak)) uint32_t ApplyScratchPatches(PatchContext &, size_t) {
 
 // ── Weak-symbol liveness stubs ───────────────────────────────────────────────
 //
-// Conservative defaults: all 256 VGPRs reported live. ScratchAllocator
+// Conservative defaults: all VGPRs reported live. ScratchAllocator
 // will allocate above KD count (correct but suboptimal until
 // comgr-hotswap-liveness.cpp lands with real analysis).
 
@@ -55,10 +73,11 @@ BuildCFG(const std::vector<InternalDecodedInst> &decoded,
 __attribute__((weak)) LivenessInfo
 ComputeLiveness(const std::vector<InternalDecodedInst> &decoded,
                 const CFG &, const llvm::MCInstrInfo &,
-                const llvm::MCRegisterInfo &) {
+                const llvm::MCRegisterInfo &,
+                unsigned max_vgprs) {
   LivenessInfo info;
-  llvm::BitVector all_live(256);
-  all_live.set(0, 256);
+  llvm::BitVector all_live(max_vgprs);
+  all_live.set(0, max_vgprs);
   info.live_before.resize(decoded.size(), all_live);
   info.live_after.resize(decoded.size(), all_live);
   info.converged = true;
@@ -75,7 +94,8 @@ __attribute__((weak)) int64_t GetBranchImm(const llvm::MCInst &) { return 0; }
 
 __attribute__((weak)) bool
 VerifyPatchCorrectness(const uint8_t *, uint64_t, const LLVMState &,
-                       const std::vector<ScratchPatchInfo> &) {
+                       const std::vector<ScratchPatchInfo> &,
+                       unsigned) {
   return true;
 }
 
@@ -130,6 +150,7 @@ BuildNopSledMap(const std::vector<InternalDecodedInst> &decoded) {
 [[nodiscard]] static bool EmitReplacementCode(
     PatchContext &ctx, uint64_t inst_offset, uint32_t inst_size,
     const std::vector<uint8_t> &replacement, const char *desc = nullptr) {
+  const auto &cfg = ctx.config;
   uint64_t needed = replacement.size() + 4;
   NopSled *sled = FindNearestSled(ctx.nop_sleds, inst_offset, needed);
 
@@ -138,17 +159,18 @@ BuildNopSledMap(const std::vector<InternalDecodedInst> &decoded) {
                 replacement.size());
     uint8_t br_back[4];
     if (!EncodeSBranch(sled->write_pos + replacement.size(),
-                       inst_offset + inst_size, br_back, true))
+                       inst_offset + inst_size, br_back, cfg.s_branch_opcode))
       return false;
     std::memcpy(ctx.text + sled->write_pos + replacement.size(), br_back, 4);
 
     uint8_t br_fwd[4];
-    if (!EncodeSBranch(inst_offset, sled->write_pos, br_fwd, true))
+    if (!EncodeSBranch(inst_offset, sled->write_pos, br_fwd,
+                       cfg.s_branch_opcode))
       return false;
     std::memcpy(ctx.text + inst_offset, br_fwd, 4);
     for (uint32_t i = 4; i < inst_size; i += 4) {
       uint8_t nop[4];
-      EncodeSNop(nop);
+      EncodeSNop(nop, cfg.s_nop_opcode);
       std::memcpy(ctx.text + inst_offset + i, nop, 4);
     }
     sled->write_pos += replacement.size() + 4;
@@ -166,7 +188,7 @@ BuildNopSledMap(const std::vector<InternalDecodedInst> &decoded) {
 
   uint8_t br_back[4];
   if (!EncodeSBranch(tramp_offset + t.bytes.size(), inst_offset + inst_size,
-                     br_back, true))
+                     br_back, cfg.s_branch_opcode))
     return false;
   t.bytes.insert(t.bytes.end(), br_back, br_back + 4);
 
@@ -183,20 +205,21 @@ ApplyGfx1250B0toA0Rules(std::vector<InternalDecodedInst> &decoded,
                         std::vector<Trampoline> &out_trampolines,
                         uint8_t *elf_data, size_t elf_size,
                         const ElfInfo &elf_info,
-                        std::vector<ScratchPatchInfo> &out_scratch_patches) {
+                        std::vector<ScratchPatchInfo> &out_scratch_patches,
+                        const RewriteConfig &config) {
   uint32_t patched = 0;
   std::vector<NopSled> nop_sleds = BuildNopSledMap(decoded);
 
   CFG cfg = BuildCFG(decoded, *llvm_state.MCII);
-  LivenessInfo liveness =
-      ComputeLiveness(decoded, cfg, *llvm_state.MCII, *llvm_state.MRI);
+  LivenessInfo liveness = ComputeLiveness(
+      decoded, cfg, *llvm_state.MCII, *llvm_state.MRI, config.max_vgprs);
 
   if (!liveness.converged) {
     HotswapLog(HotswapLogLevel::Error)
         << "hotswap: WARNING: liveness analysis did not converge, "
            "using conservative all-VGPRs-live fallback\n";
-    llvm::BitVector all_vgprs(256);
-    all_vgprs.set(0, 256);
+    llvm::BitVector all_vgprs(config.max_vgprs);
+    all_vgprs.set(0, config.max_vgprs);
     for (size_t i = 0; i < liveness.live_before.size(); ++i) {
       liveness.live_before[i] = all_vgprs;
       liveness.live_after[i] = all_vgprs;
@@ -205,11 +228,11 @@ ApplyGfx1250B0toA0Rules(std::vector<InternalDecodedInst> &decoded,
 
   std::unordered_map<std::string, KernelPatchStats> kernel_stats;
 
-  PatchContext ctx{decoded,     text,
-                   text_size,   llvm_state,
+  PatchContext ctx{config,       decoded,     text,
+                   text_size,    llvm_state,
                    out_trampolines, nop_sleds,
-                   elf_data,    elf_size,
-                   elf_info,    liveness,
+                   elf_data,     elf_size,
+                   elf_info,     liveness,
                    kernel_stats, out_scratch_patches};
 
   for (size_t idx = 0; idx < decoded.size(); ++idx) {
@@ -258,8 +281,6 @@ ApplyGfx1250B0toA0Rules(std::vector<InternalDecodedInst> &decoded,
 amd_comgr_status_t RetargetCodeObjectB0A0(const void *elf_data,
                                           size_t elf_size, void **out_data,
                                           size_t *out_size) {
-  const std::string isa = "amdgcn-amd-amdhsa--gfx1250";
-
   ElfInfo elf_info;
   const uint8_t *elf = static_cast<const uint8_t *>(elf_data);
   if (!ParseElfInfo(elf, elf_size, elf_info) || elf_info.text_size == 0) {
@@ -272,9 +293,12 @@ amd_comgr_status_t RetargetCodeObjectB0A0(const void *elf_data,
     return AMD_COMGR_STATUS_SUCCESS;
   }
 
+  const std::string isa = "amdgcn-amd-amdhsa--gfx1250";
   LLVMState llvm_state = InitLLVMCached(isa);
   if (!llvm_state.valid)
     return AMD_COMGR_STATUS_ERROR;
+
+  RewriteConfig config = MakeGfx1250B0A0Config(llvm_state);
 
   std::vector<uint8_t> buf(elf, elf + elf_size);
   uint8_t *text = buf.data() + elf_info.text_offset;
@@ -288,7 +312,7 @@ amd_comgr_status_t RetargetCodeObjectB0A0(const void *elf_data,
   uint32_t count =
       ApplyGfx1250B0toA0Rules(decoded, text, elf_info.text_size, llvm_state,
                               deferred, buf.data(), buf.size(), elf_info,
-                              scratch_patches);
+                              scratch_patches, config);
 
   HotswapLog(HotswapLogLevel::Info)
       << "hotswap: applied " << count << " B0-to-A0 patches\n";
@@ -302,17 +326,18 @@ amd_comgr_status_t RetargetCodeObjectB0A0(const void *elf_data,
       uint8_t br_back[4];
       uint64_t br_from = tp + t.bytes.size() - 4;
       uint64_t br_to = t.original_offset + t.original_size;
-      if (!EncodeSBranch(br_from, br_to, br_back, true))
+      if (!EncodeSBranch(br_from, br_to, br_back, config.s_branch_opcode))
         continue;
       std::memcpy(t.bytes.data() + t.bytes.size() - 4, br_back, 4);
 
       uint8_t br_fwd[4];
-      if (!EncodeSBranch(t.original_offset, tp, br_fwd, true))
+      if (!EncodeSBranch(t.original_offset, tp, br_fwd,
+                         config.s_branch_opcode))
         continue;
       std::memcpy(text + t.original_offset, br_fwd, 4);
       for (uint32_t i = 4; i < t.original_size; i += 4) {
         uint8_t nop[4];
-        EncodeSNop(nop);
+        EncodeSNop(nop, config.s_nop_opcode);
         std::memcpy(text + t.original_offset + i, nop, 4);
       }
     }
@@ -359,7 +384,8 @@ amd_comgr_status_t RetargetCodeObjectB0A0(const void *elf_data,
         verify_elf_info.text_size > 0) {
       bool ok = VerifyPatchCorrectness(
           verify_elf + verify_elf_info.text_offset,
-          verify_elf_info.text_size, llvm_state, scratch_patches);
+          verify_elf_info.text_size, llvm_state, scratch_patches,
+          config.max_vgprs);
       if (!ok) {
         HotswapLog(HotswapLogLevel::Error)
             << "hotswap: WARNING: post-patch verification detected "

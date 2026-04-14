@@ -17,6 +17,8 @@
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/TargetSelect.h"
 
+static const llvm::Triple kAMDGPUTriple("amdgcn-amd-amdhsa");
+
 namespace {
 std::once_flag g_llvm_init_flag;
 std::mutex g_target_cache_mutex;
@@ -38,35 +40,32 @@ LLVMState InitLLVMImpl(const std::string &isa_name,
   state.cpu = ExtractCPU(isa_name);
   if (state.cpu.empty()) return state;
 
-  llvm::Triple triple("amdgcn-amd-amdhsa");
-
   if (cached_target) {
     state.target = cached_target;
   } else {
     std::string error;
+    llvm::Triple triple(kAMDGPUTriple);
     state.target = llvm::TargetRegistry::lookupTarget("amdgcn", triple, error);
   }
   if (!state.target) return state;
 
-  state.MRI.reset(
-      state.target->createMCRegInfo(llvm::Triple("amdgcn-amd-amdhsa")));
+  state.MRI.reset(state.target->createMCRegInfo(kAMDGPUTriple));
   if (!state.MRI) return state;
 
   llvm::MCTargetOptions mc_opts;
-  state.MAI.reset(state.target->createMCAsmInfo(
-      *state.MRI, llvm::Triple("amdgcn-amd-amdhsa"), mc_opts));
+  state.MAI.reset(
+      state.target->createMCAsmInfo(*state.MRI, kAMDGPUTriple, mc_opts));
   if (!state.MAI) return state;
 
   state.MCII.reset(state.target->createMCInstrInfo());
   if (!state.MCII) return state;
 
-  state.STI.reset(state.target->createMCSubtargetInfo(
-      llvm::Triple("amdgcn-amd-amdhsa"), state.cpu, ""));
+  state.STI.reset(
+      state.target->createMCSubtargetInfo(kAMDGPUTriple, state.cpu, ""));
   if (!state.STI || !state.STI->isCPUStringValid(state.cpu)) return state;
 
-  state.Ctx = std::make_unique<llvm::MCContext>(triple, state.MAI.get(),
-                                                state.MRI.get(),
-                                                state.STI.get());
+  state.Ctx = std::make_unique<llvm::MCContext>(
+      kAMDGPUTriple, state.MAI.get(), state.MRI.get(), state.STI.get());
   state.MOFI = std::make_unique<llvm::MCObjectFileInfo>();
   state.MOFI->initMCObjectFileInfo(*state.Ctx, false);
   state.Ctx->setObjectFileInfo(state.MOFI.get());
@@ -77,7 +76,7 @@ LLVMState InitLLVMImpl(const std::string &isa_name,
 
   unsigned asm_variant = state.MAI->getAssemblerDialect();
   state.printer.reset(state.target->createMCInstPrinter(
-      triple, asm_variant, *state.MAI, *state.MCII, *state.MRI));
+      kAMDGPUTriple, asm_variant, *state.MAI, *state.MCII, *state.MRI));
 
   state.CE.reset(state.target->createMCCodeEmitter(*state.MCII, *state.Ctx));
 
@@ -93,7 +92,7 @@ LLVMState InitLLVMCached(const std::string &isa_name) {
     std::lock_guard<std::mutex> lock(g_target_cache_mutex);
     if (!g_cached_target) {
       std::string error;
-      llvm::Triple triple("amdgcn-amd-amdhsa");
+      llvm::Triple triple(kAMDGPUTriple);
       g_cached_target =
           llvm::TargetRegistry::lookupTarget("amdgcn", triple, error);
     }
@@ -162,7 +161,6 @@ std::vector<uint8_t> AssembleSingleInst(const std::string &asm_str,
   auto bos = std::make_unique<llvm::buffer_ostream>(*data_stream);
 
   llvm::MCTargetOptions mc_opts;
-  llvm::Triple triple("amdgcn-amd-amdhsa");
 
   llvm::MCCodeEmitter *ce =
       llvm_state.target->createMCCodeEmitter(*llvm_state.MCII, *llvm_state.Ctx);
@@ -173,7 +171,7 @@ std::vector<uint8_t> AssembleSingleInst(const std::string &asm_str,
 
   auto streamer = std::unique_ptr<llvm::MCStreamer>(
       llvm_state.target->createMCObjectStreamer(
-          triple, *llvm_state.Ctx,
+          kAMDGPUTriple, *llvm_state.Ctx,
           std::unique_ptr<llvm::MCAsmBackend>(mab),
           mab->createObjectWriter(*bos),
           std::unique_ptr<llvm::MCCodeEmitter>(ce), *llvm_state.STI));
@@ -196,7 +194,7 @@ std::vector<uint8_t> AssembleSingleInst(const std::string &asm_str,
 
   const uint8_t *elf_bytes = reinterpret_cast<const uint8_t *>(data.data());
   size_t elf_sz = data.size();
-  if (elf_sz < 64) return {};
+  if (elf_sz < kMinElfSize) return {};
 
   ElfInfo asm_elf;
   if (!ParseElfInfo(elf_bytes, elf_sz, asm_elf)) return {};
@@ -242,7 +240,7 @@ Trampoline BuildTrampoline(const std::vector<std::string> &asm_lines,
                            uint64_t original_offset,
                            uint32_t original_size,
                            uint64_t trampoline_text_offset,
-                           const std::string &cpu,
+                           const RewriteConfig &config,
                            const LLVMState &llvm_state) {
   Trampoline result;
   result.original_offset = original_offset;
@@ -261,10 +259,8 @@ Trampoline BuildTrampoline(const std::vector<std::string> &asm_lines,
   uint64_t branch_back_to = original_offset + original_size;
 
   uint8_t branch_bytes[4];
-  llvm::StringRef cpu_ref(cpu);
-  bool is_gfx12 = !(cpu_ref.starts_with("gfx9") || cpu_ref.starts_with("gfx10"));
   if (!EncodeSBranch(branch_back_from, branch_back_to, branch_bytes,
-                     is_gfx12)) {
+                     config.s_branch_opcode)) {
     result.bytes.clear();
     return result;
   }
@@ -305,7 +301,8 @@ std::pair<int, int> GetVgprRange(unsigned reg,
   if (numend != llvm::StringRef::npos)
     numpart = numpart.take_front(numend);
   int base = -1;
-  auto [p, ec] = std::from_chars(numpart.data(), numpart.data() + numpart.size(), base);
+  auto [p, ec] =
+      std::from_chars(numpart.data(), numpart.data() + numpart.size(), base);
   if (ec != std::errc())
     return {-1, 0};
   return {base, count};

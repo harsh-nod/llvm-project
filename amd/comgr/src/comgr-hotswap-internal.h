@@ -14,7 +14,7 @@
 ///   comgr-hotswap-dwarf.cpp     — DWARF debug section patching
 ///   comgr-hotswap-llvm.cpp      — LLVM MC infrastructure (disasm/asm/encode)
 ///   comgr-hotswap-liveness.cpp  — CFG, backward liveness, scratch allocator
-///   comgr-hotswap-b0a0.cpp      — GFX1250 B0-to-A0 silicon stepping patches
+///   comgr-hotswap-b0a0.cpp      — ISA rewrite policy (e.g., GFX1250 B0-to-A0)
 ///   comgr-hotswap.cpp           — Public C API entry points
 ///
 //===----------------------------------------------------------------------===//
@@ -36,21 +36,21 @@
 #include <vector>
 
 #include "llvm/ADT/BitVector.h"
-#include "llvm/MC/MCInstrDesc.h"
-#include "llvm/MC/MCInstrInfo.h"
-#include "llvm/MC/MCRegisterInfo.h"
-#include "llvm/MC/TargetRegistry.h"
-#include "llvm/Object/ELF.h"
-#include "llvm/Object/ELFTypes.h"
-#include "llvm/Support/raw_ostream.h"
-
+#include "llvm/BinaryFormat/ELF.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCCodeEmitter.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCDisassembler/MCDisassembler.h"
 #include "llvm/MC/MCInstPrinter.h"
+#include "llvm/MC/MCInstrDesc.h"
+#include "llvm/MC/MCInstrInfo.h"
 #include "llvm/MC/MCObjectFileInfo.h"
+#include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/MC/MCSubtargetInfo.h"
+#include "llvm/MC/TargetRegistry.h"
+#include "llvm/Object/ELF.h"
+#include "llvm/Object/ELFTypes.h"
+#include "llvm/Support/raw_ostream.h"
 
 // ── MallocBuffer ─────────────────────────────────────────────────────────────
 
@@ -101,6 +101,21 @@ inline llvm::raw_ostream &HotswapLog(HotswapLogLevel level) {
     return llvm::errs();
   return llvm::nulls();
 }
+
+// ── RewriteConfig ────────────────────────────────────────────────────────────
+//
+// ISA-specific parameters that drive the generic rewriting infrastructure.
+// Constructed by the policy layer (e.g., b0a0.cpp for GFX1250) and threaded
+// through PatchContext so infrastructure code has zero ISA assumptions.
+
+struct RewriteConfig {
+  std::string source_isa;
+  std::string target_isa;
+  std::string target_cpu;
+  uint32_t s_branch_opcode;
+  uint32_t s_nop_opcode;
+  unsigned max_vgprs;
+};
 
 // ── ELF types ────────────────────────────────────────────────────────────────
 
@@ -154,17 +169,18 @@ struct RewriteRule {
   std::vector<uint8_t> replace_bytes;
 };
 
-// ── s_branch / s_nop constants ───────────────────────────────────────────────
+// ── ELF / KD named constants ─────────────────────────────────────────────────
 
-inline constexpr uint32_t S_BRANCH_GFX9 = 0xBF820000u;
-inline constexpr uint32_t S_BRANCH_GFX12 = 0xBFA00000u;
-inline constexpr uint32_t S_NOP_OPCODE = 0xBF800000u;
-
-// ── AMDGPU Kernel Descriptor RSRC1 bit fields ───────────────────────────────
-
+static constexpr uint64_t kMinElfSize = sizeof(llvm::ELF::Elf64_Ehdr);
+static constexpr uint64_t kKdSize = 64;
+static constexpr uint64_t kKdRsrc1Offset = 48;
 static constexpr uint32_t KD_RSRC1_VGPR_MASK = 0x3Fu;
 static constexpr uint32_t KD_RSRC1_SGPR_SHIFT = 6;
 static constexpr uint32_t KD_RSRC1_SGPR_MASK = 0xFu;
+static constexpr int64_t kMaxSledDistance = 131072;
+
+// AMDGPU code-object-v3 ISA version note type (not in llvm::ELF enum)
+static constexpr uint32_t kNoteTypeIsaVersion = 27;
 
 // ── DWARF types ──────────────────────────────────────────────────────────────
 
@@ -203,8 +219,8 @@ struct InternalDecodedInst {
 // ── VGPR liveness types ──────────────────────────────────────────────────────
 
 struct RegDefUse {
-  llvm::BitVector defs{256};
-  llvm::BitVector uses{256};
+  llvm::BitVector defs;
+  llvm::BitVector uses;
 };
 
 struct BasicBlock {
@@ -230,11 +246,12 @@ struct ScratchAllocator {
   llvm::BitVector live_at_point;
   int kd_allocated_vgprs;
   int next_above_kd;
+  int max_vgprs;
   int extra_allocated = 0;
 
-  ScratchAllocator(const llvm::BitVector &live, int kd_vgprs)
+  ScratchAllocator(const llvm::BitVector &live, int kd_vgprs, int max)
       : live_at_point(live), kd_allocated_vgprs(kd_vgprs),
-        next_above_kd(kd_vgprs) {}
+        next_above_kd(kd_vgprs), max_vgprs(max) {}
 
   int Alloc() {
     for (int v = kd_allocated_vgprs - 1; v >= 0; --v) {
@@ -243,7 +260,7 @@ struct ScratchAllocator {
         return v;
       }
     }
-    if (next_above_kd >= 256)
+    if (next_above_kd >= max_vgprs)
       return -1;
     int v = next_above_kd++;
     extra_allocated++;
@@ -256,10 +273,10 @@ struct ScratchAllocator {
 
 struct ScratchPatchInfo {
   uint64_t offset;
-  llvm::BitVector scratch_regs{256};
+  llvm::BitVector scratch_regs;
 };
 
-// ── B0-to-A0 types ──────────────────────────────────────────────────────────
+// ── Patch types ──────────────────────────────────────────────────────────────
 
 struct WmmaNopReq {
   int b0_nops;
@@ -281,6 +298,7 @@ struct KernelPatchStats {
 };
 
 struct PatchContext {
+  const RewriteConfig &config;
   std::vector<InternalDecodedInst> &decoded;
   uint8_t *text;
   uint64_t text_size;
@@ -299,15 +317,17 @@ struct PatchContext {
 
 // elf
 [[nodiscard]] bool EncodeSBranch(uint64_t from_offset, uint64_t to_offset,
-                                 uint8_t out_bytes[4], bool gfx12 = false);
-void EncodeSNop(uint8_t out_bytes[4]);
+                                 uint8_t out_bytes[4],
+                                 uint32_t s_branch_opcode);
+void EncodeSNop(uint8_t out_bytes[4], uint32_t s_nop_opcode);
 std::string ExtractCPU(const std::string &isa_name);
 [[nodiscard]] bool ParseElfInfo(const uint8_t *elf, size_t elf_size,
                                 ElfInfo &info);
 std::string FindKernelAtOffset(const ElfInfo &elf_info, uint64_t text_offset);
 [[nodiscard]] bool ApplyByteReplace(const RewriteRule &rule,
                                     uint64_t inst_offset, uint32_t inst_size,
-                                    uint8_t *text, uint64_t text_size);
+                                    uint8_t *text, uint64_t text_size,
+                                    uint32_t s_nop_opcode);
 void UpdateKernelDescriptor(uint8_t *elf_data, size_t elf_size,
                             const ElfInfo &elf_info,
                             const std::string &kernel_name,
@@ -354,7 +374,7 @@ std::vector<uint8_t> AssembleSingleInst(const std::string &asm_str,
 Trampoline BuildTrampoline(const std::vector<std::string> &asm_lines,
                            uint64_t original_offset, uint32_t original_size,
                            uint64_t trampoline_text_offset,
-                           const std::string &cpu,
+                           const RewriteConfig &config,
                            const LLVMState &llvm_state);
 std::string PrintInst(const InternalDecodedInst &di,
                       const LLVMState &llvm_state);
@@ -378,17 +398,19 @@ CFG BuildCFG(const std::vector<InternalDecodedInst> &decoded,
              const llvm::MCInstrInfo &MCII);
 LivenessInfo ComputeLiveness(const std::vector<InternalDecodedInst> &decoded,
                              const CFG &cfg, const llvm::MCInstrInfo &MCII,
-                             const llvm::MCRegisterInfo &MRI);
+                             const llvm::MCRegisterInfo &MRI,
+                             unsigned max_vgprs);
 [[nodiscard]] bool VerifyPatchCorrectness(
     const uint8_t *text, uint64_t text_size, const LLVMState &llvm_state,
-    const std::vector<ScratchPatchInfo> &scratch_patches);
+    const std::vector<ScratchPatchInfo> &scratch_patches,
+    unsigned max_vgprs);
 
-// b0a0 — dispatcher
+// policy — dispatcher
 amd_comgr_status_t RetargetCodeObjectB0A0(const void *elf_data,
                                           size_t elf_size, void **out_data,
                                           size_t *out_size);
 
-// b0a0 — patch entry points (weak stubs in b0a0.cpp)
+// policy — patch entry points (weak stubs in b0a0.cpp)
 //
 // Each group is defined as a weak symbol in comgr-hotswap-b0a0.cpp returning 0.
 // Patch .cpp files provide strong definitions that override the stubs at link

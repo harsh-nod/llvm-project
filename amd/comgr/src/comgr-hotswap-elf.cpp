@@ -8,24 +8,26 @@
 
 #include "comgr-hotswap-internal.h"
 
+#include "MCTargetDesc/AMDGPUTargetStreamer.h"
+
 // ── s_branch / s_nop encoding ────────────────────────────────────────────────
 
 [[nodiscard]] bool EncodeSBranch(uint64_t from_offset, uint64_t to_offset,
-                          uint8_t out_bytes[4], bool gfx12) {
+                                 uint8_t out_bytes[4],
+                                 uint32_t s_branch_opcode) {
   int64_t byte_delta = static_cast<int64_t>(to_offset) -
                        static_cast<int64_t>(from_offset) - 4;
   if (byte_delta % 4 != 0) return false;
   int64_t dword_offset = byte_delta / 4;
   if (dword_offset < -32768 || dword_offset > 32767) return false;
-  uint32_t opcode = gfx12 ? S_BRANCH_GFX12 : S_BRANCH_GFX9;
-  uint32_t encoded = opcode | (static_cast<uint16_t>(dword_offset) & 0xFFFF);
+  uint32_t encoded =
+      s_branch_opcode | (static_cast<uint16_t>(dword_offset) & 0xFFFF);
   std::memcpy(out_bytes, &encoded, 4);
   return true;
 }
 
-void EncodeSNop(uint8_t out_bytes[4]) {
-  uint32_t encoded = S_NOP_OPCODE;
-  std::memcpy(out_bytes, &encoded, 4);
+void EncodeSNop(uint8_t out_bytes[4], uint32_t s_nop_opcode) {
+  std::memcpy(out_bytes, &s_nop_opcode, 4);
 }
 
 // ── ExtractCPU ───────────────────────────────────────────────────────────────
@@ -49,7 +51,8 @@ std::string ExtractCPU(const std::string &isa_name) {
 
 // ── ELF parsing ──────────────────────────────────────────────────────────────
 
-[[nodiscard]] bool ParseElfInfo(const uint8_t *elf, size_t elf_size, ElfInfo &info) {
+[[nodiscard]] bool ParseElfInfo(const uint8_t *elf, size_t elf_size,
+                                ElfInfo &info) {
   using ELFT = llvm::object::ELF64LE;
   auto elf_or_err = llvm::object::ELFFile<ELFT>::create(
       llvm::StringRef(reinterpret_cast<const char *>(elf), elf_size));
@@ -93,7 +96,8 @@ std::string ExtractCPU(const std::string &isa_name) {
 
   size_t num_sections = info.sections.size();
   for (size_t i = 0; i < num_sections; ++i) {
-    if (info.sections[i].type != 2 && info.sections[i].type != 11)
+    if (info.sections[i].type != llvm::ELF::SHT_SYMTAB &&
+        info.sections[i].type != llvm::ELF::SHT_DYNSYM)
       continue;
 
     const auto &sym_shdr = *(shdrs.begin() + i);
@@ -134,7 +138,7 @@ std::string FindKernelAtOffset(const ElfInfo &elf_info,
                                uint64_t text_offset) {
   for (auto &sym : elf_info.symbols) {
     uint8_t sym_type = sym.info & 0xf;
-    if (sym_type != 2 && sym_type != 10)
+    if (sym_type != llvm::ELF::STT_FUNC && sym_type != llvm::ELF::STT_GNU_IFUNC)
       continue;
     if (sym.shndx != static_cast<uint16_t>(elf_info.text_section_idx))
       continue;
@@ -150,7 +154,8 @@ std::string FindKernelAtOffset(const ElfInfo &elf_info,
 
 [[nodiscard]] bool ApplyByteReplace(const RewriteRule &rule,
                                     uint64_t inst_offset, uint32_t inst_size,
-                                    uint8_t *text, uint64_t text_size) {
+                                    uint8_t *text, uint64_t text_size,
+                                    uint32_t s_nop_opcode) {
   if (inst_offset + inst_size > text_size) return false;
   if (rule.replace_bytes.size() > inst_size) return false;
   std::memcpy(text + inst_offset, rule.replace_bytes.data(),
@@ -160,7 +165,7 @@ std::string FindKernelAtOffset(const ElfInfo &elf_info,
   uint64_t pad_offset = inst_offset + rule.replace_bytes.size();
   while (remaining >= 4) {
     uint8_t nop[4];
-    EncodeSNop(nop);
+    EncodeSNop(nop, s_nop_opcode);
     std::memcpy(text + pad_offset, nop, 4);
     pad_offset += 4;
     remaining -= 4;
@@ -183,11 +188,11 @@ void UpdateKernelDescriptor(uint8_t *elf_data, size_t elf_size,
     auto &sec = elf_info.sections[sym.shndx];
     if (sym.value < sec.addr) continue;
     uint64_t kd_file_offset = sec.offset + (sym.value - sec.addr);
-    if (kd_file_offset + 64 > elf_size)
+    if (kd_file_offset + kKdSize > elf_size)
       continue;
     uint8_t *kd = elf_data + kd_file_offset;
     uint32_t rsrc1;
-    std::memcpy(&rsrc1, kd + 48, 4);
+    std::memcpy(&rsrc1, kd + kKdRsrc1Offset, 4);
     if (extra_vgprs > 0) {
       uint32_t current = rsrc1 & KD_RSRC1_VGPR_MASK;
       uint32_t extra_granules =
@@ -202,14 +207,15 @@ void UpdateKernelDescriptor(uint8_t *elf_data, size_t elf_size,
           (static_cast<uint32_t>(extra_sgprs) + 7) / 8;
       uint32_t new_val = current + extra_granules;
       if (new_val > 15) new_val = 15;
-      rsrc1 = (rsrc1 & ~(KD_RSRC1_SGPR_MASK << KD_RSRC1_SGPR_SHIFT)) | (new_val << KD_RSRC1_SGPR_SHIFT);
+      rsrc1 = (rsrc1 & ~(KD_RSRC1_SGPR_MASK << KD_RSRC1_SGPR_SHIFT)) |
+              (new_val << KD_RSRC1_SGPR_SHIFT);
     }
-    std::memcpy(kd + 48, &rsrc1, 4);
+    std::memcpy(kd + kKdRsrc1Offset, &rsrc1, 4);
     return;
   }
 }
 
-// ── NOP sled management ─────────────────────────────────────────────────────
+// ── NOP sled management ──────────────────────────────────────────────────────
 
 NopSled *FindNearestSled(std::vector<NopSled> &sleds, uint64_t offset,
                          uint64_t needed) {
@@ -219,7 +225,7 @@ NopSled *FindNearestSled(std::vector<NopSled> &sleds, uint64_t offset,
     if (sled.write_pos + needed > sled.end) continue;
     int64_t dist = std::abs(static_cast<int64_t>(sled.write_pos) -
                             static_cast<int64_t>(offset));
-    if (dist < 131072 && dist < best_dist) {
+    if (dist < kMaxSledDistance && dist < best_dist) {
       best = &sled;
       best_dist = dist;
     }
@@ -259,56 +265,60 @@ MallocBuffer GrowElfWithTrampolines(const uint8_t *elf, size_t elf_size,
   if (text_end < elf_size)
     std::memcpy(new_elf + tramp_pos, elf + text_end, elf_size - text_end);
 
+  using Ehdr = llvm::ELF::Elf64_Ehdr;
+  using Shdr = llvm::ELF::Elf64_Shdr;
+  using Phdr = llvm::ELF::Elf64_Phdr;
+
   uint64_t e_shoff;
   uint16_t e_shentsize;
-  std::memcpy(&e_shoff, new_elf + 40, 8);
-  std::memcpy(&e_shentsize, new_elf + 58, 2);
+  std::memcpy(&e_shoff, new_elf + offsetof(Ehdr, e_shoff), 8);
+  std::memcpy(&e_shentsize, new_elf + offsetof(Ehdr, e_shentsize), 2);
 
   if (e_shoff >= text_end) {
     uint64_t new_shoff = e_shoff + tramp_total;
-    std::memcpy(new_elf + 40, &new_shoff, 8);
+    std::memcpy(new_elf + offsetof(Ehdr, e_shoff), &new_shoff, 8);
     e_shoff = new_shoff;
   }
 
   uint16_t e_shnum;
-  std::memcpy(&e_shnum, new_elf + 60, 2);
+  std::memcpy(&e_shnum, new_elf + offsetof(Ehdr, e_shnum), 2);
 
   for (uint16_t i = 0; i < e_shnum; ++i) {
     uint8_t *sh = new_elf + e_shoff + i * e_shentsize;
     uint64_t sh_offset;
-    std::memcpy(&sh_offset, sh + 24, 8);
+    std::memcpy(&sh_offset, sh + offsetof(Shdr, sh_offset), 8);
 
     if (sh_offset == elf_info.text_offset) {
       uint64_t new_text_size = elf_info.text_size + tramp_total;
-      std::memcpy(sh + 32, &new_text_size, 8);
+      std::memcpy(sh + offsetof(Shdr, sh_size), &new_text_size, 8);
     } else if (sh_offset > elf_info.text_offset) {
       uint64_t new_offset = sh_offset + tramp_total;
-      std::memcpy(sh + 24, &new_offset, 8);
+      std::memcpy(sh + offsetof(Shdr, sh_offset), &new_offset, 8);
     }
   }
 
   uint64_t e_phoff;
   uint16_t e_phentsize, e_phnum;
-  std::memcpy(&e_phoff, new_elf + 32, 8);
-  std::memcpy(&e_phentsize, new_elf + 54, 2);
-  std::memcpy(&e_phnum, new_elf + 56, 2);
+  std::memcpy(&e_phoff, new_elf + offsetof(Ehdr, e_phoff), 8);
+  std::memcpy(&e_phentsize, new_elf + offsetof(Ehdr, e_phentsize), 2);
+  std::memcpy(&e_phnum, new_elf + offsetof(Ehdr, e_phnum), 2);
 
   for (uint16_t i = 0; i < e_phnum; ++i) {
     uint8_t *ph = new_elf + e_phoff + i * e_phentsize;
     uint64_t p_offset, p_filesz, p_memsz;
-    std::memcpy(&p_offset, ph + 8, 8);
-    std::memcpy(&p_filesz, ph + 32, 8);
-    std::memcpy(&p_memsz, ph + 40, 8);
+    std::memcpy(&p_offset, ph + offsetof(Phdr, p_offset), 8);
+    std::memcpy(&p_filesz, ph + offsetof(Phdr, p_filesz), 8);
+    std::memcpy(&p_memsz, ph + offsetof(Phdr, p_memsz), 8);
 
     if (p_offset <= elf_info.text_offset &&
         p_offset + p_filesz >= text_end) {
       p_filesz += tramp_total;
       p_memsz += tramp_total;
-      std::memcpy(ph + 32, &p_filesz, 8);
-      std::memcpy(ph + 40, &p_memsz, 8);
+      std::memcpy(ph + offsetof(Phdr, p_filesz), &p_filesz, 8);
+      std::memcpy(ph + offsetof(Phdr, p_memsz), &p_memsz, 8);
     } else if (p_offset > elf_info.text_offset) {
       p_offset += tramp_total;
-      std::memcpy(ph + 8, &p_offset, 8);
+      std::memcpy(ph + offsetof(Phdr, p_offset), &p_offset, 8);
     }
   }
 
@@ -319,45 +329,34 @@ MallocBuffer GrowElfWithTrampolines(const uint8_t *elf, size_t elf_size,
 
 bool PatchElfIsa(uint8_t *elf, size_t elf_size,
                  const std::string &target_cpu) {
-  if (elf_size < 64) return false;
+  if (elf_size < kMinElfSize) return false;
   if (elf[0] != 0x7f || elf[1] != 'E' || elf[2] != 'L' || elf[3] != 'F')
     return false;
-  if (elf[4] != 2) return false;
+  if (elf[llvm::ELF::EI_CLASS] != llvm::ELF::ELFCLASS64) return false;
 
-  struct GfxMach { const char *name; uint32_t mach; };
-  static const GfxMach gfx_mach_map[] = {
-      {"gfx900", 0x02c},  {"gfx906", 0x02f},  {"gfx908", 0x030},
-      {"gfx90a", 0x03f},  {"gfx940", 0x04a},  {"gfx941", 0x04b},
-      {"gfx942", 0x04c},  {"gfx950", 0x04f},  {"gfx1010", 0x033},
-      {"gfx1030", 0x036}, {"gfx1100", 0x041},  {"gfx1200", 0x048},
-      {"gfx1201", 0x04a}, {"gfx1250", 0x049},  {nullptr, 0}};
+  unsigned target_mach =
+      llvm::AMDGPUTargetStreamer::getElfMach(llvm::StringRef(target_cpu));
+  if (target_mach == llvm::ELF::EF_AMDGPU_MACH_NONE) return false;
 
-  uint32_t target_mach = 0;
-  for (auto *p = gfx_mach_map; p->name; ++p) {
-    if (target_cpu == p->name) {
-      target_mach = p->mach;
-      break;
-    }
-  }
-  if (target_mach == 0) return false;
+  using Ehdr = llvm::ELF::Elf64_Ehdr;
 
   uint32_t e_flags;
-  std::memcpy(&e_flags, elf + 48, 4);
+  std::memcpy(&e_flags, elf + offsetof(Ehdr, e_flags), 4);
   e_flags = (e_flags & ~0xFFu) | (target_mach & 0xFF);
-  std::memcpy(elf + 48, &e_flags, 4);
+  std::memcpy(elf + offsetof(Ehdr, e_flags), &e_flags, 4);
 
   uint64_t e_shoff;
   uint16_t e_shentsize, e_shnum;
-  std::memcpy(&e_shoff, elf + 40, 8);
-  std::memcpy(&e_shentsize, elf + 58, 2);
-  std::memcpy(&e_shnum, elf + 60, 2);
+  std::memcpy(&e_shoff, elf + offsetof(Ehdr, e_shoff), 8);
+  std::memcpy(&e_shentsize, elf + offsetof(Ehdr, e_shentsize), 2);
+  std::memcpy(&e_shnum, elf + offsetof(Ehdr, e_shnum), 2);
   if (e_shoff == 0 || e_shnum == 0) return true;
 
   for (uint16_t i = 0; i < e_shnum; ++i) {
     const uint8_t *sh = elf + e_shoff + i * e_shentsize;
     uint32_t sh_type;
     std::memcpy(&sh_type, sh + 4, 4);
-    if (sh_type != 7) continue;
+    if (sh_type != llvm::ELF::SHT_NOTE) continue;
     uint64_t sh_offset, sh_size;
     std::memcpy(&sh_offset, sh + 24, 8);
     std::memcpy(&sh_size, sh + 32, 8);
@@ -372,7 +371,7 @@ bool PatchElfIsa(uint8_t *elf, size_t elf_size,
       uint32_t descsz_aligned = (descsz + 3) & ~3u;
       uint64_t note_total = 12 + namesz_aligned + descsz_aligned;
       if (pos + note_total > sh_offset + sh_size) break;
-      if (type == 27 && namesz > 0) {
+      if (type == kNoteTypeIsaVersion && namesz > 0) {
         const char *owner = reinterpret_cast<const char *>(elf + pos + 12);
         if (std::strncmp(owner, "AMDGPU", 6) == 0) {
           uint8_t *desc = elf + pos + 12 + namesz_aligned;
@@ -412,11 +411,11 @@ int GetKernelVgprCount(const uint8_t *elf_data, size_t elf_size,
     const auto &sec = elf_info.sections[sym.shndx];
     if (sym.value < sec.addr) continue;
     uint64_t kd_file_offset = sec.offset + (sym.value - sec.addr);
-    if (kd_file_offset + 64 > elf_size) continue;
+    if (kd_file_offset + kKdSize > elf_size) continue;
     uint32_t rsrc1;
-    std::memcpy(&rsrc1, elf_data + kd_file_offset + 48, 4);
+    std::memcpy(&rsrc1, elf_data + kd_file_offset + kKdRsrc1Offset, 4);
     uint32_t granulated = rsrc1 & KD_RSRC1_VGPR_MASK;
     return static_cast<int>((granulated + 1) * 8);
   }
-  return 256;
+  return -1;
 }
