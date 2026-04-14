@@ -338,6 +338,28 @@ MallocBuffer GrowElfWithTrampolines(const uint8_t *elf, size_t elf_size,
 
 // ── PatchElfIsa ──────────────────────────────────────────────────────────────
 
+static constexpr uint32_t kEFlagsMachMask = 0xFFu;
+static constexpr size_t kNoteHeaderSize = 12;
+
+static void PatchIsaInNote(uint8_t *desc, uint32_t descsz,
+                           const std::string &target_cpu) {
+  std::string orig_isa(reinterpret_cast<const char *>(desc), descsz);
+  size_t gfx_pos = orig_isa.find("gfx");
+  if (gfx_pos == std::string::npos) return;
+
+  size_t gfx_end = gfx_pos;
+  while (gfx_end < orig_isa.size() && orig_isa[gfx_end] != ':' &&
+         orig_isa[gfx_end] != '\0')
+    ++gfx_end;
+
+  size_t orig_len = gfx_end - gfx_pos;
+  if (target_cpu.size() > orig_len) return;
+
+  std::memcpy(desc + gfx_pos, target_cpu.c_str(), target_cpu.size());
+  for (size_t j = target_cpu.size(); j < orig_len; ++j)
+    desc[gfx_pos + j] = '\0';
+}
+
 bool PatchElfIsa(uint8_t *elf, size_t elf_size,
                  const std::string &target_cpu) {
   if (elf_size < kMinElfSize) return false;
@@ -350,10 +372,12 @@ bool PatchElfIsa(uint8_t *elf, size_t elf_size,
   if (target_mach == llvm::ELF::EF_AMDGPU_MACH_NONE) return false;
 
   using Ehdr = llvm::ELF::Elf64_Ehdr;
+  using Shdr = llvm::ELF::Elf64_Shdr;
+  using Nhdr = llvm::ELF::Elf64_Nhdr;
 
   uint32_t e_flags;
   std::memcpy(&e_flags, elf + offsetof(Ehdr, e_flags), 4);
-  e_flags = (e_flags & ~0xFFu) | (target_mach & 0xFF);
+  e_flags = (e_flags & ~kEFlagsMachMask) | (target_mach & kEFlagsMachMask);
   std::memcpy(elf + offsetof(Ehdr, e_flags), &e_flags, 4);
 
   uint64_t e_shoff;
@@ -366,43 +390,31 @@ bool PatchElfIsa(uint8_t *elf, size_t elf_size,
   for (uint16_t i = 0; i < e_shnum; ++i) {
     const uint8_t *sh = elf + e_shoff + i * e_shentsize;
     uint32_t sh_type;
-    std::memcpy(&sh_type, sh + 4, 4);
+    std::memcpy(&sh_type, sh + offsetof(Shdr, sh_type), 4);
     if (sh_type != llvm::ELF::SHT_NOTE) continue;
+
     uint64_t sh_offset, sh_size;
-    std::memcpy(&sh_offset, sh + 24, 8);
-    std::memcpy(&sh_size, sh + 32, 8);
+    std::memcpy(&sh_offset, sh + offsetof(Shdr, sh_offset), 8);
+    std::memcpy(&sh_size, sh + offsetof(Shdr, sh_size), 8);
     if (sh_offset + sh_size > elf_size) continue;
+
     uint64_t pos = sh_offset;
-    while (pos + 12 <= sh_offset + sh_size) {
+    while (pos + kNoteHeaderSize <= sh_offset + sh_size) {
       uint32_t namesz, descsz, type;
-      std::memcpy(&namesz, elf + pos, 4);
-      std::memcpy(&descsz, elf + pos + 4, 4);
-      std::memcpy(&type, elf + pos + 8, 4);
+      std::memcpy(&namesz, elf + pos + offsetof(Nhdr, n_namesz), 4);
+      std::memcpy(&descsz, elf + pos + offsetof(Nhdr, n_descsz), 4);
+      std::memcpy(&type, elf + pos + offsetof(Nhdr, n_type), 4);
       uint32_t namesz_aligned = (namesz + 3) & ~3u;
       uint32_t descsz_aligned = (descsz + 3) & ~3u;
-      uint64_t note_total = 12 + namesz_aligned + descsz_aligned;
+      uint64_t note_total = kNoteHeaderSize + namesz_aligned + descsz_aligned;
       if (pos + note_total > sh_offset + sh_size) break;
+
       if (type == kNoteTypeIsaVersion && namesz > 0) {
-        const char *owner = reinterpret_cast<const char *>(elf + pos + 12);
-        if (std::strncmp(owner, "AMDGPU", 6) == 0) {
-          uint8_t *desc = elf + pos + 12 + namesz_aligned;
-          std::string orig_isa(reinterpret_cast<const char *>(desc), descsz);
-          size_t gfx_pos = orig_isa.find("gfx");
-          if (gfx_pos != std::string::npos) {
-            size_t gfx_end = gfx_pos;
-            while (gfx_end < orig_isa.size() && orig_isa[gfx_end] != ':' &&
-                   orig_isa[gfx_end] != '\0')
-              ++gfx_end;
-            std::string orig_gfx =
-                orig_isa.substr(gfx_pos, gfx_end - gfx_pos);
-            if (target_cpu.size() <= orig_gfx.size()) {
-              std::memcpy(desc + gfx_pos, target_cpu.c_str(),
-                          target_cpu.size());
-              for (size_t j = target_cpu.size(); j < orig_gfx.size(); ++j)
-                desc[gfx_pos + j] = '\0';
-            }
-          }
-        }
+        const char *owner =
+            reinterpret_cast<const char *>(elf + pos + kNoteHeaderSize);
+        if (std::strncmp(owner, "AMDGPU", 6) == 0)
+          PatchIsaInNote(elf + pos + kNoteHeaderSize + namesz_aligned,
+                         descsz, target_cpu);
       }
       pos += note_total;
     }
