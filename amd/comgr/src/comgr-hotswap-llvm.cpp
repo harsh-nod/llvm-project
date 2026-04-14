@@ -8,6 +8,15 @@
 
 #include "comgr-hotswap-internal.h"
 
+#include "llvm/MC/MCAsmBackend.h"
+#include "llvm/MC/MCObjectWriter.h"
+#include "llvm/MC/MCParser/MCAsmParser.h"
+#include "llvm/MC/MCParser/MCTargetAsmParser.h"
+#include "llvm/MC/MCStreamer.h"
+#include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/SourceMgr.h"
+#include "llvm/Support/TargetSelect.h"
+
 namespace {
 std::once_flag g_llvm_init_flag;
 std::mutex g_target_cache_mutex;
@@ -22,7 +31,7 @@ static void InitLLVMTargets() {
 }
 
 LLVMState InitLLVMImpl(const std::string &isa_name,
-                              const llvm::Target *cached_target) {
+                       const llvm::Target *cached_target) {
   std::call_once(g_llvm_init_flag, InitLLVMTargets);
 
   LLVMState state;
@@ -97,8 +106,8 @@ LLVMState InitLLVMCached(const std::string &isa_name) {
 // ── Instruction decode ───────────────────────────────────────────────────────
 
 [[nodiscard]] bool DecodeTextSection(const uint8_t *text, uint64_t text_size,
-                              const LLVMState &llvm_state,
-                              std::vector<InternalDecodedInst> &decoded) {
+                                     const LLVMState &llvm_state,
+                                     std::vector<InternalDecodedInst> &decoded) {
   uint64_t pos = 0;
   while (pos < text_size) {
     InternalDecodedInst di;
@@ -139,7 +148,7 @@ LLVMState InitLLVMCached(const std::string &isa_name) {
 // ── AssembleSingleInst ───────────────────────────────────────────────────────
 
 std::vector<uint8_t> AssembleSingleInst(const std::string &asm_str,
-                                               const LLVMState &llvm_state) {
+                                        const LLVMState &llvm_state) {
   llvm_state.Ctx->reset();
 
   std::string full_asm = ".text\n" + asm_str;
@@ -201,8 +210,8 @@ std::vector<uint8_t> AssembleSingleInst(const std::string &asm_str,
 // ── ApplyMnemonicSwap ────────────────────────────────────────────────────────
 
 [[nodiscard]] bool ApplyMnemonicSwap(const RewriteRule &rule,
-                              InternalDecodedInst &inst, uint8_t *text,
-                              const LLVMState &llvm_state) {
+                                     InternalDecodedInst &inst, uint8_t *text,
+                                     const LLVMState &llvm_state) {
   if (!llvm_state.printer) return false;
 
   std::string orig_str;
@@ -230,11 +239,11 @@ std::vector<uint8_t> AssembleSingleInst(const std::string &asm_str,
 // ── BuildTrampoline ──────────────────────────────────────────────────────────
 
 Trampoline BuildTrampoline(const std::vector<std::string> &asm_lines,
-                                  uint64_t original_offset,
-                                  uint32_t original_size,
-                                  uint64_t trampoline_text_offset,
-                                  const std::string &cpu,
-                                  const LLVMState &llvm_state) {
+                           uint64_t original_offset,
+                           uint32_t original_size,
+                           uint64_t trampoline_text_offset,
+                           const std::string &cpu,
+                           const LLVMState &llvm_state) {
   Trampoline result;
   result.original_offset = original_offset;
   result.original_size = original_size;
@@ -283,7 +292,7 @@ int GetVgprNum(unsigned reg, const llvm::MCRegisterInfo &MRI) {
 }
 
 std::pair<int, int> GetVgprRange(unsigned reg,
-                                        const llvm::MCRegisterInfo &MRI) {
+                                 const llvm::MCRegisterInfo &MRI) {
   const char *name = MRI.getName(reg);
   if (!name) return {-1, 0};
   llvm::StringRef rname(name);
@@ -312,7 +321,7 @@ GetOperandVgprRange(const llvm::MCInst &inst, unsigned op_idx,
 }
 
 std::string PrintInst(const InternalDecodedInst &di,
-                              const LLVMState &llvm_state) {
+                      const LLVMState &llvm_state) {
   std::string inst_str;
   if (llvm_state.printer) {
     llvm::raw_string_ostream rso(inst_str);
@@ -330,8 +339,8 @@ bool RangesOverlap(int base1, int count1, int base2, int count2) {
 // ── WMMA co-execution hazard overlap check ──────────────────────────────────
 
 bool CheckVgprOverlap(const llvm::MCInst &wmma_inst,
-                             const llvm::MCInst &valu_inst,
-                             const llvm::MCRegisterInfo &MRI) {
+                      const llvm::MCInst &valu_inst,
+                      const llvm::MCRegisterInfo &MRI) {
   std::vector<std::pair<int, int>> wmma_input_ranges;
   for (unsigned i = 0; i < wmma_inst.getNumOperands(); ++i) {
     const auto &op = wmma_inst.getOperand(i);

@@ -10,9 +10,7 @@
 #include "gtest/gtest.h"
 #include <cstring>
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// EncodeSBranch
-// ═══════════════════════════════════════════════════════════════════════════════
+// ── EncodeSBranch ────────────────────────────────────────────────────────────
 
 TEST(EncodeSBranch, ForwardBranchGFX9) {
   uint8_t out[4] = {};
@@ -56,9 +54,7 @@ TEST(EncodeSBranch, ZeroOffsetBranch) {
   EXPECT_EQ(encoded, S_BRANCH_GFX9);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// EncodeSNop
-// ═══════════════════════════════════════════════════════════════════════════════
+// ── EncodeSNop ───────────────────────────────────────────────────────────────
 
 TEST(EncodeSNop, ProducesCorrectEncoding) {
   uint8_t out[4] = {};
@@ -68,9 +64,7 @@ TEST(EncodeSNop, ProducesCorrectEncoding) {
   EXPECT_EQ(encoded, S_NOP_OPCODE);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// ExtractCPU
-// ═══════════════════════════════════════════════════════════════════════════════
+// ── ExtractCPU ───────────────────────────────────────────────────────────────
 
 TEST(ExtractCPU, FullISAName) {
   EXPECT_EQ(ExtractCPU("amdgcn-amd-amdhsa--gfx1250"), "gfx1250");
@@ -84,19 +78,17 @@ TEST(ExtractCPU, StopsAtNonAlphanumeric) {
   EXPECT_EQ(ExtractCPU("amdgcn-amd-amdhsa--gfx1250:sramecc+"), "gfx1250");
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// MallocBuffer
-// ═══════════════════════════════════════════════════════════════════════════════
+// ── MallocBuffer ─────────────────────────────────────────────────────────────
 
 TEST(MallocBuffer, AllocAndMove) {
   MallocBuffer a(64);
   ASSERT_TRUE(static_cast<bool>(a));
   EXPECT_EQ(a.size, 64u);
 
-  uint8_t *orig = a.data;
+  uint8_t *orig = a.get();
   MallocBuffer b(std::move(a));
-  EXPECT_EQ(b.data, orig);
-  EXPECT_EQ(a.data, nullptr);
+  EXPECT_EQ(b.get(), orig);
+  EXPECT_EQ(a.get(), nullptr);
   EXPECT_EQ(a.size, 0u);
 }
 
@@ -104,14 +96,12 @@ TEST(MallocBuffer, Release) {
   MallocBuffer buf(64);
   uint8_t *p = buf.release();
   EXPECT_NE(p, nullptr);
-  EXPECT_EQ(buf.data, nullptr);
+  EXPECT_EQ(buf.get(), nullptr);
   EXPECT_EQ(buf.size, 0u);
   std::free(p);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// ParseElfInfo
-// ═══════════════════════════════════════════════════════════════════════════════
+// ── ParseElfInfo ─────────────────────────────────────────────────────────────
 
 TEST(ParseElfInfo, RejectsTruncatedInput) {
   uint8_t garbage[] = {0x7f, 'E', 'L', 'F', 0, 0, 0, 0};

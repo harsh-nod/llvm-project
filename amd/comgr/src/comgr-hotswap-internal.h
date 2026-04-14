@@ -28,82 +28,55 @@
 #include <charconv>
 #include <cstdlib>
 #include <cstring>
-#include <iomanip>
-#include <iostream>
 #include <memory>
 #include <mutex>
-#include <sstream>
 #include <string>
-#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include "llvm/ADT/BitVector.h"
-#include "llvm/MC/MCAsmBackend.h"
+#include "llvm/MC/MCInstrDesc.h"
+#include "llvm/MC/MCInstrInfo.h"
+#include "llvm/MC/MCRegisterInfo.h"
+#include "llvm/MC/TargetRegistry.h"
+#include "llvm/Object/ELF.h"
+#include "llvm/Object/ELFTypes.h"
+#include "llvm/Support/raw_ostream.h"
+
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCCodeEmitter.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCDisassembler/MCDisassembler.h"
 #include "llvm/MC/MCInstPrinter.h"
-#include "llvm/MC/MCInstrDesc.h"
-#include "llvm/MC/MCInstrInfo.h"
 #include "llvm/MC/MCObjectFileInfo.h"
-#include "llvm/MC/MCObjectWriter.h"
-#include "llvm/MC/MCParser/MCAsmParser.h"
-#include "llvm/MC/MCParser/MCTargetAsmParser.h"
-#include "llvm/MC/MCRegisterInfo.h"
-#include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCSubtargetInfo.h"
-#include "llvm/Support/MemoryBuffer.h"
-#include "llvm/Support/SourceMgr.h"
-#include "llvm/Support/TargetSelect.h"
-#include "llvm/Support/LEB128.h"
-#include "llvm/Object/ELF.h"
-#include "llvm/Object/ELFTypes.h"
-#include "llvm/Support/raw_ostream.h"
-#include "llvm/MC/TargetRegistry.h"
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// Types
-// ═══════════════════════════════════════════════════════════════════════════════
+// ── MallocBuffer ─────────────────────────────────────────────────────────────
 
-// ── MallocBuffer RAII wrapper ────────────────────────────────────────────────
+struct FreeDeleter {
+  void operator()(uint8_t *p) const { std::free(p); }
+};
 
 struct MallocBuffer {
-  uint8_t *data = nullptr;
+  std::unique_ptr<uint8_t[], FreeDeleter> data;
   size_t size = 0;
 
   MallocBuffer() = default;
-  MallocBuffer(size_t n)
+  explicit MallocBuffer(size_t n)
       : data(static_cast<uint8_t *>(std::malloc(n))), size(data ? n : 0) {}
-  ~MallocBuffer() { std::free(data); }
 
-  MallocBuffer(MallocBuffer &&o) noexcept : data(o.data), size(o.size) {
-    o.data = nullptr;
-    o.size = 0;
-  }
+  MallocBuffer(MallocBuffer &&o) noexcept
+      : data(std::move(o.data)), size(std::exchange(o.size, 0)) {}
   MallocBuffer &operator=(MallocBuffer &&o) noexcept {
-    if (this != &o) {
-      std::free(data);
-      data = o.data;
-      size = o.size;
-      o.data = nullptr;
-      o.size = 0;
-    }
+    data = std::move(o.data);
+    size = std::exchange(o.size, 0);
     return *this;
   }
 
-  MallocBuffer(const MallocBuffer &) = delete;
-  MallocBuffer &operator=(const MallocBuffer &) = delete;
-
   explicit operator bool() const { return data != nullptr; }
-  uint8_t *release() {
-    uint8_t *p = data;
-    data = nullptr;
-    size = 0;
-    return p;
-  }
+  uint8_t *get() const { return data.get(); }
+  uint8_t *release() { size = 0; return data.release(); }
 };
 
 // ── Logging ──────────────────────────────────────────────────────────────────
@@ -123,16 +96,10 @@ inline HotswapLogLevel GetHotswapLogLevel() {
   return level;
 }
 
-inline std::ostream &HotswapLog(HotswapLogLevel level) {
-  class NullBuf : public std::streambuf {
-  protected:
-    int overflow(int c) override { return c; }
-  };
-  static NullBuf null_buf;
-  static std::ostream null_stream(&null_buf);
+inline llvm::raw_ostream &HotswapLog(HotswapLogLevel level) {
   if (static_cast<int>(level) <= static_cast<int>(GetHotswapLogLevel()))
-    return std::cerr;
-  return null_stream;
+    return llvm::errs();
+  return llvm::nulls();
 }
 
 // ── ELF types ────────────────────────────────────────────────────────────────
@@ -180,7 +147,7 @@ struct NopSled {
   uint64_t write_pos;
 };
 
-// ── Rewrite-rule types (used by ApplyByteReplace / ApplyMnemonicSwap) ────────
+// ── Rewrite-rule types ───────────────────────────────────────────────────────
 
 struct RewriteRule {
   std::string replace_mnemonic;
@@ -224,7 +191,7 @@ struct LLVMState {
   bool valid = false;
 };
 
-// ── Decoded instruction with MCInst ──────────────────────────────────────────
+// ── Decoded instruction ──────────────────────────────────────────────────────
 
 struct InternalDecodedInst {
   uint64_t offset;
@@ -233,7 +200,7 @@ struct InternalDecodedInst {
   std::string mnemonic;
 };
 
-// ── Per-point VGPR liveness types ────────────────────────────────────────────
+// ── VGPR liveness types ──────────────────────────────────────────────────────
 
 struct RegDefUse {
   llvm::BitVector defs{256};
@@ -328,12 +295,9 @@ struct PatchContext {
   std::vector<ScratchPatchInfo> &out_scratch_patches;
 };
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// Function declarations (cross-file)
-// ═══════════════════════════════════════════════════════════════════════════════
+// ── Function declarations ────────────────────────────────────────────────────
 
-// ── elf ──────────────────────────────────────────────────────────────────────
-
+// elf
 [[nodiscard]] bool EncodeSBranch(uint64_t from_offset, uint64_t to_offset,
                                  uint8_t out_bytes[4], bool gfx12 = false);
 void EncodeSNop(uint8_t out_bytes[4]);
@@ -358,8 +322,7 @@ int GetKernelVgprCount(const uint8_t *elf_data, size_t elf_size,
                        const ElfInfo &elf_info,
                        const std::string &kernel_name);
 
-// ── dwarf ────────────────────────────────────────────────────────────────────
-
+// dwarf
 uint8_t *FindSectionHeader(uint8_t *elf, size_t elf_size, const char *name,
                            int *out_idx = nullptr);
 [[nodiscard]] bool AddTrampolineSymbols(
@@ -376,8 +339,7 @@ void PatchDebugInfo(uint8_t *elf, size_t elf_size, uint64_t text_addr,
 void PatchDebugFrame(uint8_t *elf, size_t elf_size, uint64_t text_addr,
                      uint64_t text_size_before, uint64_t tramp_total);
 
-// ── llvm ─────────────────────────────────────────────────────────────────────
-
+// llvm
 LLVMState InitLLVMImpl(const std::string &isa_name,
                        const llvm::Target *cached_target = nullptr);
 LLVMState InitLLVMCached(const std::string &isa_name);
@@ -407,8 +369,7 @@ bool CheckVgprOverlap(const llvm::MCInst &wmma_inst,
                       const llvm::MCInst &valu_inst,
                       const llvm::MCRegisterInfo &MRI);
 
-// ── liveness ─────────────────────────────────────────────────────────────────
-
+// liveness
 RegDefUse GetInstRegDefUse(const llvm::MCInst &inst,
                            const llvm::MCInstrInfo &MCII,
                            const llvm::MCRegisterInfo &MRI);
@@ -422,21 +383,20 @@ LivenessInfo ComputeLiveness(const std::vector<InternalDecodedInst> &decoded,
     const uint8_t *text, uint64_t text_size, const LLVMState &llvm_state,
     const std::vector<ScratchPatchInfo> &scratch_patches);
 
-// ── b0a0 — dispatcher and entry point ────────────────────────────────────────
-
+// b0a0 — dispatcher
 amd_comgr_status_t RetargetCodeObjectB0A0(const void *elf_data,
                                           size_t elf_size, void **out_data,
                                           size_t *out_size);
 
-// ── b0a0 — patch entry points (weak stubs in b0a0.cpp) ──────────────────────
+// b0a0 — patch entry points (weak stubs in b0a0.cpp)
 //
 // Each group is defined as a weak symbol in comgr-hotswap-b0a0.cpp returning 0.
 // Patch .cpp files provide strong definitions that override the stubs at link
 // time, allowing patches to land as independent PRs.
 
 /// Per-instruction patches that rewrite in place without changing code size:
-///  - cluster_load → global_load mnemonic swap
-///  - s_clause → s_nop byte overwrite
+///  - cluster_load -> global_load mnemonic swap
+///  - s_clause -> s_nop byte overwrite
 uint32_t ApplyInPlacePatches(PatchContext &ctx, size_t idx);
 
 /// Per-instruction patches that expand one instruction into multiple via NOP

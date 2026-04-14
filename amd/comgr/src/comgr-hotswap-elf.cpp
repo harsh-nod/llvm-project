@@ -131,7 +131,7 @@ std::string ExtractCPU(const std::string &isa_name) {
 }
 
 std::string FindKernelAtOffset(const ElfInfo &elf_info,
-                                      uint64_t text_offset) {
+                               uint64_t text_offset) {
   for (auto &sym : elf_info.symbols) {
     uint8_t sym_type = sym.info & 0xf;
     if (sym_type != 2 && sym_type != 10)
@@ -148,9 +148,9 @@ std::string FindKernelAtOffset(const ElfInfo &elf_info,
 
 // ── ApplyByteReplace ─────────────────────────────────────────────────────────
 
-[[nodiscard]] bool ApplyByteReplace(const RewriteRule &rule, uint64_t inst_offset,
-                             uint32_t inst_size, uint8_t *text,
-                             uint64_t text_size) {
+[[nodiscard]] bool ApplyByteReplace(const RewriteRule &rule,
+                                    uint64_t inst_offset, uint32_t inst_size,
+                                    uint8_t *text, uint64_t text_size) {
   if (inst_offset + inst_size > text_size) return false;
   if (rule.replace_bytes.size() > inst_size) return false;
   std::memcpy(text + inst_offset, rule.replace_bytes.data(),
@@ -171,9 +171,9 @@ std::string FindKernelAtOffset(const ElfInfo &elf_info,
 // ── UpdateKernelDescriptor ───────────────────────────────────────────────────
 
 void UpdateKernelDescriptor(uint8_t *elf_data, size_t elf_size,
-                                   const ElfInfo &elf_info,
-                                   const std::string &kernel_name,
-                                   int32_t extra_vgprs, int32_t extra_sgprs) {
+                            const ElfInfo &elf_info,
+                            const std::string &kernel_name,
+                            int32_t extra_vgprs, int32_t extra_sgprs) {
   std::string kd_name = kernel_name + ".kd";
   for (auto &sym : elf_info.symbols) {
     if (sym.name != kd_name)
@@ -212,7 +212,7 @@ void UpdateKernelDescriptor(uint8_t *elf_data, size_t elf_size,
 // ── NOP sled management ─────────────────────────────────────────────────────
 
 NopSled *FindNearestSled(std::vector<NopSled> &sleds, uint64_t offset,
-                                uint64_t needed) {
+                         uint64_t needed) {
   NopSled *best = nullptr;
   int64_t best_dist = INT64_MAX;
   for (auto &sled : sleds) {
@@ -230,8 +230,8 @@ NopSled *FindNearestSled(std::vector<NopSled> &sleds, uint64_t offset,
 // ── GrowElfWithTrampolines ──────────────────────────────────────────────────
 
 MallocBuffer GrowElfWithTrampolines(const uint8_t *elf, size_t elf_size,
-                                            const ElfInfo &elf_info,
-                                            const std::vector<Trampoline> &trampolines) {
+                                    const ElfInfo &elf_info,
+                                    const std::vector<Trampoline> &trampolines) {
   size_t tramp_total = 0;
   for (auto &t : trampolines)
     tramp_total += t.bytes.size();
@@ -245,7 +245,7 @@ MallocBuffer GrowElfWithTrampolines(const uint8_t *elf, size_t elf_size,
   if (!buf)
     return {};
 
-  uint8_t *new_elf = buf.data;
+  uint8_t *new_elf = buf.get();
 
   uint64_t text_end = elf_info.text_offset + elf_info.text_size;
   std::memcpy(new_elf, elf, text_end);

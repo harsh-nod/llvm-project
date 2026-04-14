@@ -266,7 +266,7 @@ amd_comgr_status_t RetargetCodeObjectB0A0(const void *elf_data,
     MallocBuffer copy(elf_size);
     if (!copy)
       return AMD_COMGR_STATUS_ERROR;
-    std::memcpy(copy.data, elf_data, elf_size);
+    std::memcpy(copy.get(), elf_data, elf_size);
     *out_size = elf_size;
     *out_data = copy.release();
     return AMD_COMGR_STATUS_SUCCESS;
@@ -330,11 +330,11 @@ amd_comgr_status_t RetargetCodeObjectB0A0(const void *elf_data,
                               elf_info.text_section_idx))
       HotswapLog(HotswapLogLevel::Error)
           << "hotswap: WARNING: AddTrampolineSymbols failed\n";
-    PatchDebugRanges(new_buf.data, new_buf.size, elf_info.text_addr,
+    PatchDebugRanges(new_buf.get(), new_buf.size, elf_info.text_addr,
                      elf_info.text_size, tramp_total);
-    PatchDebugInfo(new_buf.data, new_buf.size, elf_info.text_addr,
+    PatchDebugInfo(new_buf.get(), new_buf.size, elf_info.text_addr,
                    elf_info.text_size, tramp_total);
-    PatchDebugFrame(new_buf.data, new_buf.size, elf_info.text_addr,
+    PatchDebugFrame(new_buf.get(), new_buf.size, elf_info.text_addr,
                     elf_info.text_size, tramp_total);
     if (!PatchDebugLine(new_buf, deferred, elf_info.text_size,
                         elf_info.text_addr))
@@ -347,7 +347,7 @@ amd_comgr_status_t RetargetCodeObjectB0A0(const void *elf_data,
     MallocBuffer out(elf_size);
     if (!out)
       return AMD_COMGR_STATUS_ERROR;
-    std::memcpy(out.data, buf.data(), elf_size);
+    std::memcpy(out.get(), buf.data(), elf_size);
     *out_data = out.release();
     *out_size = elf_size;
   }
