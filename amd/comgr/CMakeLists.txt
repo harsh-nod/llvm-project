@@ -66,6 +66,12 @@ endif()
 option(COMGR_BUILD_SHARED_LIBS "Build the shared library"
        ${build_shared_libs_default})
 
+set(HOTSWAP_SOURCES
+  src/comgr-hotswap.cpp
+  src/comgr-hotswap-b0a0.cpp
+  src/comgr-hotswap-elf.cpp
+  src/comgr-hotswap-llvm.cpp)
+
 set(SOURCES
   src/comgr-cache.cpp
   src/comgr-cache-command.cpp
@@ -76,10 +82,6 @@ set(SOURCES
   src/comgr-diagnostic-handler.cpp
   src/comgr-disassembly.cpp
   src/comgr-env.cpp
-  src/comgr-hotswap.cpp
-  src/comgr-hotswap-b0a0.cpp
-  src/comgr-hotswap-elf.cpp
-  src/comgr-hotswap-llvm.cpp
   src/comgr-libcxx-headers.cpp
   src/comgr-metadata.cpp
   src/comgr-signal.cpp
@@ -87,7 +89,8 @@ set(SOURCES
   src/comgr-symbol.cpp
   src/comgr-symbolizer.cpp
   src/comgr-unbundle-command.cpp
-  src/time-stat/time-stat.cpp)
+  src/time-stat/time-stat.cpp
+  ${HOTSWAP_SOURCES})
 
 # Add Windows resource file for version info
 if(WIN32)
@@ -561,6 +564,27 @@ if(BUILD_TESTING)
   endif()
   add_subdirectory(test)
   add_subdirectory(test-lit)
+
+  if(TARGET llvm_gtest)
+    add_library(comgr_hotswap_obj OBJECT ${HOTSWAP_SOURCES})
+    set_target_properties(comgr_hotswap_obj PROPERTIES
+      CXX_STANDARD 17
+      CXX_STANDARD_REQUIRED Yes
+      CXX_EXTENSIONS No
+      POSITION_INDEPENDENT_CODE ON)
+    target_include_directories(comgr_hotswap_obj PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src
+      $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>)
+    if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+      target_include_directories(comgr_hotswap_obj PRIVATE
+        ${LLVM_INCLUDE_DIRS} ${CLANG_INCLUDE_DIRS} ${LLD_INCLUDE_DIRS})
+    endif()
+    target_compile_options(comgr_hotswap_obj
+      PRIVATE "${AMD_COMGR_PRIVATE_COMPILE_OPTIONS}")
+    target_compile_definitions(comgr_hotswap_obj
+      PRIVATE "${AMD_COMGR_PRIVATE_COMPILE_DEFINITIONS}")
+    add_subdirectory(unittests)
+  endif()
 endif()
 
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
