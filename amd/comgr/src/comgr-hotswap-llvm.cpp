@@ -162,22 +162,12 @@ std::vector<uint8_t> AssembleSingleInst(const std::string &asm_str,
 
   if (!ce || !mab) return {};
 
-#if LLVM_VERSION_MAJOR > 20
   auto streamer = std::unique_ptr<llvm::MCStreamer>(
       llvm_state.target->createMCObjectStreamer(
           triple, *llvm_state.Ctx,
           std::unique_ptr<llvm::MCAsmBackend>(mab),
           mab->createObjectWriter(*bos),
           std::unique_ptr<llvm::MCCodeEmitter>(ce), *llvm_state.STI));
-#else
-  auto streamer = std::unique_ptr<llvm::MCStreamer>(
-      llvm_state.target->createMCObjectStreamer(
-          triple, *llvm_state.Ctx,
-          std::unique_ptr<llvm::MCAsmBackend>(mab),
-          mab->createObjectWriter(*bos),
-          std::unique_ptr<llvm::MCCodeEmitter>(ce), *llvm_state.STI,
-          mc_opts.MCRelaxAll, mc_opts.MCIncrementalLinkerCompatible, false));
-#endif
 
   if (!streamer) return {};
 

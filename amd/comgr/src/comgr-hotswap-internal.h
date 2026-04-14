@@ -39,7 +39,6 @@
 #include <utility>
 #include <vector>
 
-#include "llvm/Config/llvm-config.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/MC/MCAsmBackend.h"
 #include "llvm/MC/MCAsmInfo.h"
