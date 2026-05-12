@@ -7,7 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 // ============================================================================
-// WMMA → MFMA Lowering via Layout-Aware Lane Redistribution
+// WMMA -> MFMA Lowering via Layout-Aware Lane Redistribution
 // ============================================================================
 //
 // This file lowers Wave32 WMMA instructions (gfx1250 / RDNA4) to Wave64 MFMA
@@ -38,25 +38,25 @@
 // width (K=32 for 16-bit elements, K=64 for 8-bit elements), so the
 // total bytes per lane stay constant. The lane redistribution math
 // below operates on dwords (32-bit cells); it is therefore byte-
-// identical across element widths — the only per-variant divergence
+// identical across element widths -- the only per-variant divergence
 // lives in (a) the MFMA intrinsic dispatched on the gfx942 side and
 // (b) the per-MFMA bitcast / pack type. See `runGroupPass` and the
 // `WMMAInputType` enum in `wmma-lowering.h` for the full enumeration.
 //
-//   A input — 16-bit variants (8 VGPRs, <16 x {half|bfloat}>):
+//   A input -- 16-bit variants (8 VGPRs, <16 x {half|bfloat}>):
 //     i = lane % 16
 //     k = 8*floor(GPR/2) + 4*floor(lane/16) + 2*(GPR%2) + floor(bits/16)
 //
 //     Per-lane breakdown:
-//       Lanes 0-15:   GPR 0→k={0,1}  GPR 1→k={2,3}  GPR 2→k={8,9}
-//                     GPR 3→k={10,11} GPR 4→k={16,17} GPR 5→k={18,19}
-//                     GPR 6→k={24,25} GPR 7→k={26,27}
-//       Lanes 16-31:  GPR 0→k={4,5}  GPR 1→k={6,7}  GPR 2→k={12,13}
-//                     GPR 3→k={14,15} GPR 4→k={20,21} GPR 5→k={22,23}
-//                     GPR 6→k={28,29} GPR 7→k={30,31}
+//       Lanes 0-15:   GPR 0->k={0,1}  GPR 1->k={2,3}  GPR 2->k={8,9}
+//                     GPR 3->k={10,11} GPR 4->k={16,17} GPR 5->k={18,19}
+//                     GPR 6->k={24,25} GPR 7->k={26,27}
+//       Lanes 16-31:  GPR 0->k={4,5}  GPR 1->k={6,7}  GPR 2->k={12,13}
+//                     GPR 3->k={14,15} GPR 4->k={20,21} GPR 5->k={22,23}
+//                     GPR 6->k={28,29} GPR 7->k={30,31}
 //
-//   A input — 8-bit variants (8 VGPRs, <8 x i32> = 32 packed fp8/bf8):
-//     Same dword-grain layout as the 16-bit variants — a fp8/bf8 byte
+//   A input -- 8-bit variants (8 VGPRs, <8 x i32> = 32 packed fp8/bf8):
+//     Same dword-grain layout as the 16-bit variants -- a fp8/bf8 byte
 //     occupies the same byte slot inside its containing dword and
 //     across lanes/GPRs that the corresponding 16-bit element would
 //     have occupied. The K-stride doubles (each dword holds 4 fp8/bf8
@@ -64,10 +64,10 @@
 //     the redistribution acts at dword granularity and does not see
 //     the element-level interpretation.
 //
-//   C/D output (8 VGPRs, <8 x float>) — invariant across variants:
+//   C/D output (8 VGPRs, <8 x float>) -- invariant across variants:
 //     i = 8*floor(lane/16) + GPR
 //     j = lane % 16
-//     → Lanes 0-15: rows 0-7;  Lanes 16-31: rows 8-15
+//     -> Lanes 0-15: rows 0-7;  Lanes 16-31: rows 8-15
 //
 // gfx942 (CDNA3) MFMA targets:
 //
@@ -81,10 +81,10 @@
 //       Same per-lane VGPR width (2 dwords) as the 16-bit MFMA. The
 //       K-fanout doubles to match the doubled WMMA K-range.
 //
-//   C/D output (4 VGPRs, <4 x float>) — invariant across variants:
+//   C/D output (4 VGPRs, <4 x float>) -- invariant across variants:
 //     i = 4*floor(lane/16) + (GPR % 4)
 //     j = lane % 16
-//     → Lanes 0-15: rows 0-3; 16-31: rows 4-7; 32-47: rows 8-11; 48-63: rows 12-15
+//     -> Lanes 0-15: rows 0-3; 16-31: rows 4-7; 32-47: rows 8-11; 48-63: rows 12-15
 //
 // Approach
 // --------
@@ -92,7 +92,7 @@
 // pass.  For each group:
 //
 //   1. REDISTRIBUTE: Use ds_bpermute to move WMMA fragments into the MFMA
-//      layout.  The mapping is NOT a simple lane/2 — it must account for the
+//      layout.  The mapping is NOT a simple lane/2 -- it must account for the
 //      interleaved k-distribution between lanes 0-15 and 16-31 in gfx12 WMMA,
 //      and the 4-way lane-group distribution in gfx942 MFMA.
 //
@@ -125,14 +125,14 @@
 // it back.
 //
 // `ds_bpermute` and `v_mfma_*` both READ all 64 source lanes regardless
-// of EXEC — but the WRITE of their per-lane result is EXEC-gated.  So
+// of EXEC -- but the WRITE of their per-lane result is EXEC-gated.  So
 // a lane with EXEC=0 silently skips updating its destination VGPR, and
 // any later cross-lane read of that VGPR returns stale / poison data.
 //
 // This is invisible when the kernel is launched with a blockDim that
 // fills an entire Wave64 (every lane is active; MFMA inputs / outputs
 // are written everywhere).  It manifests as a catastrophic correctness
-// failure on partial-wave launches — e.g. a Wave32 WMMA kernel
+// failure on partial-wave launches -- e.g. a Wave32 WMMA kernel
 // launched with blockDim == 32 runs as a single Wave64 with EXEC =
 // 0x0000_0000_FFFF_FFFF on gfx942.  Lanes 32-63 never update their
 // mfmaA/B/C VGPRs, so MFMA reads garbage for k=2,3 (for the K=4 f32
@@ -149,7 +149,7 @@
 // active mask into the transpiler's EXEC alloca. Every VGPR write,
 // memory store, LDS op, and atomic in the lifted IR already routes
 // through `RaiseContext::emitUnderExec`, which reads the alloca-backed
-// source EXEC and emits an `if (lane_active)` diamond — the AMDGPU
+// source EXEC and emits an `if (lane_active)` diamond -- the AMDGPU
 // backend lowers those divergent branches by setting hardware EXEC
 // to the ballot of the per-lane predicate inside each `do` block and
 // restoring to EXEC = -1 afterwards. So between `emitUnderExec`
@@ -168,8 +168,8 @@
 // demand exceeds gfx942's 256-VGPR pool and aborts the allocator
 // with `physreg not found for WWM expression`. Moving the EXEC = -1
 // guarantee to kernel entry sidesteps the allocator pressure entirely
-// — no intermediate vreg is ever "inside WWM" and regalloc is
-// ordinary — while preserving the partial-wave correctness property.
+// -- no intermediate vreg is ever "inside WWM" and regalloc is
+// ordinary -- while preserving the partial-wave correctness property.
 //
 // From the perspective of this file, that means the redistribute +
 // MFMA + collect chain emits ONLY ordinary IR (bpermute, bitcast,
@@ -249,18 +249,18 @@ static Value *selectByLaneGroup(IRBuilder<> &B, Value *LaneGroup,
 /// CORRECT for the WMMA.B operand (v170-177 in matmul_fp16) as pinned
 /// by mode-7 / mode-9 instrumentation (see `hotswap/docs/matrix-
 /// translation.md §12.4.4 Session-5 per-dword characterization`).  The
-/// WMMA.A operand on gfx1250 has a DIFFERENT per-lane layout — lanes
+/// WMMA.A operand on gfx1250 has a DIFFERENT per-lane layout -- lanes
 /// 0-15 and lanes 16-31 hold the SAME K subset at the same GPR
-/// position but different cols — which this redistribution does NOT
+/// position but different cols -- which this redistribution does NOT
 /// handle correctly (see matrix-translation.md §12.4.4 and the refusal
 /// gate in `handle-valu-vop3p.cpp`).
 ///
 /// The gfx12 WMMA k-distribution interleaves between the two lane halves:
-///   Lanes 0-15:  GPR pairs {0,1}→k 0-3, {2,3}→k 8-11, {4,5}→k 16-19, {6,7}→k 24-27
-///   Lanes 16-31: GPR pairs {0,1}→k 4-7, {2,3}→k 12-15, {4,5}→k 20-23, {6,7}→k 28-31
+///   Lanes 0-15:  GPR pairs {0,1}->k 0-3, {2,3}->k 8-11, {4,5}->k 16-19, {6,7}->k 24-27
+///   Lanes 16-31: GPR pairs {0,1}->k 4-7, {2,3}->k 12-15, {4,5}->k 20-23, {6,7}->k 28-31
 ///
 /// The gfx942 MFMA distributes k across 4 lane groups of 16:
-///   LG 0 (0-15)→k 0-3, LG 1 (16-31)→k 4-7, LG 2 (32-47)→k 8-11, LG 3 (48-63)→k 12-15
+///   LG 0 (0-15)->k 0-3, LG 1 (16-31)->k 4-7, LG 2 (32-47)->k 8-11, LG 3 (48-63)->k 12-15
 ///
 /// For MFMA1 (first K=16): LG {0,1} read WMMA GPRs {0,1}; LG {2,3} read GPRs {2,3}
 /// For MFMA2 (second K=16): LG {0,1} read WMMA GPRs {4,5}; LG {2,3} read GPRs {6,7}
@@ -288,14 +288,14 @@ static void redistributeInput(IRBuilder<> &B, Module &M,
 /// Redistribute accumulator C from gfx12 WMMA layout (8 VGPRs, Wave32)
 /// to gfx942 MFMA layout (4 VGPRs, Wave64).
 ///
-/// gfx12 WMMA: i = 8*floor(lane/16) + GPR  →  rows 0-7 in lanes 0-15, 8-15 in lanes 16-31
-/// gfx942 MFMA: i = 4*floor(lane/16) + GPR →  rows 0-3 in LG0, 4-7 in LG1, 8-11 in LG2, 12-15 in LG3
+/// gfx12 WMMA: i = 8*floor(lane/16) + GPR  ->  rows 0-7 in lanes 0-15, 8-15 in lanes 16-31
+/// gfx942 MFMA: i = 4*floor(lane/16) + GPR ->  rows 0-3 in LG0, 4-7 in LG1, 8-11 in LG2, 12-15 in LG3
 ///
 /// MFMA GPR g needs:
-///   LG 0: i = g      → WMMA GPR g,   lower W32 half
-///   LG 1: i = 4+g    → WMMA GPR 4+g, lower W32 half
-///   LG 2: i = 8+g    → WMMA GPR g,   upper W32 half
-///   LG 3: i = 12+g   → WMMA GPR 4+g, upper W32 half
+///   LG 0: i = g      -> WMMA GPR g,   lower W32 half
+///   LG 1: i = 4+g    -> WMMA GPR 4+g, lower W32 half
+///   LG 2: i = 8+g    -> WMMA GPR g,   upper W32 half
+///   LG 3: i = 12+g   -> WMMA GPR 4+g, upper W32 half
 static void redistributeAcc(IRBuilder<> &B, Module &M,
                               Value **CDwords,
                               Value *AddrLo, Value *AddrHi,
@@ -332,7 +332,7 @@ static void collectResult(IRBuilder<> &B, Module &M,
 }
 
 /// Run one full pass for a virtual Wave32 group:
-/// redistribute → 2× MFMA → collect, wrapped in a single whole-wave
+/// redistribute -> 2× MFMA -> collect, wrapped in a single whole-wave
 /// region so the cross-lane pipeline runs with EXEC = -1 regardless
 /// of the caller-level EXEC mask (see file-header "Whole-wave mode").
 ///
@@ -346,11 +346,11 @@ static void collectResult(IRBuilder<> &B, Module &M,
 ///                   into 2 chained MFMA calls per Wave32 group). The only
 ///                   per-variant divergence is the MFMA intrinsic name
 ///                   and the per-MFMA-call pack type:
-///                     F16    → mfma_f32_16x16x16f16,        <4 x half>
-///                     BF16   → mfma_f32_16x16x16bf16_1k,    <4 x i16>
-///                     FP8_*  → mfma_f32_16x16x32_<a>_<b>,   i64
-///                     BF8_*  → mfma_f32_16x16x32_<a>_<b>,   i64
-///                   The bf16 → i16 and fp8/bf8 → i64 bitcasts are
+///                     F16    -> mfma_f32_16x16x16f16,        <4 x half>
+///                     BF16   -> mfma_f32_16x16x16bf16_1k,    <4 x i16>
+///                     FP8_*  -> mfma_f32_16x16x32_<a>_<b>,   i64
+///                     BF8_*  -> mfma_f32_16x16x32_<a>_<b>,   i64
+///                   The bf16 -> i16 and fp8/bf8 -> i64 bitcasts are
 ///                   principled: the matching CDNA MFMA intrinsics were
 ///                   defined before the corresponding first-class LLVM
 ///                   types existed, and the storage containers are
@@ -378,7 +378,7 @@ static void runGroupPass(IRBuilder<> &B, Module &M, RaiseContext &Ctx,
   Value *MfmaC[4];
   redistributeAcc(B, M, CDwords, AddrLo, AddrHi, LaneGroup, MfmaC);
 
-  // Per-MFMA bitcast type and intrinsic dispatch — the only point in
+  // Per-MFMA bitcast type and intrinsic dispatch -- the only point in
   // the lowering where the WMMA variants diverge.
   //
   // AB pack type:
@@ -448,7 +448,7 @@ static void runGroupPass(IRBuilder<> &B, Module &M, RaiseContext &Ctx,
   // every lane writes its MFMA output and `wrapAsWWMValue` is a
   // no-op.  Under `ModuloReplicationProjection` (phantom-lane
   // fallback) HW EXEC = source-active-mask kernel-wide, so target
-  // lanes 32..63 would never write their MFMA destination VGPR —
+  // lanes 32..63 would never write their MFMA destination VGPR --
   // and the subsequent `collectResult` bpermute DOES read from
   // those target lanes (target lanes 16..31 pull rows 8..15 from
   // source lanes 32..47's MFMA output), so stale data would
@@ -461,7 +461,7 @@ static void runGroupPass(IRBuilder<> &B, Module &M, RaiseContext &Ctx,
   // We wrap the MFMA outputs specifically (not just the final collect
   // results) because SIWholeQuadMode's backward-propagation from a
   // `strict.wwm` on a later `ds_bpermute` result stops at the
-  // bpermute boundary — the backend sees the bpermute reads source
+  // bpermute boundary -- the backend sees the bpermute reads source
   // lanes 0..W_src-1 by address and concludes the MFMA output on
   // lanes W_src..2*W_src-1 is "not consumed", which is correct for
   // a single-pass MFMA but wrong for our cross-widening lowering
@@ -500,7 +500,7 @@ static void runGroupPass(IRBuilder<> &B, Module &M, RaiseContext &Ctx,
   // rows 8..15; those reads happen at ds_bpermute READ-time which
   // is un-gated, but the WRITE-back on target lanes 16..31 itself
   // is HW EXEC-gated and requires WWM for the chain to land the
-  // correct per-lane value — the bpermute-READ's result sits in
+  // correct per-lane value -- the bpermute-READ's result sits in
   // the target lane's register file only if that target lane is
   // HW-active at the bpermute WRITE, which under non-WWM MODREP is
   // the case for source-active lanes 0..31 but the destination
@@ -522,13 +522,13 @@ Value *emitWMMAtoMFMA(RaiseContext &Ctx, Value *A, Value *Vb, Value *C,
   // Per-MFMA-output `strict.wwm` markers inside `runGroupPass` handle
   // the two projections uniformly:
   //
-  //   * WaveNativeProjection — `init_whole_wave` at kernel entry
+  //   * WaveNativeProjection -- `init_whole_wave` at kernel entry
   //     already keeps HW EXEC=-1 kernel-wide.  `wrapAsWWMValue` is
   //     an identity no-op here to avoid the `SIPreAllocateWWMRegs`
   //     regalloc blow-up on large WMMA tiles (see
   //     `WaveProjection::emitInitialExec`'s block comment).
   //
-  //   * ModuloReplicationProjection — HW EXEC stays at the source-
+  //   * ModuloReplicationProjection -- HW EXEC stays at the source-
   //     active mask kernel-wide; the per-MFMA `strict.wwm` tells
   //     the backend's `SIWholeQuadMode` pass to emit `s_or_saveexec
   //     _b64 sN, -1` / `s_mov_b64 exec, sN` around the MFMA and its
@@ -567,9 +567,9 @@ Value *emitWMMAtoMFMA(RaiseContext &Ctx, Value *A, Value *Vb, Value *C,
   const unsigned NumSrcWaves = Ctx.Projection.numSourceWavesPerTarget();
   if (NumSrcWaves != 1 && NumSrcWaves != 2)
     report_fatal_error(
-        "WMMA→MFMA lowering defined only for wave32 source projections; "
+        "WMMA->MFMA lowering defined only for wave32 source projections; "
         "numSourceWavesPerTarget() must be 1 (MODREP phantom-lane) or 2 "
-        "(WaveNative cross-widen) — a new projection class must declare "
+        "(WaveNative cross-widen) -- a new projection class must declare "
         "which applies.");
   // Refusal-gate-still-in-place staging guard.  The K=4 f32 and K=32/K=64
   // refusal arms in `handle-valu-vop3p.cpp` return before reaching this
@@ -578,7 +578,7 @@ Value *emitWMMAtoMFMA(RaiseContext &Ctx, Value *A, Value *Vb, Value *C,
   // Both `numSrcWaves == 1` (MODREP, single-source-wave per target
   // wave, the phantom-lane regime for kernels with
   // max_flat_workgroup_size < targetWaveSize) and `numSrcWaves == 2`
-  // (WaveNative, wave32→wave64 cross-widen) fall through to the
+  // (WaveNative, wave32->wave64 cross-widen) fall through to the
   // two-branch pass logic below.  A broader `numSrcWaves != 2`
   // refusal guard lived here through 2026-04-23 to keep the MODREP
   // arm behind the `handle-valu-vop3p.cpp` refusal gate; it was
@@ -617,33 +617,33 @@ Value *emitWMMAtoMFMA(RaiseContext &Ctx, Value *A, Value *Vb, Value *C,
 }
 
 // ----------------------------------------------------------------------
-// v_wmma_f32_16x16x4_f32 → mfma_f32_16x16x4f32 lowering
+// v_wmma_f32_16x16x4_f32 -> mfma_f32_16x16x4f32 lowering
 // ----------------------------------------------------------------------
 //
 // Source (gfx1250 RDNA4, Wave32):
-//   int_amdgcn_wmma_f32_16x16x4_f32 — `<8 x f32>` = (…, <2 x f32> A,
+//   int_amdgcn_wmma_f32_16x16x4_f32 -- `<8 x f32>` = (…, <2 x f32> A,
 //   …, <2 x f32> B, …, <8 x f32> C, …)
 //
 // Target (gfx942 CDNA3, Wave64):
-//   int_amdgcn_mfma_f32_16x16x4f32 — `<4 x f32>` = (f32 A, f32 B,
+//   int_amdgcn_mfma_f32_16x16x4f32 -- `<4 x f32>` = (f32 A, f32 B,
 //   <4 x f32> C, i32 cbsz, i32 abid, i32 blgp)
 //
 // Register-layout equations
 // -------------------------
 // Source WMMA (Wave32, per-lane fragment):
-//   A/B  — <2 x f32> (2 VGPRs):  i = lane%16,  k = 2*floor(lane/16) + GPR
-//     Lanes 0-15 GPR 0→k=0, GPR 1→k=1
-//     Lanes 16-31 GPR 0→k=2, GPR 1→k=3
-//   C/D  — <8 x f32> (8 VGPRs):  i = 8*floor(lane/16) + GPR,  j = lane%16
-//     Lanes 0-15 → rows 0-7;   Lanes 16-31 → rows 8-15
+//   A/B  -- <2 x f32> (2 VGPRs):  i = lane%16,  k = 2*floor(lane/16) + GPR
+//     Lanes 0-15 GPR 0->k=0, GPR 1->k=1
+//     Lanes 16-31 GPR 0->k=2, GPR 1->k=3
+//   C/D  -- <8 x f32> (8 VGPRs):  i = 8*floor(lane/16) + GPR,  j = lane%16
+//     Lanes 0-15 -> rows 0-7;   Lanes 16-31 -> rows 8-15
 //
 // Target MFMA (Wave64, per-lane fragment):
-//   A/B  — f32 (1 VGPR):          i = lane%16,  k = floor(lane/16)
-//     LG0 (lanes 0-15)  → k=0
-//     LG1 (lanes 16-31) → k=1
-//     LG2 (lanes 32-47) → k=2
-//     LG3 (lanes 48-63) → k=3
-//   C/D  — <4 x f32> (4 VGPRs):   i = 4*floor(lane/16) + GPR, j = lane%16
+//   A/B  -- f32 (1 VGPR):          i = lane%16,  k = floor(lane/16)
+//     LG0 (lanes 0-15)  -> k=0
+//     LG1 (lanes 16-31) -> k=1
+//     LG2 (lanes 32-47) -> k=2
+//     LG3 (lanes 48-63) -> k=3
+//   C/D  -- <4 x f32> (4 VGPRs):   i = 4*floor(lane/16) + GPR, j = lane%16
 //     (same layout equation as the K=32/K=64 MFMA family, so the C
 //     redistribution + result collection helpers above are reused
 //     verbatim.)
@@ -664,7 +664,7 @@ Value *emitWMMAtoMFMA(RaiseContext &Ctx, Value *A, Value *Vb, Value *C,
 //   LG3 (lanes 48-63, k=3): bpermute(hiAddr, aDwords[1])
 //
 // All four reads deliver the full K=4 range for ONE virtual Wave32
-// group, which matches the K=4 MFMA signature — so there is exactly
+// group, which matches the K=4 MFMA signature -- so there is exactly
 // ONE MFMA call per group (not 2 chained as in the K=32/K=64 path).
 //
 // B redistribution mirrors A exactly (same layout equation). The C
@@ -748,7 +748,7 @@ static void runGroupPassF32K4(IRBuilder<> &B, Module &M, RaiseContext &Ctx,
   Value *W32Lane = B.CreateAnd(LaneId, B.getInt32(31), "w32_lane");
   collectResult(B, M, MfmaDst, W32Lane, ResultDwords);
 
-  // Wrap collect outputs as WWM under MODREP — see the equivalent
+  // Wrap collect outputs as WWM under MODREP -- see the equivalent
   // block comment in the K=32 / K=64 `runGroupPass` for the full
   // rationale.
   for (unsigned I = 0; I < 8; ++I)
@@ -758,14 +758,14 @@ static void runGroupPassF32K4(IRBuilder<> &B, Module &M, RaiseContext &Ctx,
 
 Value *emitWmmAtoMfmaF3216x16x4(RaiseContext &Ctx, Value *A, Value *Vb,
                                    Value *C) {
-  // K=4 f32 counterpart to `emitWMMAtoMFMA` above — see that
+  // K=4 f32 counterpart to `emitWMMAtoMFMA` above -- see that
   // function's block comment for the full design rationale
   // (projection-aware per-MFMA `strict.wwm` wrapping via
   // `wrapAsWWMValue`, and pass-1-skipped under MODREP phantom-
   // lane).  The only structural difference is that the K=4 f32
   // decomposition emits ONE MFMA per group pass (the source WMMA
   // is already K=4, exactly matching `mfma_f32_16x16x4f32`), not
-  // the 2-chained-MFMA K=32→2×K=16 structure of the 16-/8-bit
+  // the 2-chained-MFMA K=32->2×K=16 structure of the 16-/8-bit
   // family.
   IRBuilder<> &B = Ctx.B;
   Module &M = Ctx.M;
@@ -780,9 +780,9 @@ Value *emitWmmAtoMfmaF3216x16x4(RaiseContext &Ctx, Value *A, Value *Vb,
   const unsigned NumSrcWaves = Ctx.Projection.numSourceWavesPerTarget();
   if (NumSrcWaves != 1 && NumSrcWaves != 2)
     report_fatal_error(
-        "WMMA→MFMA lowering defined only for wave32 source projections; "
+        "WMMA->MFMA lowering defined only for wave32 source projections; "
         "numSourceWavesPerTarget() must be 1 (MODREP phantom-lane) or 2 "
-        "(WaveNative cross-widen) — a new projection class must declare "
+        "(WaveNative cross-widen) -- a new projection class must declare "
         "which applies.");
   // Mirrors `emitWMMAtoMFMA` above: both MODREP (numSrcWaves==1) and
   // WaveNative (numSrcWaves==2) fall through to the two-branch pass
@@ -824,7 +824,7 @@ Value *emitWmmAtoMfmaF3216x16x4(RaiseContext &Ctx, Value *A, Value *Vb,
 //
 // Target (gfx950 CDNA4, Wave64, VOP3PX):
 //   int_amdgcn_mfma_scale_f32_16x16x128_f8f6f4 -- 9-arg intrinsic, overloaded
-//   on AB type.  Per handle_mfma.cpp convention we declare it with a uniform
+//   on AB type.  Per handle-mfma.cpp convention we declare it with a uniform
 //   <8 x i32> A/B type (the widest case, F8) and let cbsz / blgp select the
 //   active subset of dwords per the LLVM TableGen rule.
 //   Per Wave64 lane:
@@ -919,7 +919,7 @@ llvm::Value *emitWMMAScaleF8F6F4toMFMA(
   (void)matrixBScaleFmt;
 
   // The MFMA scaled intrinsic is overloaded on the AB vector type.  Match
-  // handle_mfma.cpp's convention: declare with the widest case (<8 x i32>)
+  // handle-mfma.cpp's convention: declare with the widest case (<8 x i32>)
   // and let cbsz / blgp select the active subset.
   auto *mfmaABTy = FixedVectorType::get(ctx.I32Ty, 8);
   auto *mfmaAccTy = FixedVectorType::get(ctx.F32Ty, 4);

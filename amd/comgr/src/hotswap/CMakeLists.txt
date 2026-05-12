@@ -77,6 +77,7 @@ add_library(hotswap-transpiler OBJECT
   handle-valu-vop3p.cpp
   wmma-lowering.cpp
   mxfp4-dequant.cpp
+  handle-mfma.cpp
 )
 
 if(NOT TARGET hotswap::transpiler)

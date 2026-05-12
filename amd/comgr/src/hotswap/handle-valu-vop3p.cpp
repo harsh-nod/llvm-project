@@ -177,9 +177,9 @@ Value *readMixF32Src(RaiseContext &Ctx, OpResolver &Op, unsigned I,
 //
 //   * _twoaddr form: C is tied to D (same VGPR slot, no separate `src2`
 //     operand on the disassembled line). `op.isSrcReg(2)` is TRUE and
-//     `srcReg(2)` returns the D VGPR — we read the live VGPR value.
+//     `srcReg(2)` returns the D VGPR -- we read the live VGPR value.
 //   * _threeaddr form with a VGPR C: `isSrcReg(2)` TRUE and `srcReg(2)`
-//     returns the explicit C VGPR. Same path as twoaddr — just a
+//     returns the explicit C VGPR. Same path as twoaddr -- just a
 //     different VGPR index.
 //   * _threeaddr form with an inline-constant C: LLVM picks this
 //     encoding whenever the accumulator source is a constant that fits
@@ -196,7 +196,7 @@ Value *readMixF32Src(RaiseContext &Ctx, OpResolver &Op, unsigned I,
 // D range was never explicitly zero-initialised by the SGPR/VGPR
 // prologue. In the `wmma_parallel{2,4,16}` probes the second and
 // later WMMAs land on fresh D VGPRs (v[24:31], v[32:39], ...) that
-// the compiler skipped zeroing — precisely because it knew the
+// the compiler skipped zeroing -- precisely because it knew the
 // threeaddr-imm-0 encoding would satisfy C.
 //
 // We handle only inline constant `0` today: it is the only src2 inline
@@ -213,7 +213,7 @@ llvm::Value *readWMMAAccumC(RaiseContext &Ctx, const DecodedInst &Di,
   if (Op.nSrcs() < 3) {
     // No src2 operand on the instruction at all (e.g. a hypothetical
     // encoding with C implicitly zero and no disassembler-surfaced
-    // slot). Safest to refuse — the caller expects to have read C.
+    // slot). Safest to refuse -- the caller expects to have read C.
     Hr.Failure = RaiseFailure::unsupportedShape(
         Di, "VOP3P",
         "WMMA instruction has no src2 (accumulator) operand; "
@@ -396,14 +396,14 @@ HandlerResult handleValuVoP3P(RaiseContext &Ctx, const DecodedInst &Di,
   // VOP_V2I16_V2I16_V2I16: 32-bit dst / 32-bit src0 / 32-bit src1, each
   // bitcast to `<2 x i16>` for the lane-wise op and back to i32 for the
   // VGPR write-back. Shared handler shape; per-CanonicalOp dispatch picks the
-  // IR opcode (`add` vs the reversed `clshl_rev_16` shape — see notes
+  // IR opcode (`add` vs the reversed `clshl_rev_16` shape -- see notes
   // on each case below). Inline literals encode a packed `<2 x i16>`
   // directly (lo i16 = bits[15:0], hi i16 = bits[31:16]); there is NO
   // broadcast analogue to the V_PK_F32 32-bit-element family because
   // the literal width matches the operand width here. Sibling
   // V_PK_LSHRREV_B16 / V_PK_ASHRREV_I16 / V_PK_SUB_U16 / V_PK_MUL_LO_U16
-  // share this exact shape — one extra `case` + IR-opcode dispatch in
-  // the inner switch and they're done — but they're held out per the
+  // share this exact shape -- one extra `case` + IR-opcode dispatch in
+  // the inner switch and they're done -- but they're held out per the
   // "no fallback / design what the corpus exercises" discipline.
   case CanonicalOp::V_PK_ADD_U16:
   case CanonicalOp::V_PK_LSHLREV_B16: {
@@ -429,7 +429,7 @@ HandlerResult handleValuVoP3P(RaiseContext &Ctx, const DecodedInst &Di,
       // clshl_rev_16 SDAG: dst = src1 << (src0 & 15). Reversed-operand
       // convention (shift count is src0, value is src1) AND a hardware
       // clamp to the low 4 bits of the count. LLVM `shl` is poison for
-      // shifts >= bitwidth, the hardware masks instead — emit the AND
+      // shifts >= bitwidth, the hardware masks instead -- emit the AND
       // explicitly so the LLVM semantics match the AMDGPU semantics for
       // every legal hardware input. For constant shift counts the
       // optimiser folds the AND away; for VGPR-sourced shift counts the
@@ -528,17 +528,17 @@ HandlerResult handleValuVoP3P(RaiseContext &Ctx, const DecodedInst &Di,
   // <8 x i32> for the IU8 integer-accumulator variant. The WMMA12
   // native-intrinsic path (when target supports it) and the gfx942
   // MFMA lowering path (`emitWMMAtoMFMA`, parameterised on
-  // `WMMAInputType`) are uniform across the entire family — the local
+  // `WMMAInputType`) are uniform across the entire family -- the local
   // A/B IR vector type + native-WMMA intrinsic ID + WMMAInputType +
   // accumulator IR type is the only delta between variants. "Design
   // the operation, not the opcode."
   //
   // Native WMMA12 intrinsic-call shapes split THREE ways:
-  //   * 16-bit f32-acc: AMDGPUWmmaIntrinsicModsAllReuse — 8 args
+  //   * 16-bit f32-acc: AMDGPUWmmaIntrinsicModsAllReuse -- 8 args
   //       (A_mod, A, B_mod, B, C_mod, C, reuse_a, reuse_b)
-  //   * 8-bit  f32-acc: AMDGPUWmmaIntrinsicModsC       — 6 args
+  //   * 8-bit  f32-acc: AMDGPUWmmaIntrinsicModsC       -- 6 args
   //       (A, B, C_mod, C, reuse_a, reuse_b)
-  //   * 8-bit  i32-acc: AMDGPUWmmaIntrinsicModsABClamp — 8 args
+  //   * 8-bit  i32-acc: AMDGPUWmmaIntrinsicModsABClamp -- 8 args
   //       (A_mod, A, B_mod, B, C, reuse_a, reuse_b, clamp)
   // The MFMA fallback path is uniform across all three.
   // 16x16x4 WMMA (32-bit f32 A/B/C, gfx1250 VOP3P opcode 0x05D).
@@ -551,7 +551,7 @@ HandlerResult handleValuVoP3P(RaiseContext &Ctx, const DecodedInst &Di,
   // The native intrinsic `int_amdgcn_wmma_f32_16x16x4_f32` is
   // declared inside `AMDGPUWMMAIntrinsicsGFX1250` (gated by
   // `isGFX125xOnly` in IntrinsicsAMDGPU.td:4113-4114), so it is
-  // strictly gfx1250-only — the gfx12 (RDNA4 base) WMMA family
+  // strictly gfx1250-only -- the gfx12 (RDNA4 base) WMMA family
   // (`AMDGPUWMMAIntrinsicsGFX12`, gated by `hasWMMA12` =
   // FeatureWMMA{128,256}bInsts) does NOT include it. Same-target
   // lift therefore gates on `Ctx.TargetIsa.hasTensorOps`
@@ -559,12 +559,12 @@ HandlerResult handleValuVoP3P(RaiseContext &Ctx, const DecodedInst &Di,
   //
   // Cross-target on gfx942 we lower to `mfma_f32_16x16x4f32` via the
   // dedicated `emitWMMAtoMFMA_F32_16x16x4` helper in
-  // `wmma-lowering.cpp` — gfx942 has a direct K=4 MFMA equivalent
+  // `wmma-lowering.cpp` -- gfx942 has a direct K=4 MFMA equivalent
   // so the decomposition is 1 MFMA per Wave32 group (not 2 chained
   // like the K=32/K=64 path). The shared ds_bpermute redistribution
   // math is documented alongside the helper. Targets with neither
   // `hasTensorOps` nor `hasMFMA` (e.g. gfx12 RDNA4 base) get a
-  // principled refusal — they have no K=4 f32 matrix path at all.
+  // principled refusal -- they have no K=4 f32 matrix path at all.
   case CanonicalOp::V_WMMA_F32_16x16x4_F32: {
     auto *AbIrTy = FixedVectorType::get(Ctx.F32Ty, 2);
     auto *CdIrTy = FixedVectorType::get(Ctx.F32Ty, 8);
@@ -611,7 +611,7 @@ HandlerResult handleValuVoP3P(RaiseContext &Ctx, const DecodedInst &Di,
       // when a multi-WMMA-per-K-iter pattern (permlane16_swap
       // presence) was detected.  The root cause turned out to be a
       // wrong-semantic lift of `v_permlane16_swap_b32` (symmetric
-      // vs. ISA-asymmetric — see `handle-valu-cross-lane.cpp` and
+      // vs. ISA-asymmetric -- see `handle-valu-cross-lane.cpp` and
       // matrix-translation.md §12.4.7), not a WMMA-lowering
       // problem, so with that fixed the MODREP MFMA lowering
       // handles both single- and multi-WMMA cases correctly.
@@ -623,7 +623,7 @@ HandlerResult handleValuVoP3P(RaiseContext &Ctx, const DecodedInst &Di,
           "hasTensorOps (native gfx1250 intrinsic "
           "int_amdgcn_wmma_f32_16x16x4_f32) or hasMFMA (gfx942 "
           "mfma_f32_16x16x4f32 decomposition); this target has "
-          "neither — no K=4 f32 matrix path is available");
+          "neither -- no K=4 f32 matrix path is available");
       return Hr;
     }
 
@@ -686,12 +686,12 @@ HandlerResult handleValuVoP3P(RaiseContext &Ctx, const DecodedInst &Di,
     // Native-intrinsic branch: the K=32 / K=64 WMMA intrinsics
     // (`int_amdgcn_wmma_f32_16x16x32_f16`, `..._f32_16x16x64_*`,
     // `..._i32_16x16x64_iu8`) live in `AMDGPUWMMAIntrinsicsGFX1250`
-    // (IntrinsicsAMDGPU.td:4096 — the gfx1250-specific family),
-    // NOT in `AMDGPUWMMAIntrinsicsGFX12` (IntrinsicsAMDGPU.td:3123 —
+    // (IntrinsicsAMDGPU.td:4096 -- the gfx1250-specific family),
+    // NOT in `AMDGPUWMMAIntrinsicsGFX12` (IntrinsicsAMDGPU.td:3123 --
     // the gfx12 RDNA4 base family, which only covers K=16
     // `..._16x16x16_*`).  The gate therefore must be
     // `hasTensorOps` (`FeatureGFX1250Insts`), not `hasWMMA12`
-    // (`FeatureWMMA{128,256}bInsts` — set only on the gfx12 base
+    // (`FeatureWMMA{128,256}bInsts` -- set only on the gfx12 base
     // subtargets that DON'T have K=32/K=64 hardware).  An earlier
     // version of this handler used `hasWMMA12` here, which made
     // gfx1250 same-target lifts of K=32/K=64 WMMA fall through to
@@ -701,7 +701,7 @@ HandlerResult handleValuVoP3P(RaiseContext &Ctx, const DecodedInst &Di,
     // because the raise completed, even though any downstream
     // codegen attempt would have failed.  The WMMA taxonomy
     // and the K=4 f32 case above use the same structural fix
-    // pattern (which got it right originally — this K=32/K=64
+    // pattern (which got it right originally -- this K=32/K=64
     // case was slower to catch up).
     if (Ctx.TargetIsa.HasTensorOps) {
       Intrinsic::ID WmmaId;
@@ -747,11 +747,11 @@ HandlerResult handleValuVoP3P(RaiseContext &Ctx, const DecodedInst &Di,
         //
         // Both the 8-bit FP8/BF8 family and the 16-bit f16/bf16
         // family use this 6-arg shape in the gfx1250 intrinsic
-        // set (`AMDGPUWMMAIntrinsicsGFX1250` — IntrinsicsAMDGPU.td
+        // set (`AMDGPUWMMAIntrinsicsGFX1250` -- IntrinsicsAMDGPU.td
         // ~line 4098).  An earlier version of this handler split
         // the 16-bit family into an 8-arg `ModsAllReuse` shape
         // (A_mod, A, B_mod, B, C_mod, C, reuse_a, reuse_b) that
-        // matches the gfx12 RDNA4 base WMMA family's intrinsics —
+        // matches the gfx12 RDNA4 base WMMA family's intrinsics --
         // which do NOT include K=32/K=64 variants; those gfx12-base
         // intrinsics are K=16-only (`..._16x16x16_*` in
         // `AMDGPUWMMAIntrinsicsGFX12` ~line 3123).  That mismatched
@@ -759,7 +759,7 @@ HandlerResult handleValuVoP3P(RaiseContext &Ctx, const DecodedInst &Di,
         // because `hasWMMA12` is never true on gfx1250 subtargets
         // (their feature set deliberately excludes
         // `FeatureWMMA{128,256}bInsts`), so the branch was
-        // unreachable at runtime — but the principled fix in the
+        // unreachable at runtime -- but the principled fix in the
         // same commit (switching the gate to `hasTensorOps`) makes
         // the branch reachable, and the arg list must match.  See
         // the LLVM intrinsic-signature trailer further up in this
@@ -775,7 +775,7 @@ HandlerResult handleValuVoP3P(RaiseContext &Ctx, const DecodedInst &Di,
       // strict.wwm-scoped MODREP lowering is verified correct for
       // isolated and K-loop-chained WMMAs in
       // `lit_tests/wmma_phantom_lane_f16_chain/` (post-rebuild with
-      // my test harness actually populating per-iter A/B data —
+      // my test harness actually populating per-iter A/B data --
       // earlier runs claiming "K-loop failure" were a host-side
       // test-input miscount that populated the wrong stride; the
       // fixture itself matches bit-exact at n_iters ∈ {1,2,4,8}
@@ -788,8 +788,8 @@ HandlerResult handleValuVoP3P(RaiseContext &Ctx, const DecodedInst &Di,
       // copying v[0:3] to v[64:67] combined with `v5=v4, v6=v4,
       // v7=v4` in the source ISA, making ADwords[4..7] all equal
       // to v4's value).  That operand folding is semantically
-      // valid if the values are provably equal at runtime — which
-      // they are, given the copies — so the MFMA itself computes
+      // valid if the values are provably equal at runtime -- which
+      // they are, given the copies -- so the MFMA itself computes
       // correctly.  The residual divergence vs the native gfx1250
       // run is under separate investigation and NOT a bug in this
       // lowering's contract.  Until that residual is pinned to a
@@ -826,7 +826,7 @@ HandlerResult handleValuVoP3P(RaiseContext &Ctx, const DecodedInst &Di,
       // lower this opcode.  The pre-2026-04-22 handler fell
       // through to `emitWMMAtoMFMA` here and emitted MFMA-
       // intrinsic IR the target couldn't lower; the raise
-      // "succeeded" but the backend then failed to codegen —
+      // "succeeded" but the backend then failed to codegen --
       // `BatchRaise.Gfx1250TestData` was structurally accepting
       // that broken-IR outcome, not catching it.  Refuse loudly
       // so coverage tooling surfaces targets whose WMMA K=32/
@@ -856,8 +856,8 @@ HandlerResult handleValuVoP3P(RaiseContext &Ctx, const DecodedInst &Di,
   // 18 MC pseudos (`{f4,f6,f8} A × {f4,f6,f8} B × _twoaddr/_threeaddr`)
   // collapse onto this single CanonicalOp; the per-matrix vector width is
   // encoded by the opcode's `_fA_fB_w32_*` suffix (per
-  // `WMMA_F8F6F4_Profiles` in VOP3PInstructions.td:1908) — f8 → 16
-  // dwords, f6 → 12 dwords, f4 → 8 dwords. The in-family element
+  // `WMMA_F8F6F4_Profiles` in VOP3PInstructions.td:1908) -- f8 -> 16
+  // dwords, f6 -> 12 dwords, f4 -> 8 dwords. The in-family element
   // distinction (BF8 vs FP8 within f8; BF6 vs FP6 within f6) lives in
   // the `matrix_a_fmt` / `matrix_b_fmt` named-immediate operands
   // (`enum MatrixFMT`, SIDefines.h:1052-1058).
@@ -930,7 +930,7 @@ HandlerResult handleValuVoP3P(RaiseContext &Ctx, const DecodedInst &Di,
     // `getNamedOperandIdx` instead of positional scan means any
     // future TableGen reshuffle of the scaled-WMMA Ins64 layout
     // flows in for free (mirrors the MFMA-scale handler in
-    // handle_mfma.cpp:175-194).
+    // handle-mfma.cpp:175-194).
     auto NamedImm = [&](AMDGPU::OpName Name) -> int64_t {
       int Idx = AMDGPU::getNamedOperandIdx(Di.Inst.getOpcode(), Name);
       if (Idx < 0 || !Di.isImm(Idx)) return 0;
@@ -1176,7 +1176,7 @@ HandlerResult handleValuVoP3P(RaiseContext &Ctx, const DecodedInst &Di,
     return Hr;
   }
 
-  // ---- v_cndmask_b32 (VOP2 or VOP3 — srcMap skips modifiers) ----
+  // ---- v_cndmask_b32 (VOP2 or VOP3 -- srcMap skips modifiers) ----
   case CanonicalOp::V_CNDMASK_B32: {
     ParsedReg Dest = Op.dst();
     Value *Src0 = Op.src(0);
@@ -1188,7 +1188,7 @@ HandlerResult handleValuVoP3P(RaiseContext &Ctx, const DecodedInst &Di,
       if (CondReg.RegKind == ParsedReg::SGPR) {
         // Preferred path: a V_CMP_*_e64 in the current BB wrote this
         // SGPR and no intervening scalar write has invalidated the
-        // cached per-lane `i1`. Use the `i1` directly — it carries
+        // cached per-lane `i1`. Use the `i1` directly -- it carries
         // the full target-hardware ballot without the cross-widening
         // narrow-write information loss (the SGPR itself holds only
         // the source-width-truncated 32-bit projection). See
@@ -1207,7 +1207,7 @@ HandlerResult handleValuVoP3P(RaiseContext &Ctx, const DecodedInst &Di,
           // modulo-replication same-width cases, and lossy only in
           // the documented wave32 -> wave64 cross-widening narrow-
           // write case (where recovering the upper-half lanes'
-          // compare results is impossible from the 32-bit SGPR —
+          // compare results is impossible from the 32-bit SGPR --
           // those bits were destroyed at the writer's truncate).
           Value *CondVal = Ctx.Isa.isWave32()
                                ? Ctx.Regs.loadSGPR32(Ctx.B, CondReg.BaseIdx)

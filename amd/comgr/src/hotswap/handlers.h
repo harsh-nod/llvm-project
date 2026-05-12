@@ -20,7 +20,7 @@ namespace COMGR::hotswap {
 class OpcodeMap;
 
 // Asserts every MFMA-format opcode the disassembler can decode has a CanonicalOp
-// handler entry. See `handle_mfma.cpp` for details.
+// handler entry. See `handle-mfma.cpp` for details.
 void verifyMFMACoverage(const llvm::MCInstrInfo &MCII, const OpcodeMap &OpcMap);
 
 HandlerResult handleSOPP(RaiseContext &Ctx, const DecodedInst &Di,
