@@ -279,7 +279,7 @@ static const Entry kCanonTable[] = {
     // S_ADD_U64 is intentionally mapped below in the gfx12-rename block
     // alongside S_SUB_U64 — both surface as `CanonicalOp::S_{ADD,SUB}_NC_U64`
     // to mirror the gfx12 `s_{add,sub}_nc_u64` assembler mnemonics used
-    // downstream in `handle_sop2.cpp` and the lit fixtures.  A naive
+    // downstream in `handle-sop2.cpp` and the lit fixtures.  A naive
     // `E(S_ADD_U64, S_ADD_U64)` row used to live here and lost the
     // routing race silently to `canonToSem.try_emplace` (which keeps
     // the FIRST insertion — opcode-map.cpp:1506), which meant every

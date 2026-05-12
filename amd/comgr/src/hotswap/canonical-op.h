@@ -140,7 +140,7 @@ enum class CanonicalOp : uint16_t {
   //   IndirectB    — subroutine return via an SGPR pair stashed at the
   //                  call site (the canonical s[30:31] return-PC
   //                  idiom). Lowers to a `cmp eq + br` cascade (via
-  //                  `emitEnumeratedDispatch` in handle_sop1.cpp)
+  //                  `emitEnumeratedDispatch` in handle-sop1.cpp)
   //                  enumerating the resolved return targets and
   //                  terminating in an `unreachable` trap BB. The
   //                  corresponding call-site
@@ -205,7 +205,7 @@ enum class CanonicalOp : uint16_t {
   //                  the return-address marker into sdst as in
   //                  DirectA, then emits a `cmp eq + br` cascade
   //                  (via `emitEnumeratedDispatch` in
-  //                  handle_sop1.cpp) over the enumerated callee
+  //                  handle-sop1.cpp) over the enumerated callee
   //                  targets, terminating in an `unreachable` trap
   //                  BB. The chain-terminator hook in raiser.cpp
   //                  rewrites ssrc to hold the callee's i64 marker
@@ -274,7 +274,7 @@ enum class CanonicalOp : uint16_t {
   // `opcode-map.cpp` was later replaced with the gfx12-renamed
   // `CanonicalOp::S_ADD_NC_U64` target (matching S_SUB_U64 → S_SUB_NC_U64),
   // but the old `CanonicalOp::S_ADD_U64` enum entry + a defensive `||`
-  // branch in `handle_sop2.cpp` + a stray duplicate opcode-map row
+  // branch in `handle-sop2.cpp` + a stray duplicate opcode-map row
   // were left behind.  `canonToSem.try_emplace` (opcode-map.cpp:1506
   // keeps-first) silently routed lifts through the stale enum value;
   // the handler's `||` disjunct masked the difference.  See

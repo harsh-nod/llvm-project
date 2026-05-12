@@ -33,7 +33,7 @@ struct MCState;
 // cannot follow drops out of the symbolic-PC table immediately, so
 // downstream `s_set_pc_i64` sites that read a dropped pair are
 // classified Unresolvable rather than guessed. The handler refuses
-// loudly on Unresolvable — never silently emit a stub branch.
+// loudly on Unresolvable -- never silently emit a stub branch.
 
 struct SetPcSiteInfo {
   enum class Kind {
@@ -45,15 +45,15 @@ struct SetPcSiteInfo {
     // Subroutine-return shape: the source SGPR pair is the ret-pair
     // populated by a caller's chainTerminator hook. Lowering emits a
     // `cmp eq + br` cascade (via `emitEnumeratedDispatch` in
-    // handle_sop1.cpp) over the resolved return targets, terminating
-    // in an `unreachable` trap BB. Pattern B is asymmetric — call-
+    // handle-sop1.cpp) over the resolved return targets, terminating
+    // in an `unreachable` trap BB. Pattern B is asymmetric -- call-
     // side and return-side participate through chainTerminators +
     // pendingB enumeration in Pass 4.
     IndirectB,
     // Multi-target dispatch shape: source SGPR pair holds one of N
     // statically-known absolute targets reaching the use site through
     // distinct CFG paths (e.g. tensilelite's "activation function
-    // dispatcher" — each predecessor block writes a different chain
+    // dispatcher" -- each predecessor block writes a different chain
     // target into the same pair, then a join block consumes it). The
     // inter-block PC-chain dataflow in Pass 3 enumerates the targets;
     // Pass 5 retains every contributing chain terminator so the raiser
@@ -66,7 +66,7 @@ struct SetPcSiteInfo {
     // return-address marker into sdst before the cascade (same as
     // DirectA). Order is deterministic (ascending) so lit fixtures
     // can pin shape. See `emitEnumeratedDispatch`'s rationale block
-    // in handle_sop1.cpp for why a cascade (FixIrreducible
+    // in handle-sop1.cpp for why a cascade (FixIrreducible
     // compatibility under irreducible CFGs) and why integer markers
     // rather than `ptrtoint(blockaddress)` (AMDGPU ISel cannot
     // materialise a `BlockAddress` as an i64).
@@ -90,7 +90,7 @@ struct SetPcSiteInfo {
   llvm::SmallVector<uint64_t, 4> IndirectTargets;
   // IndirectB: the SGPR low index of the source pair (for diagnostics
   // and so the handler can read the right pair).
-  // DispatchSet: same — the SGPR low index of the source pair the
+  // DispatchSet: same -- the SGPR low index of the source pair the
   // handler reads to drive the cmp+br cascade.
   unsigned IndirectRetPairLowReg = 0;
   // Unresolvable: human-readable reason for the refusal diagnostic.
@@ -128,9 +128,9 @@ struct SetPcAnalysis {
   // cascade to a direct branch on each predecessor-specialised
   // path. (An earlier revision stored
   // `ptrtoint(blockaddress(@kernel, %BB_<resolvedReturnAddr>))`
-  // here — that form survived unfolded in irreducible CFGs and
+  // here -- that form survived unfolded in irreducible CFGs and
   // crashed AMDGPU ISel with `Cannot select: BlockAddress`; see
-  // `emitEnumeratedDispatch` in handle_sop1.cpp for the full
+  // `emitEnumeratedDispatch` in handle-sop1.cpp for the full
   // rationale.)
   llvm::DenseMap<uint64_t, SetPcCallSiteInfo> ChainTerminators;
 

@@ -14,30 +14,30 @@
 //     `s_get_pc_i64 + s_add_co_u32 + s_add_co_ci_u32` chain reachable
 //     in the same basic block. Lowers to `br label %BB_target`.
 //
-//   * IndirectB: subroutine-return shape — the source SGPR pair is the
+//   * IndirectB: subroutine-return shape -- the source SGPR pair is the
 //     ret-pair populated by a caller's chain (Pattern B). Lowers to a
 //     `cmp eq + br` cascade (emitted by `emitEnumeratedDispatch` in
-//     handle_sop1.cpp) over the resolved return targets, terminating
+//     handle-sop1.cpp) over the resolved return targets, terminating
 //     in an `unreachable` trap BB. Each call site in the kernel that
 //     wrote that ret-pair contributes one target via the
 //     `chainTerminators` rewrite hook.
 //
-//   * DispatchSet: multi-target dispatch — the source SGPR pair holds
+//   * DispatchSet: multi-target dispatch -- the source SGPR pair holds
 //     one of N statically-known absolute targets reaching the use site
 //     through distinct CFG paths (e.g. a tensilelite "activation
-//     function dispatcher" — each predecessor block writes a different
+//     function dispatcher" -- each predecessor block writes a different
 //     chain target into the same pair, then a join block consumes it).
 //     Lowers to the same enumerated-dispatch cascade as IndirectB. For
 //     `s_swap_pc_i64` it ALSO writes the return-PC `blockaddress` into
 //     sdst before the cascade (mirroring the DirectA dst-write).
 //
 // The cascade shape replaces an earlier `indirectbr` lowering; see the
-// rationale block on `emitEnumeratedDispatch` in handle_sop1.cpp for
+// rationale block on `emitEnumeratedDispatch` in handle-sop1.cpp for
 // why (FixIrreducible pass compatibility under the irreducible CFGs
 // the call/return pattern produces).
 //
 // See canonical-op.h's `S_SET_PC_I64` and `S_SWAP_PC_I64` doc for the full
-// lowering contracts. The handler in `handle_sop1.cpp` consumes the
+// lowering contracts. The handler in `handle-sop1.cpp` consumes the
 // classification.
 //
 // The pass runs in five phases. The last three together implement the
@@ -48,7 +48,7 @@
 // Unresolvable and the handler refuses, blocking large slices of the
 // corpus.
 //
-//   Phase 1 — pre-pass. Walk insts once to enumerate every swap/set_pc
+//   Phase 1 -- pre-pass. Walk insts once to enumerate every swap/set_pc
 //             instruction's fallthrough offset and pre-add it to the
 //             working block-leader set. This guarantees the per-block
 //             walk in Phase 2 sees every swap/set_pc as the LAST inst
@@ -56,7 +56,7 @@
 //             and so the block-exit transfer correctly summarises the
 //             pair state up to and including the swap/set_pc).
 //
-//   Phase 2 — per-block intra-block walk. Mirrors the original
+//   Phase 2 -- per-block intra-block walk. Mirrors the original
 //             single-pass analysis: build per-instruction symbolic-PC
 //             state (chains, scalar imms), classify swap/set_pc sites
 //             that resolve in-block as DirectA (or, if the source pair
@@ -69,27 +69,27 @@
 //             transfer summaries: per-pair {SET(value, terminator),
 //             KILL, PASS}.
 //
-//   Phase 3 — CFG + forward dataflow. Build per-block successor lists
+//   Phase 3 -- CFG + forward dataflow. Build per-block successor lists
 //             from the last instruction (S_BRANCH / S_CBRANCH_* /
 //             S_SWAP_PC fallthrough / fallthrough-to-leader). Run a
 //             worklist forward dataflow on a finite lattice
 //             (`(SGPR pair) -> (sorted set<uint64_t>, incomplete)`)
 //             where the join is set-union with an incomplete bit OR'd
 //             across paths and a hard cap of `kMaxDispatchTargets`
-//             values per pair (over the cap → mark incomplete and
+//             values per pair (over the cap -> mark incomplete and
 //             refuse the use site). Convergence is guaranteed by the
 //             bounded-height lattice.
 //
-//   Phase 4 — re-classify deferred sites. For each PendingDataflow
+//   Phase 4 -- re-classify deferred sites. For each PendingDataflow
 //             site, look up the entry facts at its block for the
-//             source pair. Empty / incomplete → Unresolvable with the
-//             dataflow-specific reason. One value → DirectA. Two or
-//             more values (within the cap) → DispatchSet with that
+//             source pair. Empty / incomplete -> Unresolvable with the
+//             dataflow-specific reason. One value -> DirectA. Two or
+//             more values (within the cap) -> DispatchSet with that
 //             enumerated set as `indirectTargets`. Add every target
 //             to `extraBlockStarts` so the BB-layout phase promotes
 //             it to a leader.
 //
-//   Phase 5 — chain terminator retention. Keep every chain terminator
+//   Phase 5 -- chain terminator retention. Keep every chain terminator
 //             that feeds either (a) an IndirectB ret-pair (existing
 //             logic, identifies it by `retPairLowReg` membership) OR
 //             (b) a DispatchSet site, where retention is conditional
@@ -110,7 +110,7 @@
 //   * Conservative cleanup: any SGPR write the pass cannot model
 //     (e.g. an s_mov, an unrelated s_add) clears the destination's
 //     entry. DirectA is only claimed when the entire chain
-//     (s_get_pc_i64 → s_add_co_u32 → s_add_co_ci_u32) is observable
+//     (s_get_pc_i64 -> s_add_co_u32 -> s_add_co_ci_u32) is observable
 //     intra-block; DispatchSet is only claimed when the dataflow
 //     joins exclusively over complete chains (any path that kills the
 //     pair sets `incomplete` and refuses).
@@ -126,7 +126,7 @@
 // chain-terminator hook so the raiser rewrites the chain's effect to
 // materialise a `blockaddress(@kernel, %BB_returnAddr)` into the
 // ret-pair (rather than the binary PC the chain would otherwise yield).
-// The same rewrite hook fires for DispatchSet retained terminators —
+// The same rewrite hook fires for DispatchSet retained terminators --
 // the value materialised is the dispatch target, not a return address,
 // but the mechanism is identical (the field's name remains
 // `resolvedReturnAddr` for backward compatibility with the existing
@@ -237,7 +237,7 @@ std::optional<uint32_t> imm32(const MCInst &Inst, unsigned OpIdx) {
 // which instruction to attach the blockaddress-materialisation hook
 // to. `lowAddDone` records whether the low-half s_add_co_u32 has
 // already fired (a complete chain follows the strict order
-// getpc → low-add → high-add).
+// getpc -> low-add -> high-add).
 struct PcChain {
   uint64_t Value = 0;       // symbolic absolute kernel offset
   uint64_t Terminator = 0;  // offset of the high-half s_add_co_ci_u32
@@ -256,7 +256,7 @@ struct ScalarImm {
 // the block has WRITTEN (chain ops + generic SGPR writes). It is the
 // signal Phase 2 uses to decide whether a swap/set_pc site whose
 // chain didn't resolve intra-block is allowed to fall back on dataflow
-// entry facts (pristine half → defer; dirtied half → refuse loudly).
+// entry facts (pristine half -> defer; dirtied half -> refuse loudly).
 class State {
 public:
   State(const MCRegisterInfo &MRI) : Mri(MRI) {}
@@ -462,10 +462,10 @@ struct PendingB {
 //     ascending and capped at kMaxDispatchTargets.
 //   - `incomplete` records that at least one CFG predecessor leaves
 //     the pair in an unmodeled state (overwritten by a non-chain
-//     operation, never constrained at all — pristine kernel entry —
+//     operation, never constrained at all -- pristine kernel entry --
 //     or omitted from a predecessor's exit facts entirely).
 //
-// Use sites consume the lattice: incomplete OR cap-exceeded ⇒ refuse
+// Use sites consume the lattice: incomplete OR cap-exceeded => refuse
 // loudly; otherwise the value count picks DirectA (1) or DispatchSet
 // (>1) classification.
 //
@@ -488,7 +488,7 @@ bool operator!=(const PcLatticeValue &A, const PcLatticeValue &B) {
 }
 
 // Merge `src` into `dst` (set-union of values, OR of incomplete bits,
-// hard cap at kMaxDispatchTargets values — over-cap promotes to
+// hard cap at kMaxDispatchTargets values -- over-cap promotes to
 // incomplete and stops growing the value list).
 void joinValue(PcLatticeValue &Dst, const PcLatticeValue &Src) {
   if (Src.Incomplete)
@@ -587,7 +587,7 @@ SetPcAnalysis analyseSetPC(ArrayRef<DecodedInst> Insts,
   const MCRegisterInfo &MRI = *Mc.RegInfo;
 
   // ---------------------------------------------------------------
-  // Phase 1 — pre-pass: enumerate every swap/set_pc fallthrough as a
+  // Phase 1 -- pre-pass: enumerate every swap/set_pc fallthrough as a
   // block leader. This guarantees the per-block walk sees each
   // swap/set_pc as the LAST inst of its block (so its block-exit
   // transfer correctly summarises the pair state up to the
@@ -635,15 +635,15 @@ SetPcAnalysis analyseSetPC(ArrayRef<DecodedInst> Insts,
   // PcLatticeValue), which correctly models pristine register state.
 
   // ---------------------------------------------------------------
-  // Phase 2 — per-block intra-block walk. For each block, run the
+  // Phase 2 -- per-block intra-block walk. For each block, run the
   // existing chain analysis and collect:
   //   * setpcSites entries for sites that resolve in-block (DirectA
   //     direct-branch, or Unresolvable-with-intra-block-reason when
   //     the source pair was dirtied without a complete chain).
   //   * pendingDataflow entries for sites whose source pair was
-  //     pristine through the block — Phase 4 reclassifies these.
+  //     pristine through the block -- Phase 4 reclassifies these.
   //   * pendingB entries for s_set_pc sites whose source pair could
-  //     not be resolved by a chain (intra OR dataflow) — Phase 5
+  //     not be resolved by a chain (intra OR dataflow) -- Phase 5
   //     classifies these as IndirectB by matching against
   //     chainTerminators.
   //   * chainTerminators[high_add_offset] = {chain_value, lowReg} for
@@ -885,7 +885,7 @@ SetPcAnalysis analyseSetPC(ArrayRef<DecodedInst> Insts,
           // dataflow facts are dead. Defer to Phase 5 PendingB
           // classification (matches against chainTerminators) which
           // correctly handles the subroutine-return shape regardless
-          // of intra-block dirtiness — the IndirectB pattern relies
+          // of intra-block dirtiness -- the IndirectB pattern relies
           // on the source pair being populated by a CALLER's chain
           // terminator, not by anything in this block. If no chain
           // terminator matches this source pair, Phase 5 emits the
@@ -925,10 +925,10 @@ SetPcAnalysis analyseSetPC(ArrayRef<DecodedInst> Insts,
     }
 
     // Compute block-exit transfers from the final state.
-    //   * Every pair in `state.pcChains()` with lowAddDone=true →
+    //   * Every pair in `state.pcChains()` with lowAddDone=true ->
     //     SET(value, terminator). Pass-through is overridden.
     //   * Every dirty half whose pair is not in pcChains-with-
-    //     lowAddDone → KILL of that pair. Cover BOTH the "low" view
+    //     lowAddDone -> KILL of that pair. Cover BOTH the "low" view
     //     (half index treated as the pair's low) and the "high" view
     //     (half index - 1 treated as the pair's low). A dirty half
     //     can mean two distinct pairs were partially touched; we
@@ -973,7 +973,7 @@ SetPcAnalysis analyseSetPC(ArrayRef<DecodedInst> Insts,
   }
 
   // ---------------------------------------------------------------
-  // Phase 3 — forward dataflow to fixpoint.
+  // Phase 3 -- forward dataflow to fixpoint.
   //
   //   entryFacts[blockIdx][pairLow] = PcLatticeValue
   //
@@ -998,7 +998,7 @@ SetPcAnalysis analyseSetPC(ArrayRef<DecodedInst> Insts,
   // Convergence is guaranteed by the bounded-height lattice: per
   // pair, at most kMaxDispatchTargets values + 1 incomplete bit.
   // The lattice is also monotone (values only grow, incomplete only
-  // 0→1), so JOIN-over-preds-from-scratch with re-entry-on-change is
+  // 0->1), so JOIN-over-preds-from-scratch with re-entry-on-change is
   // a sound fixpoint algorithm.
   // ---------------------------------------------------------------
 
@@ -1083,7 +1083,7 @@ SetPcAnalysis analyseSetPC(ArrayRef<DecodedInst> Insts,
         NewEntry[Pair] = std::move(Acc);
       }
     }
-    // Block 0 (kernel entry) has no predecessors → newEntry is empty,
+    // Block 0 (kernel entry) has no predecessors -> newEntry is empty,
     // which correctly represents "every pair is unconstrained".
 
     if (NewEntry != EntryFacts[Bi]) {
@@ -1100,7 +1100,7 @@ SetPcAnalysis analyseSetPC(ArrayRef<DecodedInst> Insts,
   }
 
   // ---------------------------------------------------------------
-  // Phase 4 — re-classify deferred sites using dataflow facts.
+  // Phase 4 -- re-classify deferred sites using dataflow facts.
   // ---------------------------------------------------------------
   for (const PendingDataflowSite &Pds : PendingDataflow) {
     auto Bit = OffsetToBlockIdx.find(Pds.BlockOffset);
@@ -1130,7 +1130,7 @@ SetPcAnalysis analyseSetPC(ArrayRef<DecodedInst> Insts,
                 .str();
         Result.SetpcSites[Pds.SiteOffset] = std::move(Info);
       } else {
-        // For s_set_pc_i64, fall through to PendingB — a subroutine-
+        // For s_set_pc_i64, fall through to PendingB -- a subroutine-
         // return shape relies on caller-side chain terminators, not
         // on the source pair being constrained by intra-kernel
         // dataflow.
@@ -1159,7 +1159,7 @@ SetPcAnalysis analyseSetPC(ArrayRef<DecodedInst> Insts,
   }
 
   // ---------------------------------------------------------------
-  // Phase 5 — chain terminator retention + IndirectB classification.
+  // Phase 5 -- chain terminator retention + IndirectB classification.
   //
   // Retention rule: keep a chain terminator iff it feeds either
   //   (a) an IndirectB ret-pair (pair-low-index match), OR
@@ -1173,7 +1173,7 @@ SetPcAnalysis analyseSetPC(ArrayRef<DecodedInst> Insts,
   for (const struct PendingB &Pb : PendingBs)
     RetPairsConsumedByB.insert(Pb.RetPairLowReg);
 
-  // Collect DispatchSet consumers (pair → set of allowed values).
+  // Collect DispatchSet consumers (pair -> set of allowed values).
   llvm::DenseMap<unsigned, llvm::DenseSet<uint64_t>> DispatchSetTargets;
   for (const auto &Kv : Result.SetpcSites) {
     if (Kv.second.SiteKind == SetPcSiteInfo::Kind::DispatchSet) {

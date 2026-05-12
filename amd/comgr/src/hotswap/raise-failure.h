@@ -43,7 +43,7 @@ enum class RaiseFailureReason : uint16_t {
   // shape-specific context when available.
   UnsupportedShape,
   // Phase 1.5 gate: an EXEC-writing instruction whose CanonicalOp does not
-  // have `routesExecThroughStoreExec` set in `canonical_op_attrs.cpp`.
+  // have `routesExecThroughStoreExec` set in `canonical-op-attrs.cpp`.
   SPEUnsafeExecWriter,
   // Phase 2: `TargetRegistry::createTargetMachine` returned null.
   TargetMachineCreationFailed,
@@ -79,7 +79,7 @@ enum class RaiseFailureReason : uint16_t {
   // A handler recognised the CanonicalOp and *would* have lifted it under the
   // existing warn-and-continue policy, but strict mode requires the
   // honest "unsupported, may silently miscompile" verdict instead.
-  // Today this covers MODE-register writes (`handle_sopk.cpp`) and
+  // Today this covers MODE-register writes (`handle-sopk.cpp`) and
   // `implicitarg.ptr` lifts (`handle_smem.cpp`); see
   // the integration-gap investigation for the diagnosis behind each site.
   StrictUnsafeLowering,
