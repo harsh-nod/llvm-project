@@ -40,7 +40,7 @@ COMGR::hotswap::KernelMeta makeKernelMeta(llvm::StringRef Name) {
 TEST(RaiserScaffolding, EmptyInputProducesValidModule) {
   COMGR::hotswap::KernelMeta Meta = makeKernelMeta("kernel");
   COMGR::hotswap::RaiseResult Result =
-      COMGR::hotswap::raiseToIR("gfx942", "kernel", Meta);
+      COMGR::hotswap::raiseToIR({}, "gfx942", "kernel", Meta);
 
   ASSERT_TRUE(Result.Success);
   ASSERT_NE(Result.Ctx, nullptr);
@@ -54,7 +54,7 @@ TEST(RaiserScaffolding, EmptyInputProducesValidModule) {
 TEST(RaiserScaffolding, ModuleAdvertisesAMDGPUTriple) {
   COMGR::hotswap::KernelMeta Meta = makeKernelMeta("kernel");
   COMGR::hotswap::RaiseResult Result =
-      COMGR::hotswap::raiseToIR("gfx942", "kernel", Meta);
+      COMGR::hotswap::raiseToIR({}, "gfx942", "kernel", Meta);
 
   ASSERT_TRUE(Result.Success);
   ASSERT_NE(Result.Module, nullptr);
@@ -64,7 +64,7 @@ TEST(RaiserScaffolding, ModuleAdvertisesAMDGPUTriple) {
 TEST(RaiserScaffolding, KernelFunctionIsAMDGPUKernelWithRetVoid) {
   COMGR::hotswap::KernelMeta Meta = makeKernelMeta("kernel");
   COMGR::hotswap::RaiseResult Result =
-      COMGR::hotswap::raiseToIR("gfx942", "kernel", Meta);
+      COMGR::hotswap::raiseToIR({}, "gfx942", "kernel", Meta);
 
   ASSERT_TRUE(Result.Success);
   llvm::Function *Fn = Result.Module->getFunction("kernel");
@@ -81,7 +81,7 @@ TEST(RaiserScaffolding, MissingKernelDescriptorIsRejected) {
   Meta.Name = "kernel";
   Meta.HasKernelDescriptor = false;
   COMGR::hotswap::RaiseResult Result =
-      COMGR::hotswap::raiseToIR("gfx942", "kernel", Meta);
+      COMGR::hotswap::raiseToIR({}, "gfx942", "kernel", Meta);
 
   EXPECT_FALSE(Result.Success);
   EXPECT_TRUE(Result.Failure.hasFailed());
@@ -90,7 +90,7 @@ TEST(RaiserScaffolding, MissingKernelDescriptorIsRejected) {
 TEST(RaiserScaffolding, EmptyTargetIsaIsRejected) {
   COMGR::hotswap::KernelMeta Meta = makeKernelMeta("kernel");
   COMGR::hotswap::RaiseResult Result =
-      COMGR::hotswap::raiseToIR("", "kernel", Meta);
+      COMGR::hotswap::raiseToIR({}, "", "kernel", Meta);
 
   EXPECT_FALSE(Result.Success);
   EXPECT_TRUE(Result.Failure.hasFailed());
@@ -99,7 +99,7 @@ TEST(RaiserScaffolding, EmptyTargetIsaIsRejected) {
 TEST(RaiserScaffolding, MalformedTargetIsaIsRejected) {
   COMGR::hotswap::KernelMeta Meta = makeKernelMeta("kernel");
   COMGR::hotswap::RaiseResult Result =
-      COMGR::hotswap::raiseToIR("not-a-real-isa", "kernel", Meta);
+      COMGR::hotswap::raiseToIR({}, "not-a-real-isa", "kernel", Meta);
 
   EXPECT_FALSE(Result.Success);
   EXPECT_TRUE(Result.Failure.hasFailed());

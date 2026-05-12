@@ -1,0 +1,69 @@
+; RUN: %llvm_mc -mcpu=gfx1250 %s -o %t.o && %ld_lld -shared %t.o -o %t.hsaco \
+; RUN:   && %raise_cli %t.hsaco --target-isa=gfx942 --emit-ir=v_cvt_f64_f32_kernel 2>/dev/null | %FileCheck %s --check-prefix=IR
+; RUN: %raise_cli %t.hsaco --target-isa=gfx942 --write-hsaco=%t.out --kernel=v_cvt_f64_f32_kernel 2>&1 | %FileCheck %s --check-prefix=PIPE
+;
+; Vector F32 -> F64 conversion, paired with v_cvt_f32_f64 so the FP32/FP64
+; conversion family is supported symmetrically.
+
+; IR-LABEL: define amdgpu_kernel void @v_cvt_f64_f32_kernel(
+; IR: [[SRC:%[^ ]+]] = bitcast i32 {{%[^ ]+}} to float
+; IR-NEXT: [[F64:%[^ ]+]] = fpext float [[SRC]] to double
+; IR-NEXT: bitcast double [[F64]] to i64
+; IR-NOT: unsupported instruction
+
+; PIPE: raise_cli: wrote
+; PIPE-SAME: v_cvt_f64_f32_kernel
+
+	.amdgcn_target "amdgcn-amd-amdhsa--gfx1250"
+	.amdhsa_code_object_version 6
+	.text
+	.globl	v_cvt_f64_f32_kernel
+	.p2align	8
+	.type	v_cvt_f64_f32_kernel,@function
+v_cvt_f64_f32_kernel:
+	s_load_b64 s[2:3], s[0:1], 0x0
+	s_load_b32 s4, s[0:1], 0x8
+	s_wait_kmcnt 0x0
+	v_mov_b32_e32 v0, s4
+	v_mov_b32_e32 v1, 0
+	;;#ASMSTART
+	v_cvt_f64_f32 v[2:3], v0
+	;;#ASMEND
+	global_store_b64 v1, v[2:3], s[2:3] scale_offset
+	s_endpgm
+	.section	.rodata,"a",@progbits
+	.p2align	6, 0x0
+	.amdhsa_kernel v_cvt_f64_f32_kernel
+		.amdhsa_kernarg_size 16
+		.amdhsa_user_sgpr_count 2
+		.amdhsa_user_sgpr_kernarg_segment_ptr 1
+		.amdhsa_wavefront_size32 1
+		.amdhsa_next_free_vgpr 4
+		.amdhsa_next_free_sgpr 5
+		.amdhsa_float_denorm_mode_32 3
+		.amdhsa_inst_pref_size 1
+	.end_amdhsa_kernel
+	.text
+	.p2alignl 7, 3214868480
+	.fill 96, 4, 3214868480
+	.text
+	.amdgpu_metadata
+---
+amdhsa.kernels:
+  - .args:
+      - { .address_space:  global, .offset:         0, .size:           8, .value_kind:     global_buffer }
+      - { .offset:         8, .size:           4, .value_kind:     by_value }
+    .group_segment_fixed_size: 0
+    .kernarg_segment_align: 8
+    .kernarg_segment_size: 16
+    .max_flat_workgroup_size: 1024
+    .name:           v_cvt_f64_f32_kernel
+    .private_segment_fixed_size: 0
+    .sgpr_count:     5
+    .symbol:         v_cvt_f64_f32_kernel.kd
+    .vgpr_count:     4
+    .wavefront_size: 32
+amdhsa.version: [1, 2]
+...
+
+	.end_amdgpu_metadata
