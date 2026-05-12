@@ -120,12 +120,13 @@ set(SOURCES
   src/time-stat/time-stat.cpp)
 
 # Hotswap binary transpiler, opt-in. The hotswap project lives under
-# amd/comgr/src/hotswap as a private COMGR subproject. When enabled, we
-# link the hotswap OBJECT library into amd_comgr (its TUs land directly
-# in amd_comgr.so so hotswap files can call comgr-metadata helpers
-# without a layering inversion) and compile the
-# comgr-hotswap-transpile.cpp entry point. When disabled, the
-# amd_comgr_hotswap_transpile API is simply not provided.
+# amd/comgr/src/hotswap as a private COMGR subproject. When enabled, the
+# hotswap OBJECT lib is folded into amd_comgr (its TUs land directly in
+# amd_comgr.so so hotswap files can call comgr-metadata helpers without
+# a layering inversion) and the comgr-hotswap-transpile.cpp entry point
+# is compiled. When disabled, the amd_comgr_hotswap_transpile API is
+# simply not provided. The actual `target_sources` / `target_link_libraries`
+# wiring runs below, after `add_library(amd_comgr ...)`.
 option(COMGR_ENABLE_HOTSWAP_TRANSPILE
   "Build the hotswap-transpiler-backed amd_comgr_hotswap_transpile entry point" OFF)
 
@@ -207,12 +208,9 @@ target_include_directories(amd_comgr
   PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
-# The hotswap subdirectory is added unconditionally below (around the
-# add_subdirectory(src/hotswap) line) so the OBJECT library is available
-# to the test-unit suite; here we opt amd_comgr into linking the
-# transpiler in (its TUs land in amd_comgr.so) and exposing the
-# `amd_comgr_hotswap_transpile` entry point.
 if(COMGR_ENABLE_HOTSWAP_TRANSPILE)
+  add_subdirectory(src/hotswap)
+  target_sources(amd_comgr PRIVATE src/comgr-hotswap-transpile.cpp)
   target_link_libraries(amd_comgr PRIVATE hotswap::transpiler)
   target_compile_definitions(amd_comgr PRIVATE COMGR_ENABLE_HOTSWAP_TRANSPILE=1)
 endif()
@@ -624,12 +622,6 @@ if (NOT WIN32)
       c
       ${CMAKE_DL_LIBS})
 endif()
-
-# Hotswap subproject — IR-level transpiler library + supporting tools.
-# Always added so the static library is available to the test-unit suite;
-# linking into amd_comgr happens in a later patch via the
-# COMGR_ENABLE_HOTSWAP_TRANSPILE option.
-add_subdirectory(src/hotswap)
 
 include(CTest)
 if(BUILD_TESTING)

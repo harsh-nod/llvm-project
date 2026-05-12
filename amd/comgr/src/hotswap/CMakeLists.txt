@@ -164,7 +164,22 @@ target_include_directories(hotswap-transpiler PRIVATE
   "${LLVM_BUILD_MAIN_SRC_DIR}/lib/Target/AMDGPU"
   "${LLVM_BUILD_MAIN_SRC_DIR}/lib/Target/AMDGPU/Utils"
   "${LLVM_BINARY_DIR}/lib/Target/AMDGPU"
+  # Hotswap calls into comgr-metadata helpers (e.g.
+  # `metadata::walkElfMetadataIntoDoc`, `metadata::getElfIsaNameFromBuffer`),
+  # which transitively include `comgr.h` -> `amd_comgr.h`. The latter is
+  # configured from `amd/comgr/include/amd_comgr.h.in` into the parent
+  # project's binary `include/` dir.
+  "${CMAKE_CURRENT_SOURCE_DIR}/.."
+  "${CMAKE_BINARY_DIR}/include"
 )
+
+# `llc`, `llvm-mc`, `llvm-objdump` etc. live in the build tree's bin/. The
+# pipeline driver invokes them by absolute path. Make this overrideable so
+# downstream projects (e.g. ROCR) can point us at their own LLVM toolchain.
+set(HOTSWAP_TRANSPILER_LLVM_TOOLS_DIR "${LLVM_TOOLS_BINARY_DIR}" CACHE PATH
+  "Directory containing llc, llvm-mc, llvm-objdump, and related LLVM tools used by Hotswap")
+target_compile_definitions(hotswap-transpiler PRIVATE
+  LLVM_TOOLS_DIR="${HOTSWAP_TRANSPILER_LLVM_TOOLS_DIR}")
 
 # Public include root so consumers can `#include "hotswap/raiser.hpp"`.
 target_include_directories(hotswap-transpiler PUBLIC
