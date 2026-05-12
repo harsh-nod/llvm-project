@@ -8,13 +8,7 @@
 
 #include "amdgpu-mode-hwreg.h"
 #include "handlers.h"
-// `isStrictMode()` is provided by `pipeline.h`, which lands later in the
-// "Add pipeline driver" commit. Until then we stub the predicate as
-// `false` so the strict-mode-only refusal path is dormant — which
-// matches the production default (HSA_HOTSWAP_STRICT defaults off).
-namespace COMGR::hotswap {
-namespace { inline bool isStrictMode() { return false; } }
-} // namespace
+#include "pipeline.h" // isStrictMode()
 
 #include "SIDefines.h" // AMDGPU::Hwreg::Id
 #include "llvm/IR/Intrinsics.h"
@@ -27,7 +21,7 @@ using namespace llvm;
 
 namespace COMGR::hotswap {
 
-// HWREG (s_getreg / s_setreg) policy — direction-aware.
+// HWREG (s_getreg / s_setreg) policy -- direction-aware.
 //
 // The simm16 encoding for these opcodes is
 // `id[5:0] | offset[10:6] | size_minus_1[15:11]`; only the id field
@@ -38,23 +32,23 @@ namespace COMGR::hotswap {
 // Two axes of decision per id:
 //
 //  * READ policy (`HwregRead`):
-//      Zero  — produce 0. Used for ids whose observable value is either
+//      Zero  -- produce 0. Used for ids whose observable value is either
 //              a hardware timer / state we can't reproduce but whose 0
 //              is the architectural default (MODE) or a diagnostic read
 //              the kernel's compute does not meaningfully act on
 //              (STATUS, HW_ID, perf counters, shader cycles, ALLOC
 //              descriptors, TBA/TMA/trap-handler bases, etc.).
-//      Abort — refuse to lower. Used for ids whose value the kernel
+//      Abort -- refuse to lower. Used for ids whose value the kernel
 //              *might* actually consume to make compute decisions we
 //              cannot reproduce faithfully (FLAT_SCR_*, MEM_BASES,
 //              XNACK_MASK). Zero would be a silent lie.
 //
 //  * WRITE policy (`HwregWrite`):
-//      Drop     — silently discard. Used for ids whose observable
+//      Drop     -- silently discard. Used for ids whose observable
 //                 state the transpiler does not model downstream
 //                 (diagnostic / status / perf), so dropping a write
 //                 leaves no gap in semantics SPE lifts.
-//      WarnDrop — discard but emit a stderr warning. Used for ids
+//      WarnDrop -- discard but emit a stderr warning. Used for ids
 //                 where a write *could* change observable compute
 //                 semantics in the general case but where silently
 //                 aborting would break the current test corpus
@@ -65,7 +59,7 @@ namespace COMGR::hotswap {
 //                 either a same-wave regression corpus or a proof
 //                 that the downstream FP ops are insensitive to the
 //                 discarded bits.
-//      Abort    — refuse to lower. Used for ids whose value *does*
+//      Abort    -- refuse to lower. Used for ids whose value *does*
 //                 feed state we lift and where dropping would
 //                 change lifted semantics: FLAT aperture
 //                 (FLAT_SCR_*, MEM_BASES), XNACK retry semantics,
@@ -106,7 +100,7 @@ enum class HwregWrite {
   //     follow-up"); `Preserve` closes that gap in the correct
   //     direction (ABI-faithful) rather than by refusal.
   //   * If the source kernel's MODE bit is equivalent across ISAs
-  //     (the common case for bits 0..22 — standard FP round /
+  //     (the common case for bits 0..22 -- standard FP round /
   //     denormal / IEEE, unchanged since gfx8), `Preserve` produces
   //     byte-exact behaviour versus dropping.
   //   * If the bit is gfx-generation-specific (bit 23 FP16_OVFL, bit 25
@@ -121,7 +115,7 @@ enum class HwregWrite {
   // `topk_forward_bf16` silent miscompile flagged in commit
   // `7507185094` WAS empirically checked under `Preserve`: output
   // unchanged (gfx942's MODE.REPLAY_MODE write is a no-op for Triton's softmax
-  // path at this shape; the bug is elsewhere — see the
+  // path at this shape; the bug is elsewhere -- see the
   // `topk_forward_bisect_*` recipes landed alongside this change
   // for the ongoing triage).  `Preserve` is a principled-improvement
   // change, independent of that triage.
@@ -251,9 +245,9 @@ HandlerResult handleSOPK(RaiseContext &Ctx, const DecodedInst &Di,
   //     disassembler keeps the tied $src0 as a distinct MCOperand
   //     rather than collapsing it, and `decode.cpp::buildSrcMap`
   //     intentionally keeps tied-def operands in srcMap (it's listed
-  //     in `KKnownTiedIn` — see the audit comment there for the
+  //     in `KKnownTiedIn` -- see the audit comment there for the
   //     rationale). Result: for SOPK_32TIE opcodes, srcMap has TWO
-  //     entries — `src(0)` is the tied SGPR (same physical reg as
+  //     entries -- `src(0)` is the tied SGPR (same physical reg as
   //     sdst, i.e. the prior-dst value already readable via
   //     `readReg32(op.dst())`), and `src(1)` is the simm16
   //     immediate. The simm16 is sign-extended by hardware; using
@@ -303,7 +297,7 @@ HandlerResult handleSOPK(RaiseContext &Ctx, const DecodedInst &Di,
   // SOPK compares: s_cmpk_XX_i32 / s_cmpk_XX_u32.
   //
   // Operand layout (SOPK_SCC class, SOPInstructions.td):
-  //   (outs)                          ; empty — no def
+  //   (outs)                          ; empty -- no def
   //   (ins SReg_32:$sdst,             ; operand 0: sdst as SOURCE
   //        {s,u}16imm:$simm16)        ; operand 1: the immediate
   //
@@ -313,7 +307,7 @@ HandlerResult handleSOPK(RaiseContext &Ctx, const DecodedInst &Di,
   //     srcMap[1] = 1 (the `$simm16` immediate)
   //
   // Pre-fix bug: the handler read `op.src(0)` as the immediate,
-  // but `op.src(0)` is `$sdst` — same SGPR that `readReg32(op.dst())`
+  // but `op.src(0)` is `$sdst` -- same SGPR that `readReg32(op.dst())`
   // already returned. So `icmp eq %sdst, %imm` reduced to
   // `icmp eq %sdst, %sdst` = always true, writing a trivially-set
   // SCC irrespective of the comparison's actual truth. Gfx12+
@@ -362,7 +356,7 @@ HandlerResult handleSOPK(RaiseContext &Ctx, const DecodedInst &Di,
   // configuration register. Both encodings carry the HWREG selector as a
   // simm16 at MCInst operand index 1 (TableGen `ins` order is
   // `sdst, simm16` for GETREG/SETREG_B32 and `imm, simm16` for
-  // SETREG_IMM32_B32). Policy is driven by `classifyHwreg` above —
+  // SETREG_IMM32_B32). Policy is driven by `classifyHwreg` above --
   // direction-aware per id. See the classifier's docstring for the
   // rationale behind each entry.
   if (Sop == CanonicalOp::S_GETREG_B32 || Sop == CanonicalOp::S_SETREG_B32 ||
@@ -370,7 +364,7 @@ HandlerResult handleSOPK(RaiseContext &Ctx, const DecodedInst &Di,
     const unsigned Simm16OpIdx = 1;
     if (Simm16OpIdx >= Di.numOps() || !Di.isImm(Simm16OpIdx)) {
       errs() << "transpiler: " << Di.Mnemonic
-             << " has unexpected operand layout (simm16 not at op 1) — "
+             << " has unexpected operand layout (simm16 not at op 1) -- "
                 "refusing to model it silently.\n";
       return Hr;
     }
@@ -381,7 +375,7 @@ HandlerResult handleSOPK(RaiseContext &Ctx, const DecodedInst &Di,
       if (Policy.Read == HwregRead::Abort) {
         errs() << "transpiler: " << Di.Mnemonic
                << " reads load-bearing or unknown HWREG id=" << HwregId
-               << " — refusing to lower. The transpiler does not carry "
+               << " -- refusing to lower. The transpiler does not carry "
                   "this register's value and returning zero would be a "
                   "silent lie that the kernel's compute may act on.\n";
         return Hr;
@@ -395,7 +389,7 @@ HandlerResult handleSOPK(RaiseContext &Ctx, const DecodedInst &Di,
     if (Policy.Write == HwregWrite::Abort) {
       errs() << "transpiler: " << Di.Mnemonic
              << " writes load-bearing or unknown HWREG id=" << HwregId
-             << " — refusing to lower. Dropping this write would silently "
+             << " -- refusing to lower. Dropping this write would silently "
                 "change compute semantics (FLAT aperture, trap handler, "
                 "XNACK retry, …) that subsequent lifted instructions "
                 "rely on.\n";
@@ -421,7 +415,7 @@ HandlerResult handleSOPK(RaiseContext &Ctx, const DecodedInst &Di,
         if (Di.numOps() < 2 || !Di.isImm(0)) {
           errs() << "transpiler: " << Di.Mnemonic
                  << " has unexpected operand layout (value not "
-                    "immediate at op 0) — refusing to lower.\n";
+                    "immediate at op 0) -- refusing to lower.\n";
           return Hr;
         }
         ValArg = ConstantInt::get(Ctx.I32Ty, Di.getImm(0));
@@ -451,7 +445,7 @@ HandlerResult handleSOPK(RaiseContext &Ctx, const DecodedInst &Di,
       if (isStrictMode()) {
         errs() << "transpiler: " << Di.Mnemonic
                << " writes HWREG id=" << HwregId
-               << " (MODE / FP-state-bearing register) — refusing under "
+               << " (MODE / FP-state-bearing register) -- refusing under "
                   "HSA_HOTSWAP_STRICT. Dropping the write would silently "
                   "change FP rounding / denormal / IEEE / FTZ semantics if "
                   "downstream compute consumes those bits.\n";

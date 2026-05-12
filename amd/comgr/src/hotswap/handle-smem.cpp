@@ -7,12 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "handlers.h"
-// `isStrictMode()` is provided by `pipeline.h`, which lands later in the
-// "Add pipeline driver" commit. Until then we stub the predicate as
-// `false` so the strict-mode-only refusal path is dormant.
-namespace COMGR::hotswap {
-namespace { inline bool isStrictMode() { return false; } }
-} // namespace
+#include "pipeline.h" // isStrictMode()
 #include "source-hidden-args.h"
 
 #include "llvm/IR/IntrinsicsAMDGPU.h"
@@ -37,7 +32,7 @@ namespace {
 // hardcoded `baseIdx == 0`, which broke as soon as a kernel enabled
 // PrivateSegmentBuffer (4 dwords), DispatchPtr (2 dwords), or QueuePtr
 // (2 dwords) ahead of the kernarg pointer in the canonical
-// enable_sgpr_* order — the kernarg pair then slides up to s[2:3],
+// enable_sgpr_* order -- the kernarg pair then slides up to s[2:3],
 // s[6:7], s[8:9], etc.
 //
 // The layout object is the single source of truth for the source
@@ -46,8 +41,8 @@ namespace {
 // kernel descriptor is missing, so we never fall back to a guessed
 // layout), and wired into `RaiseContext` before handler dispatch in
 // raiser.cpp. A null pointer here therefore means the raiser failed
-// to wire the layout into the context — a wiring bug, not a runtime
-// condition — and we surface it with `report_fatal_error`.
+// to wire the layout into the context -- a wiring bug, not a runtime
+// condition -- and we surface it with `report_fatal_error`.
 //
 // Returns -1 if KernargSegmentPtr is disabled in the KD (no corpus
 // kernel today, but the caller must still guard against the `-1`
@@ -201,7 +196,7 @@ HandlerResult handleSMEM(RaiseContext &Ctx, const DecodedInst &Di,
     // of the IR-level addrspace cast; for runtime-mutated bases (Triton/
     // SGLang `s[0:1] = preloaded_ptr + wg_offset`, Tensile HBMArgs
     // `s_load_b64 s[0:1], s[0:1], 0x10`, etc.) the backend keeps the
-    // VMEM lowering. The lift no longer hand-picks the addrspace —
+    // VMEM lowering. The lift no longer hand-picks the addrspace --
     // tracking pointer provenance at lift time was redundant with the
     // backend's own analysis.
     {
@@ -213,12 +208,12 @@ HandlerResult handleSMEM(RaiseContext &Ctx, const DecodedInst &Di,
       } else {
         // gfx12+ SMEM: when the `scale_offset` (CPol::SCAL) bit is
         // set the SGPR offset is an element index, not a byte
-        // offset — hardware multiplies it by the load's data-type
+        // offset -- hardware multiplies it by the load's data-type
         // size before adding to sbase. Mirror that here (the
         // FLAT/GLOBAL counterparts in flat-addr.cpp do the same
         // against `elemBytes`). The "element size" for the scalar
         // dword family is the full load width: 4B for B32, 8B for
-        // B64, 16B for B128, etc. — i.e. `loadBytes`. Ignoring the
+        // B64, 16B for B128, etc. -- i.e. `loadBytes`. Ignoring the
         // scale produced a silent off-by-N* miscompile on
         // `mask[blockIdx.x]`-style uses of a uniform SGPR index.
         Value *RegOff = Ctx.B.CreateZExt(Op.src(1), Ctx.I64Ty, "smem_roff");
@@ -248,17 +243,17 @@ HandlerResult handleSMEM(RaiseContext &Ctx, const DecodedInst &Di,
   //
   // Design notes:
   //  * IR shape: `load iN, ptr addrspace(1) %p, align N` + `zext`/`sext`
-  //    to i32 → `storeSGPR32`. No AMDGPU-specific intrinsic exists for
+  //    to i32 -> `storeSGPR32`. No AMDGPU-specific intrinsic exists for
   //    narrow scalar loads; the backend's ISel matches the uniform-address
   //    pattern directly.
-  //  * Same-target gfx1250 → gfx1250: the backend re-codegens to the
+  //  * Same-target gfx1250 -> gfx1250: the backend re-codegens to the
   //    original `s_load_u16` / `s_load_u8` / etc. (identity-preserving).
-  //  * Cross-target gfx1250 → gfx942: the backend has no native narrow
+  //  * Cross-target gfx1250 -> gfx942: the backend has no native narrow
   //    SMEM load, so it lowers to VMEM (`global_load_ushort` / ubyte).
-  //    The lifted kernel stays correct — the value appears on every lane
-  //    with the same content, matching the SMEM broadcast semantics —
-  //    but the register class shifts SGPR→VGPR and the memory path
-  //    shifts scalar-cache→vector-cache.
+  //    The lifted kernel stays correct -- the value appears on every lane
+  //    with the same content, matching the SMEM broadcast semantics --
+  //    but the register class shifts SGPR->VGPR and the memory path
+  //    shifts scalar-cache->vector-cache.
   //  * Alignment: explicit `Align(1)` for byte, `Align(2)` for halfword.
   //
   // Test back-reference: lit_tests/s_load_u16/ exercises the halfword
@@ -357,7 +352,7 @@ HandlerResult handleSMEM(RaiseContext &Ctx, const DecodedInst &Di,
         if (Off != 0)
           Ptr = Ctx.B.CreateInBoundsGEP(Ctx.I8Ty, Ptr, Ctx.B.getInt64(Off));
       } else if (Di.isReg(OffIdx)) {
-        // Same `scale_offset` scaling as the S_LOAD path — the
+        // Same `scale_offset` scaling as the S_LOAD path -- the
         // SCAL bit multiplies the SGPR offset by the store's
         // data-type size (4/8/16B for B32/B64/B128).
         Value *RegOff = Ctx.B.CreateZExt(Op.src(2), Ctx.I64Ty, "smem_st_roff");
@@ -429,7 +424,7 @@ HandlerResult handleSMEM(RaiseContext &Ctx, const DecodedInst &Di,
   // from the operand-print list, leaving the decoded MCInst as):
   //
   //   RTN     (GLC=1, numDefs=1, isRet=1):
-  //           `(sdst, sbase, offset, cpol)` — TableGen's tied
+  //           `(sdst, sbase, offset, cpol)` -- TableGen's tied
   //           `"$sdst = $sdata"` constraint elides the tied input
   //           from the operand list; the atomic's input value (xchg
   //           data for swap, wrap-threshold for dec) comes from the
@@ -440,7 +435,7 @@ HandlerResult handleSMEM(RaiseContext &Ctx, const DecodedInst &Di,
   //           `bf16gemm_*_splitk_clean.co` lowering.
   //
   //   non-RTN (GLC=0, numDefs=0, isRet=0):
-  //           `(sdata, sbase, offset, cpol)` — no dst at all; `sdata`
+  //           `(sdata, sbase, offset, cpol)` -- no dst at all; `sdata`
   //           stays as an explicit source operand.  The atomic runs
   //           and the returned `old` is dropped on the floor.  hipcc's
   //           inline-asm lowering of `s_atomic_dec %[rmw], %[ptr],
@@ -457,8 +452,8 @@ HandlerResult handleSMEM(RaiseContext &Ctx, const DecodedInst &Di,
   // when the `scale_offset` (CPol::SCAL) bit is set, and the
   // explicit `Align(4)` / `AtomicOrdering::Monotonic`.  `cpol` is
   // not consumed by the lift (the GLC bit it carries is already
-  // reflected in `di.numDefs`; the non-GLC CPol bits — DLC, SCOPE,
-  // SCAL — are either already threaded through `di.hasScaleOffset`
+  // reflected in `di.numDefs`; the non-GLC CPol bits -- DLC, SCOPE,
+  // SCAL -- are either already threaded through `di.hasScaleOffset`
   // or are cache-hint-only and thus lift-invariant).
   //
   // No SMEM atomic today has more than one def.  The assertion below
@@ -509,7 +504,7 @@ HandlerResult handleSMEM(RaiseContext &Ctx, const DecodedInst &Di,
   } else {
     // Dword-width atomic, so the `scale_offset` (CPol::SCAL) bit
     // scales the SGPR element-index by 4 to recover the byte offset
-    // — same rule as the other SMEM paths.
+    // -- same rule as the other SMEM paths.
     Value *RegOff = Ctx.B.CreateZExt(Op.src(OffSrcPos), Ctx.I64Ty,
                                       "smem_at_roff");
     if (Di.HasScaleOffset)
@@ -528,7 +523,7 @@ HandlerResult handleSMEM(RaiseContext &Ctx, const DecodedInst &Di,
   Value *Old = Ctx.B.CreateAtomicRMW(RmwOp, Ptr, Data, Align(4),
                                      AtomicOrdering::Monotonic);
   // RTN arm only: publish the pre-modification value to the tied
-  // sdst SGPR.  The non-RTN arm has no write-back — the HW has
+  // sdst SGPR.  The non-RTN arm has no write-back -- the HW has
   // already committed the new value to memory, which is all that
   // form guarantees, and `old` is left as a dead SSA value that
   // LLVM's DCE will remove in the usual way.
