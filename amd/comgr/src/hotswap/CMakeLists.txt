@@ -60,6 +60,7 @@ add_library(hotswap-transpiler OBJECT
   handle-sopc.cpp
   handle-sop1.cpp
   handle-sop2.cpp
+  handle-sopk.cpp
   canonical-op-attrs.cpp
 )
 
