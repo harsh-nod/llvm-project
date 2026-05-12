@@ -20,6 +20,9 @@ if config.comgr_spirv_translator_available:
 if config.comgr_enable_hotswap_transpile:
     config.available_features.add("comgr-hotswap-transpile")
 
+if config.hotswap_have_tdm_runtime:
+    config.available_features.add("tdm-runtime")
+
 if platform.system() == "Windows":
     config.available_features.add("system-windows")
 elif platform.system() == "Linux":

@@ -133,8 +133,8 @@ HandlerResult handleSOPP(RaiseContext &Ctx, const DecodedInst &Di,
   // §6 respectively) that do not exist on gfx942.  The source DMAs
   // they gate are emulated as synchronous `load`+`store` chains on
   // the cross-target arm (see `handle-flat.cpp`'s
-  // `GLOBAL_LOAD_ASYNC_TO_LDS_B*` handler and `handle_vimage.cpp`'s
-  // refusal → future emulation for TENSOR ops), so by the time the
+  // `GLOBAL_LOAD_ASYNC_TO_LDS_B*` handler and `handle-vimage.cpp`'s
+  // refusal -> future emulation for TENSOR ops), so by the time the
   // wait site is reached the underlying memory transfer has
   // already completed at the IR level.  IR dataflow from the
   // emulated `store` through subsequent LDS reads carries the
@@ -142,7 +142,7 @@ HandlerResult handleSOPP(RaiseContext &Ctx, const DecodedInst &Di,
   // re-inserts the target-appropriate `s_waitcnt lgkmcnt(0)` on
   // gfx942 from that ordering constraint.
   //
-  // On the same-target arm (gfx1250 → gfx1250) this branch remains
+  // On the same-target arm (gfx1250 -> gfx1250) this branch remains
   // emission-light for now: the async intrinsic's
   // `IntrInaccessibleMemOrArgMemOnly` annotation prevents reorder across the
   // wait site, while the asynchronous operation itself is what carries the
