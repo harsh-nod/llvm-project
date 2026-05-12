@@ -62,6 +62,8 @@ add_library(hotswap-transpiler OBJECT
   handle-sop2.cpp
   handle-sopk.cpp
   canonical-op-attrs.cpp
+  handle-smem.cpp
+  source-hidden-args.cpp
 )
 
 if(NOT TARGET hotswap::transpiler)

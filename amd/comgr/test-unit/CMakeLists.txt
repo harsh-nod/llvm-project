@@ -278,6 +278,21 @@ target_include_directories(WaveProjectionTests PRIVATE
 
 comgr_configure_test_target(WaveProjectionTests)
 
+# -- SourceHiddenArgsTests -----------------------------------------------------------------
+
+add_executable(SourceHiddenArgsTests
+  SourceHiddenArgsTest.cpp)
+
+target_link_libraries(SourceHiddenArgsTests PRIVATE
+  ${COMGR_GTEST_LIBS}
+  ${LLVM_PTHREAD_LIB})
+comgr_link_hotswap_transpiler(SourceHiddenArgsTests)
+
+target_include_directories(SourceHiddenArgsTests PRIVATE
+  ${COMGR_GTEST_INCLUDE_DIRS})
+
+comgr_configure_test_target(SourceHiddenArgsTests)
+
 # Register every test binary with the test-unit / check-comgr plumbing.
 add_custom_target(test-unit
   COMMAND $<TARGET_FILE:HotswapElfTests>
@@ -287,12 +302,14 @@ add_custom_target(test-unit
   COMMAND $<TARGET_FILE:OpcodeMapTests>
   COMMAND $<TARGET_FILE:RaiserScaffoldingTests>
   COMMAND $<TARGET_FILE:KernargLayoutTests>
-  COMMAND $<TARGET_FILE:WaveProjectionTests>)
+  COMMAND $<TARGET_FILE:WaveProjectionTests>
+  COMMAND $<TARGET_FILE:SourceHiddenArgsTests>)
 add_dependencies(test-unit HotswapElfTests HotswapMCTests
   RaiserScaffoldingTests
   CodeObjectUtilsTests
   MCContextInlineSrcmgrTests
   OpcodeMapTests
   KernargLayoutTests
-  WaveProjectionTests)
+  WaveProjectionTests
+  SourceHiddenArgsTests)
 add_dependencies(check-comgr test-unit)

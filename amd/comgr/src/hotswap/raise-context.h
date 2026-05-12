@@ -44,7 +44,7 @@ struct RaiseContext {
   KernargLayout &Kernargs;
   // Source-ISA user-SGPR ABI derived from the kernel descriptor. Owned by
   // the raiser; threaded into every handler that needs to identify a
-  // specific SGPR by its source-ABI role (e.g. handle_smem.cpp must know
+  // specific SGPR by its source-ABI role (e.g. handle-smem.cpp must know
   // which SGPR holds kernarg_segment_ptr to recognise s_load_b* against
   // the kernarg segment). Always non-null in production; the raiser
   // populates it from `UserSgprLayout::fromKernelMeta` before constructing

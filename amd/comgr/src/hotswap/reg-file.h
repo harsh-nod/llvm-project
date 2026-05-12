@@ -103,7 +103,7 @@ struct AllocaRegFile {
   // installs this so its `lastSgprWaveMaskI1` shadow map (see raise_
   // context.h) stays in sync with every path that mutates an SGPR —
   // including paths that bypass `writeReg32 / writeReg64` to call
-  // `storeSGPR32` directly (several handlers, e.g. handle_smem.cpp's
+  // `storeSGPR32` directly (several handlers, e.g. handle-smem.cpp's
   // multi-dword SMEM load splitting, handle_valu.cpp's SCC-flag SGPR
   // writes).
   //

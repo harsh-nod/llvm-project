@@ -226,7 +226,7 @@ a read of the other role triggers a lossy projection.
   i32 allocas; under widening, `s4` alone is i64, and `s[4:5]` is a
   2-element vector of i64 or an i128 depending on the pairing chosen.
   Every place that does `baseIdx + 1` on SGPR pairs (`writeReg64`,
-  kernarg unpacking in `handle_smem.cpp`, `s_load_b128` decomposition,
+  kernarg unpacking in `handle-smem.cpp`, `s_load_b128` decomposition,
   …) has to stay consistent with whatever the pair model becomes.
 - **Scalar op semantics on widened SGPRs.** `s_mov_b32`, `s_and_b32`,
   `s_or_b32`, `s_xor_b32`, the entire SOP family — each must pick a

@@ -80,7 +80,7 @@ enum class RaiseFailureReason : uint16_t {
   // existing warn-and-continue policy, but strict mode requires the
   // honest "unsupported, may silently miscompile" verdict instead.
   // Today this covers MODE-register writes (`handle-sopk.cpp`) and
-  // `implicitarg.ptr` lifts (`handle_smem.cpp`); see
+  // `implicitarg.ptr` lifts (`handle-smem.cpp`); see
   // the integration-gap investigation for the diagnosis behind each site.
   StrictUnsafeLowering,
   // Phase 4 init: extractKernelMeta failed to read the kernel descriptor

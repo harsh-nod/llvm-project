@@ -25,7 +25,7 @@ namespace COMGR::hotswap {
 // only the two pieces of metadata that survive that move.
 struct KernargLayout {
   // Byte offset (within the source ABI's flat kernarg-segment view)
-  // where the implicit-arg block begins. `handle_smem.cpp` consults
+  // where the implicit-arg block begins. `handle-smem.cpp` consults
   // this to reroute SMEM loads at offsets >= implicitArgsBase through
   // `amdgcn_implicitarg_ptr` instead of the kernarg-segment pointer:
   // the source kernel's flat view is layout-correct for the source

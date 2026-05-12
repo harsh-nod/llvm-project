@@ -141,7 +141,7 @@ static const Entry kCanonTable[] = {
     SMEM3(S_LOAD_DWORDX16, S_LOAD_B512),
     // gfx12+ scalar narrow loads. All four types expose the full
     // IMM/SGPR/SGPR_IMM triad so the existing SMEM3 macro applies
-    // unchanged. Handler in handle_smem.cpp.
+    // unchanged. Handler in handle-smem.cpp.
     SMEM3(S_LOAD_U8,       S_LOAD_U8),
     SMEM3(S_LOAD_I8,       S_LOAD_I8),
     SMEM3(S_LOAD_U16,      S_LOAD_U16),

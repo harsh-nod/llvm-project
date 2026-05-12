@@ -20,14 +20,14 @@
 
 namespace COMGR::hotswap {
 
-// UserSgprLayout — what each SGPR contains at function entry on the source
+// UserSgprLayout -- what each SGPR contains at function entry on the source
 // ISA, derived from the kernel descriptor (KernelMeta::kernelCodeProperties,
 // kernargPreload, computePgmRsrc2).
 //
 // This is the single source of truth for the source-ISA SGPR ABI inside the
 // raiser. The previous implementation hardcoded "kernarg_segment_ptr at
 // s[0:1] / workgroup_id_x at s[2] / workgroup_id_y at s[3]" in raiser.cpp
-// Phase 4 and "isKernarg = (baseIdx == 0)" in handle_smem.cpp; both are
+// Phase 4 and "isKernarg = (baseIdx == 0)" in handle-smem.cpp; both are
 // wrong as soon as kernarg-preload or a non-default kernel_code_properties
 // value is in play (gfx1250 Triton kernels routinely have both).
 //
@@ -51,18 +51,18 @@ namespace COMGR::hotswap {
 struct UserSgprLayout {
   enum class Source : uint8_t {
     Unset,
-    PrivateSegmentBuffer, // 4 dwords (s[i:i+3]) — Shader Resource Descriptor
-    DispatchPtr,          // 2 dwords — pointer to the AQL dispatch packet
-    QueuePtr,             // 2 dwords — pointer to the HSA queue object
-    KernargSegmentPtr,    // 2 dwords — pointer to the kernarg segment
-    DispatchId,           // 2 dwords — dispatch identifier
-    FlatScratchInit,      // 2 dwords — flat scratch base/size init
-    PrivateSegmentSize,   // 1 dword  — size of private segment per work-item
-    PreloadedKernarg,     // 1 dword  — preloaded kernarg dword (gfx1250 ABI)
-    WorkgroupIdX,         // 1 dword  — system SGPR (compute_pgm_rsrc2 bit 7)
-    WorkgroupIdY,         // 1 dword  — system SGPR (compute_pgm_rsrc2 bit 8)
-    WorkgroupIdZ,         // 1 dword  — system SGPR (compute_pgm_rsrc2 bit 9)
-    WorkgroupInfo,        // 1 dword  — system SGPR (compute_pgm_rsrc2 bit 10)
+    PrivateSegmentBuffer, // 4 dwords (s[i:i+3]) -- Shader Resource Descriptor
+    DispatchPtr,          // 2 dwords -- pointer to the AQL dispatch packet
+    QueuePtr,             // 2 dwords -- pointer to the HSA queue object
+    KernargSegmentPtr,    // 2 dwords -- pointer to the kernarg segment
+    DispatchId,           // 2 dwords -- dispatch identifier
+    FlatScratchInit,      // 2 dwords -- flat scratch base/size init
+    PrivateSegmentSize,   // 1 dword  -- size of private segment per work-item
+    PreloadedKernarg,     // 1 dword  -- preloaded kernarg dword (gfx1250 ABI)
+    WorkgroupIdX,         // 1 dword  -- system SGPR (compute_pgm_rsrc2 bit 7)
+    WorkgroupIdY,         // 1 dword  -- system SGPR (compute_pgm_rsrc2 bit 8)
+    WorkgroupIdZ,         // 1 dword  -- system SGPR (compute_pgm_rsrc2 bit 9)
+    WorkgroupInfo,        // 1 dword  -- system SGPR (compute_pgm_rsrc2 bit 10)
   };
 
   struct Entry {
