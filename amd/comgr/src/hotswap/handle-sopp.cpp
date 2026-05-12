@@ -132,7 +132,7 @@ HandlerResult handleSOPP(RaiseContext &Ctx, const DecodedInst &Di,
   // (`ASYNCcnt`, `TENSORcnt`; programming_manual.pdf §4.9.9 and
   // §6 respectively) that do not exist on gfx942.  The source DMAs
   // they gate are emulated as synchronous `load`+`store` chains on
-  // the cross-target arm (see `handle_flat.cpp`'s
+  // the cross-target arm (see `handle-flat.cpp`'s
   // `GLOBAL_LOAD_ASYNC_TO_LDS_B*` handler and `handle_vimage.cpp`'s
   // refusal → future emulation for TENSOR ops), so by the time the
   // wait site is reached the underlying memory transfer has

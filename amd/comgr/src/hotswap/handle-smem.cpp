@@ -215,7 +215,7 @@ HandlerResult handleSMEM(RaiseContext &Ctx, const DecodedInst &Di,
         // set the SGPR offset is an element index, not a byte
         // offset — hardware multiplies it by the load's data-type
         // size before adding to sbase. Mirror that here (the
-        // FLAT/GLOBAL counterparts in flat_addr.cpp do the same
+        // FLAT/GLOBAL counterparts in flat-addr.cpp do the same
         // against `elemBytes`). The "element size" for the scalar
         // dword family is the full load width: 4B for B32, 8B for
         // B64, 16B for B128, etc. — i.e. `loadBytes`. Ignoring the

@@ -64,7 +64,7 @@ struct RaiseContext {
 
   llvm::DenseMap<uint64_t, llvm::BasicBlock *> &OffsetToBb;
 
-  // Source KD private/scratch allocation. `handle_flat.cpp` sets
+  // Source KD private/scratch allocation. `handle-flat.cpp` sets
   // `usesScratchPrivateSegment` when it lowers a `scratch_*` instruction; the
   // on-demand private alloca is deliberately managed by LLVM's frame layout so
   // target spills cannot overlap translated source scratch slots.

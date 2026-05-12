@@ -327,7 +327,7 @@ special-case inline.
 
 ### 5.3 Atomic memory scopes
 
-Current policy (`handle_flat.cpp:291` etc.): every atomic emits
+Current policy (`handle-flat.cpp:291` etc.): every atomic emits
 `AtomicOrdering::SequentiallyConsistent` (for `atomicrmw`) or
 `Monotonic` (for `cmpxchg`), with the default `syncscope` (system).
 
@@ -342,7 +342,7 @@ th/scope bits.
 
 **Refinement:** extend `DecodedInst` with parsed `(scope, ordering)`
 fields from the gfx12 th/scope modifiers, and use them in
-`handle_flat.cpp` / `handle_mubuf.cpp` when emitting `atomicrmw`.
+`handle-flat.cpp` / `handle_mubuf.cpp` when emitting `atomicrmw`.
 The mapping table:
 
 | gfx12 encoding | IR ordering | IR syncscope |
@@ -516,7 +516,7 @@ Add `isScheduleHint` to `SemOpAttrs`. Register all `S_WAIT_*`,
 
 Extend `DecodedInst` with parsed `th`/`scope` fields from gfx12
 modifiers (decode-side change in `decode.cpp`). Rewrite
-`handle_flat.cpp:291-293` / `handle_mubuf.cpp` to use them. Add
+`handle-flat.cpp:291-293` / `handle_mubuf.cpp` to use them. Add
 mapping table. ~250 LoC.
 
 ### T4 — Cache-op SemOps (G4)
