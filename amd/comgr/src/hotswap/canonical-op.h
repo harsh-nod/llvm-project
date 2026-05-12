@@ -831,7 +831,7 @@ enum class CanonicalOp : uint16_t {
   BUFFER_STORE_BYTE, BUFFER_STORE_SHORT,
 
   // -- MUBUF atomics --
-  // Order is significant: handle_mubuf.cpp dispatches via the range
+  // Order is significant: handle-mubuf.cpp dispatches via the range
   // check `[BUFFER_ATOMIC_ADD, BUFFER_ATOMIC_PK_ADD_F16]`. New
   // BUFFER_ATOMIC_* CanonicalOps must stay inside this range so the range
   // check picks them up; entries the handler does not explicitly
@@ -842,7 +842,7 @@ enum class CanonicalOp : uint16_t {
   // Class 3 non-commutative atomics (NonCommutativeAtomic), see
   // hotswap/docs/wave-size-translation.md §6.
   // The wave-size classifier flags these in the cross-wave case;
-  // handle_mubuf.cpp models them with raw-buffer atomics so same-wave
+  // handle-mubuf.cpp models them with raw-buffer atomics so same-wave
   // and same-target lifts preserve descriptor-relative addressing.
   BUFFER_ATOMIC_SWAP, BUFFER_ATOMIC_CMPSWAP,
   BUFFER_ATOMIC_ADD_F32,

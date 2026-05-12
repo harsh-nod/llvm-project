@@ -53,7 +53,7 @@ namespace {
 // inside this file.  DS family has its own structurally-identical
 // emission in handle_ds.cpp (DS_WRITE_B16_D16_HI under
 // `ds_st_d16_hi` / `ds_st_hi16_shr` breadcrumbs); MUBUF family has
-// the load-side companion in handle_mubuf.cpp (via `d16Half=2` in
+// the load-side companion in handle-mubuf.cpp (via `d16Half=2` in
 // `mubufClassify`).  Three addrspace-specific handlers, one
 // conceptual operation; they intentionally do not share a helper
 // because each resolves a different addressing / EXEC-gating

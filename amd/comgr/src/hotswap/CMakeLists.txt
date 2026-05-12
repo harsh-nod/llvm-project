@@ -66,6 +66,8 @@ add_library(hotswap-transpiler OBJECT
   source-hidden-args.cpp
   handle-flat.cpp
   flat-addr.cpp
+  handle-mubuf.cpp
+  mubuf-addr.cpp
 )
 
 if(NOT TARGET hotswap::transpiler)

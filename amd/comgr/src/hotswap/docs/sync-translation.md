@@ -1,4 +1,4 @@
-# Sync Translation — Barriers, Waitcnt, Fences, Memory Scopes
+# Sync Translation -- Barriers, Waitcnt, Fences, Memory Scopes
 
 > **Status:** design proposal. Current raiser implements the 80% path
 > (unified-barrier lowering, waitcnt-as-no-op, SC atomics) which is
@@ -7,7 +7,7 @@
 > gates needed to refuse kernels whose synchronisation patterns fall
 > outside that model.
 >
-> **Scope:** gfx1250 → gfx950. The barrier split is gfx12-only in our
+> **Scope:** gfx1250 -> gfx950. The barrier split is gfx12-only in our
 > corpus, but the framework applies to any future ISA pair that
 > diverges on synchronisation primitives.
 
@@ -37,7 +37,7 @@ Three facts make the translation tractable:
 1. **LLVM owns waitcnt.** The backend inserts `s_waitcnt` at code
    emission based on the IR's memory-model ordering of loads, stores,
    and atomics. Any source-side `s_waitcnt` is redundant metadata
-   once we have the IR dependences right — the backend rebuilds it
+   once we have the IR dependences right -- the backend rebuilds it
    for the target generation (unified `s_waitcnt` on gfx9, split
    counters on gfx12). This is why `handle-sopp.cpp:94` treats
    waitcnt as a no-op. Current correctness notes do not attribute any
@@ -57,21 +57,21 @@ The remaining 20% is the set of source patterns that do *not* reduce
 to those IR primitives. Named barriers, fences with non-standard
 scopes, and multi-XCD cluster sync are the cases we must refuse.
 
-## 3. Source model — gfx1250 (gfx12)
+## 3. Source model -- gfx1250 (gfx12)
 
 ### 3.1 Split barriers
 
 gfx12 replaced the monolithic `s_barrier` with two primitives:
 
-- `s_barrier_signal imm16` — signals barrier `imm16`; does not
+- `s_barrier_signal imm16` -- signals barrier `imm16`; does not
   block the wave. Lanes continue executing.
-- `s_barrier_wait imm16` — blocks the wave until barrier `imm16`
+- `s_barrier_wait imm16` -- blocks the wave until barrier `imm16`
   has been signalled by the required number of waves.
 
 `imm16` is a barrier resource index (0..31 typical; 0 is the default
 workgroup barrier that behaves like the legacy unified `s_barrier`).
 Additional barrier resources (named barriers) can be set up at launch
-time to coordinate subsets of waves — the canonical use case is
+time to coordinate subsets of waves -- the canonical use case is
 Triton's `warp_specialize` where producer and consumer waves rendezvous
 on different named barriers.
 
@@ -82,14 +82,14 @@ SemOps: `S_BARRIER`, `S_BARRIER_SIGNAL`, `S_BARRIER_WAIT`
 
 gfx12 split the combined `s_waitcnt` into category-specific waits:
 
-- `s_wait_loadcnt N` — VMEM loads outstanding ≤ N
-- `s_wait_storecnt N` — VMEM stores outstanding ≤ N
-- `s_wait_dscnt N` — LDS ops outstanding ≤ N
-- `s_wait_kmcnt N` — SMEM / kernarg loads outstanding ≤ N
-- `s_wait_xcnt N` — export/message count ≤ N
-- `s_wait_loadcnt_dscnt` — fused LOAD + DS wait
-- `s_wait_alu imm16` — VALU dependency wait (gfx12 specific)
-- `s_delay_alu`, `s_clause` — scheduling hints, not memory waits
+- `s_wait_loadcnt N` -- VMEM loads outstanding ≤ N
+- `s_wait_storecnt N` -- VMEM stores outstanding ≤ N
+- `s_wait_dscnt N` -- LDS ops outstanding ≤ N
+- `s_wait_kmcnt N` -- SMEM / kernarg loads outstanding ≤ N
+- `s_wait_xcnt N` -- export/message count ≤ N
+- `s_wait_loadcnt_dscnt` -- fused LOAD + DS wait
+- `s_wait_alu imm16` -- VALU dependency wait (gfx12 specific)
+- `s_delay_alu`, `s_clause` -- scheduling hints, not memory waits
 
 SemOps: all enumerated at `semop.hpp:18-20`.
 
@@ -99,10 +99,10 @@ gfx12 atomics carry a two-level scope+scope-of-return encoding in
 `th`/`scope` instruction modifiers. The typical scopes used by Triton
 / Gluon kernels:
 
-- `agent` (device-scope) — for cross-workgroup atomics
-- `workgroup` — for cross-wave-within-workgroup atomics (rare; LDS
+- `agent` (device-scope) -- for cross-workgroup atomics
+- `workgroup` -- for cross-wave-within-workgroup atomics (rare; LDS
   atomics cover most of these)
-- `wavefront` — for cross-lane atomics (usually absent; LDS suffices)
+- `wavefront` -- for cross-lane atomics (usually absent; LDS suffices)
 
 The source code's intent is carried by how Triton compiles its
 `atomic_add(..., sem="release", scope="gpu")` etc. down to MC
@@ -112,10 +112,10 @@ instructions. The raiser must recover that intent.
 
 Stand-alone cache operations:
 
-- `global_inv scope` — invalidate a cache level
-- `global_wb scope` — write back a cache level
-- `global_wbinv scope` — both
-- `buffer_inv scope` — same for buffer/V# accesses
+- `global_inv scope` -- invalidate a cache level
+- `global_wb scope` -- write back a cache level
+- `global_wbinv scope` -- both
+- `buffer_inv scope` -- same for buffer/V# accesses
 
 These exist on gfx12 as first-class SOPP/FLAT instructions. They do
 not have SemOps today. They appear in the kerneldex histograms for
@@ -128,17 +128,17 @@ via Gluon; these compile to a coordinated DS-based barrier across
 XCDs. Not present in the captured corpus; listed for gate
 completeness.
 
-## 4. Target model — gfx950 (CDNA4)
+## 4. Target model -- gfx950 (CDNA4)
 
 ### 4.1 What gfx950 has
 
-- `s_barrier` — unified monolithic barrier. All waves in workgroup
+- `s_barrier` -- unified monolithic barrier. All waves in workgroup
   arrive, all leave. No named barriers.
-- `s_waitcnt vmcnt(N) lgkmcnt(N) expcnt(N)` — combined, three
+- `s_waitcnt vmcnt(N) lgkmcnt(N) expcnt(N)` -- combined, three
   counters. The backend inserts these.
 - `AtomicOrdering` + `syncscope(…)` lower to `glc`, `slc`, `dlc`,
   `scc` bits on the atomic.
-- `buffer_wbinvl1`, `buffer_wbinvl1_vol`, `buffer_wbl2` — cache
+- `buffer_wbinvl1`, `buffer_wbinvl1_vol`, `buffer_wbl2` -- cache
   control at L1/L2. Each is a SOPP instruction the backend emits.
 - LDS atomics supported natively; cross-wave sync is via
   `s_barrier` + LDS.
@@ -153,7 +153,7 @@ completeness.
 - `s_wait_alu`. The gfx950 backend resolves VALU hazards with
   register-read stall cycles, not explicit waits.
 
-## 5. Translation design — per primitive
+## 5. Translation design -- per primitive
 
 ### 5.0 Target-capability dispatch (native vs. collapse)
 
@@ -179,7 +179,7 @@ Extend `ISAProfile` with:
 | `hasClusterBarriers` | `FeatureClusters` (upstream TableGen name) | §5.5 |
 
 `hasCacheScopedOps` (for `global_inv` / `global_wb` / …) is not a
-separate bit — gfx950 and gfx12 have overlapping but non-identical
+separate bit -- gfx950 and gfx12 have overlapping but non-identical
 families. §5.4 handles the per-op mapping instead of treating it as
 one capability.
 
@@ -187,29 +187,29 @@ one capability.
 
 | Source primitive | Target has capability | Action | Target lacks capability | Action |
 |---|---|---|---|---|
-| `S_BARRIER_SIGNAL/WAIT` (`imm16=0`) | `hasSplitBarriers` | emit split intrinsic pair (§5.1.a) | — | collapse to `llvm.amdgcn.s.barrier` (§5.1.b, existing) |
-| `S_BARRIER_SIGNAL/WAIT` (`imm16≠0`) | `hasSplitBarriers` | emit named-barrier intrinsic (§5.1.a) | — | **refuse** (`namedBarrierUnsupported`; §5.1) |
-| `S_WAIT_{LOAD,STORE,DS,KM,X}CNT` | `hasSplitWaitCnt` | emit matching `llvm.amdgcn.s.waitcnt.*` | — | no-op (backend re-derives on combined counter) (§5.2) |
-| `S_WAIT_ALU` | `hasSWaitAlu` | emit native intrinsic | — | no-op (backend handles VALU hazards) (§5.2) |
-| `S_BARRIER` (monolithic) | always (every AMDGPU target) | emit `llvm.amdgcn.s.barrier` | — | — |
-| Atomics with `(ordering, scope)` | always (LLVM IR is shared) | emit `atomicrmw` with tags (§5.3) | — | — |
-| `GLOBAL_INV/WB/WBINV`, `BUFFER_INV` | per-target table (§5.4) | emit matching intrinsic | — | refuse |
-| Cluster barriers | `hasClusterBarriers` | emit cluster intrinsic pair | — | refuse (§5.5) |
+| `S_BARRIER_SIGNAL/WAIT` (`imm16=0`) | `hasSplitBarriers` | emit split intrinsic pair (§5.1.a) | -- | collapse to `llvm.amdgcn.s.barrier` (§5.1.b, existing) |
+| `S_BARRIER_SIGNAL/WAIT` (`imm16≠0`) | `hasSplitBarriers` | emit named-barrier intrinsic (§5.1.a) | -- | **refuse** (`namedBarrierUnsupported`; §5.1) |
+| `S_WAIT_{LOAD,STORE,DS,KM,X}CNT` | `hasSplitWaitCnt` | emit matching `llvm.amdgcn.s.waitcnt.*` | -- | no-op (backend re-derives on combined counter) (§5.2) |
+| `S_WAIT_ALU` | `hasSWaitAlu` | emit native intrinsic | -- | no-op (backend handles VALU hazards) (§5.2) |
+| `S_BARRIER` (monolithic) | always (every AMDGPU target) | emit `llvm.amdgcn.s.barrier` | -- | -- |
+| Atomics with `(ordering, scope)` | always (LLVM IR is shared) | emit `atomicrmw` with tags (§5.3) | -- | -- |
+| `GLOBAL_INV/WB/WBINV`, `BUFFER_INV` | per-target table (§5.4) | emit matching intrinsic | -- | refuse |
+| Cluster barriers | `hasClusterBarriers` | emit cluster intrinsic pair | -- | refuse (§5.5) |
 
 #### 5.0.3 Consequences for same-family retarget
 
-The gfx1251 → gfx1250 path takes the native branch for every sync
+The gfx1251 -> gfx1250 path takes the native branch for every sync
 primitive: split barriers stay split, split wait counters stay split,
 `s_wait_alu` stays, and atomics keep their decoded `(ordering, scope)`
 tuple. The "collapse" paths below (§5.1.b's monolithic barrier,
 §5.2's no-op waitcnt) are reached only when targeting pre-gfx12 ISAs
 like gfx942/gfx950. Same as matrix: there is no fast path in the
-byte-patching sense — the capability branch above **is** the fast
+byte-patching sense -- the capability branch above **is** the fast
 path.
 
 ### 5.1 Barriers
 
-#### 5.1.a Native split path — `hasSplitBarriers` targets
+#### 5.1.a Native split path -- `hasSplitBarriers` targets
 
 When the target ISA also exposes split barriers (gfx12+), emit the
 split intrinsic pair directly:
@@ -231,18 +231,18 @@ if (sop == SemOp::S_BARRIER_WAIT && ctx.targetIsa.hasSplitBarriers) {
 }
 ```
 
-The `imm16` barrier resource id passes through unchanged — named
+The `imm16` barrier resource id passes through unchanged -- named
 barriers are valid on split-capable targets. G1 (§7) only fires on
 pre-gfx12 targets where the collapse in §5.1.b cannot represent them.
 
-#### 5.1.b Collapse path — pre-gfx12 targets (existing policy)
+#### 5.1.b Collapse path -- pre-gfx12 targets (existing policy)
 
 When the target is pre-gfx12 (`!hasSplitBarriers`), collapse the split
 primitives to the monolithic barrier. Current implementation in
 `handle-sopp.cpp:70-84`:
 
-- `S_BARRIER`, `S_BARRIER_WAIT` → `call void @llvm.amdgcn.s.barrier()`
-- `S_BARRIER_SIGNAL` → no-op (handled = true; emits nothing)
+- `S_BARRIER`, `S_BARRIER_WAIT` -> `call void @llvm.amdgcn.s.barrier()`
+- `S_BARRIER_SIGNAL` -> no-op (handled = true; emits nothing)
 
 This is correct iff the source uses the **default barrier resource
 (0)** exclusively and *every* wave reaches *every* signal and wait.
@@ -256,7 +256,7 @@ It is incorrect in three cases:
 | Case | Why it breaks |
 |---|---|
 | `imm16 != 0` | Source uses named barriers to rendezvous a **subset** of waves. Monolithic lowering rendezvouses all waves, overclosing the happens-before graph and deadlocking if some waves never reach this wait. |
-| Producer signals `imm16=0` but consumer waits on `imm16=1` (or vice versa) | Different barrier identities — collapsing to one barrier reconverges waves that source kept divergent. |
+| Producer signals `imm16=0` but consumer waits on `imm16=1` (or vice versa) | Different barrier identities -- collapsing to one barrier reconverges waves that source kept divergent. |
 | One wave signals twice without a wait in between | The signal count matters for named barriers. The collapse loses that. |
 
 **Refinement:** the named-barrier refusal only applies on the
@@ -289,7 +289,7 @@ through.
 
 ### 5.2 Wait counters
 
-#### 5.2.a Native split path — `hasSplitWaitCnt` targets
+#### 5.2.a Native split path -- `hasSplitWaitCnt` targets
 
 When the target also has split counters (gfx12+), preserve them
 directly. Each `S_WAIT_*CNT` SemOp maps 1:1 to
@@ -297,7 +297,7 @@ directly. Each `S_WAIT_*CNT` SemOp maps 1:1 to
 set. The backend re-emits the same mnemonic on output. No information
 is discarded.
 
-#### 5.2.b No-op collapse path — pre-gfx12 targets (existing policy)
+#### 5.2.b No-op collapse path -- pre-gfx12 targets (existing policy)
 
 When the target has only the combined counter (`!hasSplitWaitCnt`),
 all waitcnt SemOps fall through as no-ops (`handle-sopp.cpp:94`). The
@@ -311,7 +311,7 @@ This is correct on two conditions:
    `store` SSA values carry dependences, and the backend inserts
    `s_waitcnt` in the output.
 2. No waitcnt is acting as a **cross-wave** barrier. Waitcnt is a
-   per-wave primitive by definition, so this is tautologically true —
+   per-wave primitive by definition, so this is tautologically true --
    but some programming styles use `s_waitcnt` + volatile memory
    accesses to implement a hand-rolled producer/consumer across
    waves. That pattern requires a barrier, not a waitcnt, and if a
@@ -342,7 +342,7 @@ th/scope bits.
 
 **Refinement:** extend `DecodedInst` with parsed `(scope, ordering)`
 fields from the gfx12 th/scope modifiers, and use them in
-`handle-flat.cpp` / `handle_mubuf.cpp` when emitting `atomicrmw`.
+`handle-flat.cpp` / `handle-mubuf.cpp` when emitting `atomicrmw`.
 The mapping table:
 
 | gfx12 encoding | IR ordering | IR syncscope |
@@ -359,7 +359,7 @@ The `"-one-as"` scope variants are the AMDGPU-specific single-address-
 space scopes; they lower correctly on both gfx12 and gfx9.
 
 **Refusal case:** a scope the target does not support. `wavefront`
-scope is not a standard LLVM AMDGPU scope — reject until the
+scope is not a standard LLVM AMDGPU scope -- reject until the
 AMDGPULowerMemoryModel pass learns it.
 
 ### 5.4 Standalone cache operations
@@ -377,7 +377,7 @@ divergence handled at the sync-translation level:
 If the source's `scope` is not representable with the target's
 intrinsics (e.g., gfx950 has no per-XCD cache op), refuse.
 
-Most Triton/Gluon kernels never emit standalone cache ops — the
+Most Triton/Gluon kernels never emit standalone cache ops -- the
 AMDGPULowerMemoryModel pass derives them from atomic ordering+scope.
 We still need the SemOps so we can catch hand-written kernels (like
 some Tensilelite persistent GEMMs) that emit them explicitly.
@@ -388,10 +388,10 @@ Not yet a SemOp. Cluster sync compiles to `ds_wrap_rtn_b32` +
 `s_waitcnt_vscnt` + a coordinated write-back pattern. Dispatched by
 `ISAProfile::hasClusterBarriers`:
 
-- **Target has cluster barriers** → preserve the primitive (emit the
+- **Target has cluster barriers** -> preserve the primitive (emit the
   Gluon-level cluster intrinsic pair, `cluster.arrive` /
   `cluster.wait`).
-- **Target lacks cluster barriers** → refuse. Multi-XCD coordination
+- **Target lacks cluster barriers** -> refuse. Multi-XCD coordination
   has no intra-kernel equivalent on pre-cluster ISAs.
 
 Detectable at decode via `hidden_cluster_size` or the Gluon-emitted
@@ -438,12 +438,12 @@ string. No silent downgrades.
 
 ## 7. Principled fail-loudly gates
 
-### G1 — Named-barrier gate (per-kernel)
+### G1 -- Named-barrier gate (per-kernel)
 
 Fires on any `S_BARRIER_SIGNAL` / `S_BARRIER_WAIT` with `imm16 != 0`.
 Reason: `namedBarrierUnsupported`.
 
-### G2 — Waitcnt classification (startup)
+### G2 -- Waitcnt classification (startup)
 
 New `SemOpAttrs::isScheduleHint` bit. Startup verifier:
 `verifyWaitcntAttrCoverage` ensures every SemOp whose MCInstrDesc
@@ -451,19 +451,19 @@ flags it as SOPP *and* whose mnemonic matches `s_wait*|s_clause|s_delay_alu`
 has `isScheduleHint = true`. Catches new LLVM-emitted wait variants
 that we haven't audited.
 
-### G3 — Atomic scope gate (per-kernel)
+### G3 -- Atomic scope gate (per-kernel)
 
 Wrapped around each atomic emission: if decoded `(th, scope)` does
 not map to a supported IR `(ordering, syncscope)` tuple, refuse with
 `atomicScopeUnsupported`.
 
-### G4 — Cache-op coverage (per-kernel)
+### G4 -- Cache-op coverage (per-kernel)
 
 For every instruction whose mnemonic matches the cache-op family,
 require a handler that either emits the target equivalent or raises
 `cacheOpUnsupported`. Default (no handler row) is refuse.
 
-### G5 — Cluster sync (per-kernel)
+### G5 -- Cluster sync (per-kernel)
 
 Pattern-match the cluster barrier signature (DS wrap + scoped
 waitcnt) at raise time; refuse on hit.
@@ -500,32 +500,32 @@ waitcnt) at raise time; refuse on hit.
 
 ## 9. Engineering tasks
 
-### T1 — Named-barrier gate (G1)
+### T1 -- Named-barrier gate (G1)
 
 Modify `handle-sopp.cpp:74-84` to read `di.getImm(0)` and refuse on
 non-zero. 15 LoC + one test.
 
-### T2 — Waitcnt classification (G2)
+### T2 -- Waitcnt classification (G2)
 
 Add `isScheduleHint` to `SemOpAttrs`. Register all `S_WAIT_*`,
 `S_CLAUSE`, `S_DELAY_ALU`, `S_WAITCNT` SemOps in a new
 `getHandlerSOPPScheduleAttrs()` spec list. Add
 `verifyWaitcntAttrCoverage()` called from raiser init. 80 LoC.
 
-### T3 — Atomic scope recovery (G3)
+### T3 -- Atomic scope recovery (G3)
 
 Extend `DecodedInst` with parsed `th`/`scope` fields from gfx12
 modifiers (decode-side change in `decode.cpp`). Rewrite
-`handle-flat.cpp:291-293` / `handle_mubuf.cpp` to use them. Add
+`handle-flat.cpp:291-293` / `handle-mubuf.cpp` to use them. Add
 mapping table. ~250 LoC.
 
-### T4 — Cache-op SemOps (G4)
+### T4 -- Cache-op SemOps (G4)
 
 Add `GLOBAL_INV`, `GLOBAL_WB`, `GLOBAL_WBINV`, `BUFFER_INV`,
 `S_MEMREALTIME` (latter for gate only). Handlers emit the right
 intrinsic on gfx950. ~200 LoC.
 
-### T5 — Cluster barrier gate (G5)
+### T5 -- Cluster barrier gate (G5)
 
 Pattern matcher in the post-decode pass; refuse on hit. 80 LoC.
 
@@ -537,7 +537,7 @@ correctness). T4 and T5 follow once real kernels hit them.
 ## 10. Relationship to other axes
 
 - **SPE (`wave-size-translation.md`):** barriers under divergent EXEC are
-  SPE's responsibility — a barrier inside a predicated diamond is
+  SPE's responsibility -- a barrier inside a predicated diamond is
   wrong for all source ISAs and SPE already refuses that pattern
   (every wave must reach a barrier). Sync-translation assumes SPE
   is already enforced.

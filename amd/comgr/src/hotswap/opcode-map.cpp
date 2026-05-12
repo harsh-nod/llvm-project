@@ -935,7 +935,7 @@ static const Entry kCanonTable[] = {
     // encodings; gfx11+/gfx1250 fork to VBUFFER (BUFInstructions.td
     // 2610-2620 maps `_d16_*` mnemonics to the VBUFFER pseudos). Both
     // encodings dispatch to the same partial-write handler in
-    // handle_mubuf.cpp via the CanonicalOp; the `D16PreservesUnusedBits`
+    // handle-mubuf.cpp via the CanonicalOp; the `D16PreservesUnusedBits`
     // semantics is enforced there by reading the prior dst and
     // merging.
     MUBUF4(BUFFER_LOAD_SHORT_D16, BUFFER_LOAD_SHORT_D16),
@@ -973,7 +973,7 @@ static const Entry kCanonTable[] = {
     // Class 3 non-commutative atomics (hotswap/docs/wave-size-
     // translation.md §6). The wave-size classifier flags them in
     // the cross-wave case before
-    // dispatch ever reaches handle_mubuf.cpp's switch. Same-wave and
+    // dispatch ever reaches handle-mubuf.cpp's switch. Same-wave and
     // same-target lifts are still modeled with raw-buffer atomics there.
     MUBUF4(BUFFER_ATOMIC_SWAP, BUFFER_ATOMIC_SWAP),
     MUBUF4(BUFFER_ATOMIC_CMPSWAP, BUFFER_ATOMIC_CMPSWAP),
@@ -988,10 +988,10 @@ static const Entry kCanonTable[] = {
     // `BUFFER_ATOMIC_*` pseudo names but suffixes them with
     // `_VBUFFER_<addressing>` to distinguish the gfx12 buffer-
     // descriptor encoding from the legacy MUBUF one. The decoder in
-    // mubuf_addr.cpp explicitly recognises both encodings (keys on
+    // mubuf-addr.cpp explicitly recognises both encodings (keys on
     // ParsedReg::Kind rather than operand position) so the existing
     // BUFFER_ATOMIC_* CanonicalOps and raw-buffer atomic lowering in
-    // handle_mubuf.cpp's `sop >= BUFFER_ATOMIC_ADD &&
+    // handle-mubuf.cpp's `sop >= BUFFER_ATOMIC_ADD &&
     // sop <= BUFFER_ATOMIC_PK_ADD_F16` branch work unchanged for
     // VBUFFER atomics. Without these entries the gfx1250 corpus
     // (e.g. scope_discovery___sum_bitmatrix_rows refused on
