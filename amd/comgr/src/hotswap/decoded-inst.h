@@ -103,7 +103,7 @@ struct DecodedInst {
   // Sentinel: when `canonOp != DS_SWIZZLE_B32`, `hasDsSwizzleImm`
   // stays false and `dsSwizzleImm` is meaningless. The decoder
   // refuses to set the field if the operand is missing,
-  // non-immediate, or outside the unsigned 16-bit range — same
+  // non-immediate, or outside the unsigned 16-bit range -- same
   // soundness contract as the classifier extractor (an out-of-range
   // value silently truncated to uint16_t could land in either the
   // QUAD_PERM or BITMASK_PERM safe envelope and cause a silent
@@ -118,7 +118,7 @@ struct DecodedInst {
   //   v_dual_<x> ... :: v_dual_<y> ...
   // but the raiser must not recover semantics by tokenizing that text.
   // The decoder populates this sidecar from LLVM's VOPD component tables
-  // and MC operand indices; handle_vopd.cpp consumes only this typed view.
+  // and MC operand indices; handle-vopd.cpp consumes only this typed view.
   struct VopdSource {
     enum class Kind : uint8_t {
       None,

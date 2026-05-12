@@ -471,7 +471,7 @@ enum class CanonicalOp : uint16_t {
   //   med3_i32(a, b, c) = smax(smin(a, b), smin(smax(a, b), c))
   // i.e. the middle of three signed i32 values. We lift it as a
   // pair of `llvm.smin`/`llvm.smax` intrinsics (matching the
-  // `handle_vopd.cpp` style that already uses these intrinsics for
+  // `handle-vopd.cpp` style that already uses these intrinsics for
   // VOPD smin/smax/umin/umax pairs). The backend's
   // `AMDGPUISelDAGToDAG`/`AMDGPUISelLowering` pattern-matches the
   // `smax(smin(...), smin(smax(...), ...))` shape back to

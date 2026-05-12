@@ -1,14 +1,14 @@
-# Matrix Translation — WMMA to MFMA (incl. MXFP scaled path)
+# Matrix Translation -- WMMA to MFMA (incl. MXFP scaled path)
 
 > **Status:** one shape implemented end-to-end
-> (`V_WMMA_F32_16x16x32_F16` → 2×`V_MFMA_F32_16x16x16_F16` via
+> (`V_WMMA_F32_16x16x32_F16` -> 2×`V_MFMA_F32_16x16x16_F16` via
 > `wmma-lowering.cpp`), powering the F16 GEMM baseline. This doc
 > generalises that lowering into a principled per-shape framework
 > that covers the rest of the Gluon surface (BF16, I8, F8/F6/F4) and
 > the MXFP scaled path, and specifies the gates that refuse shapes
 > we don't cover rather than emitting something subtly wrong.
 >
-> **Scope:** gfx1250 WMMA/SWMMAC → gfx950 MFMA, including scaled
+> **Scope:** gfx1250 WMMA/SWMMAC -> gfx950 MFMA, including scaled
 > (MXFP) variants. The design extends to any future matrix primitive
 > with a K-decomposable shape.
 
@@ -26,7 +26,7 @@ mismatches make simple intrinsic substitution impossible:
 1. **Wave size.** The SPE projection runs the wave32 source kernel
    as two independent copies inside a wave64 (lanes 0..31 and
    lanes 32..63). An MFMA intrinsic naïvely placed in the IR
-   couples those two copies — they become one matmul that mixes
+   couples those two copies -- they become one matmul that mixes
    unrelated data.
 2. **Fragment layout.** WMMA's lane-to-(row, col, k) mapping differs
    from MFMA's. The 256 output elements of a 16×16 tile land on
@@ -35,7 +35,7 @@ mismatches make simple intrinsic substitution impossible:
 3. **K-shape.** Some gfx950 MFMA shapes have a larger K than their
    gfx1250 WMMA counterpart (16×16×128 F8 MFMA vs. 16×16×64 F8 WMMA),
    which turns "replace WMMA with MFMA" into "fuse two WMMAs per
-   MFMA" — a non-local rewrite.
+   MFMA" -- a non-local rewrite.
 
 The translation has to simultaneously (a) keep the two wave32
 projections disjoint, (b) bridge the fragment layouts at the
@@ -53,7 +53,7 @@ structural choices are reusable for every shape we add:
    gather the wave32 group's operand fragments into the MFMA
    layout; MFMA runs on all 64 lanes but only its "owning" group's
    result is selected at the end. The top/bottom halves do not
-   share matmul inputs across the boundary — they are two
+   share matmul inputs across the boundary -- they are two
    independent matmuls per source WMMA.
 2. **ds_bpermute for layout bridging.** Reading from any lane
    regardless of EXEC, independent of the SPE predication story.
@@ -62,7 +62,7 @@ structural choices are reusable for every shape we add:
    `laneId / 16` (the MFMA's lane-group ID).
 3. **K-decomposition loop.** WMMA at K=32 unrolls into 2×MFMA at
    K=16 with accumulator chaining. The same structure generalises
-   to K=N → (N/K_mfma)× MFMAs.
+   to K=N -> (N/K_mfma)× MFMAs.
 
 Cost per source WMMA: roughly `2 × (|A dwords| + |B dwords| + |C
 dwords| + K/K_mfma) × ds_bpermute + 2 × K/K_mfma × MFMA +
@@ -72,9 +72,9 @@ dot-product / reduction-over-matmul does not. That is a performance
 consideration (out of scope for this doc); the policy here is
 **correct output at any cost**.
 
-## 3. Source model — gfx1250 WMMA / SWMMAC shapes
+## 3. Source model -- gfx1250 WMMA / SWMMAC shapes
 
-Captured corpus — the shapes we need to cover for GPT-OSS + Gluon:
+Captured corpus -- the shapes we need to cover for GPT-OSS + Gluon:
 
 | Shape | A dtype | B dtype | Out dtype | M×N×K | Source |
 |---|---|---|---|---|---|
@@ -99,7 +99,7 @@ Calculator):
 
 SWMMAC adds a 4×packed-per-lane sparsity mask. Deferred (§8).
 
-## 4. Target model — gfx950 MFMA / scaled MFMA shapes
+## 4. Target model -- gfx950 MFMA / scaled MFMA shapes
 
 Relevant gfx950 shapes (from `semop.hpp:213-241`; AMD ISA reference
 chapter 14):
@@ -119,14 +119,14 @@ chapter 14):
 
 Key asymmetries vs. source:
 
-- **Direct K match** for 16×16×32 F16/BF16/I8 → 1 MFMA per WMMA
+- **Direct K match** for 16×16×32 F16/BF16/I8 -> 1 MFMA per WMMA
   (modulo fragment-layout bridge).
-- **K larger on target** for F8F6F4 — one
+- **K larger on target** for F8F6F4 -- one
   `MFMA_SCALE_F32_16x16x128` covers 2 source `WMMA_16x16x64_F8F6F4`.
   Two adjacent WMMAs in a K-loop **must fuse** into one MFMA on
   target, or we emit half of a partial sum, which is semantically
   wrong.
-- **No gfx950 SWMMAC** — 2:4 sparsity has no direct MFMA
+- **No gfx950 SWMMAC** -- 2:4 sparsity has no direct MFMA
   equivalent. Refuse.
 
 ## 5. Per-shape translation templates
@@ -137,12 +137,12 @@ Every matrix SemOp has a target-capability precondition that selects
 between two handler paths:
 
 1. **Native path.** Target ISA exposes an LLVM intrinsic with the same
-   fragment shape → emit the intrinsic directly. No `ds_bpermute`, no
+   fragment shape -> emit the intrinsic directly. No `ds_bpermute`, no
    K-decomposition, no two-pass redistribution. This is the right answer
-   for every same-family retargeting (gfx1251 → gfx1250, gfx1250 →
-   gfx1251, gfx942 → gfx942) and for any future target that gains WMMA
+   for every same-family retargeting (gfx1251 -> gfx1250, gfx1250 ->
+   gfx1251, gfx942 -> gfx942) and for any future target that gains WMMA
    with the same shape.
-2. **Decompose path.** Target lacks the shape → run one of the
+2. **Decompose path.** Target lacks the shape -> run one of the
    templates below (§5.1–§5.3).
 
 The existing F16 handler already implements this for WMMA vs. MFMA:
@@ -180,7 +180,7 @@ generation check. Extend `ISAProfile` with one bit per shape family so
 | `V_WMMA_I32_16x16x32_IU8` | `targetIsa.hasWMMA12` | Template A | gfx12 |
 | `V_WMMA_F32_16x16x64_F8F6F4` | `targetIsa.hasWMMA1250` (new; `FeatureGFX1250Insts`) | Template B (§5.2) onto `V_MFMA_F32_16x16x128_F8F6F4` when `targetIsa.hasMFMA` | gfx1250 |
 | `V_WMMA_SCALED_F32_16x16x64_F8F6F4` | `targetIsa.hasWMMA1250` | Template C (§5.3) onto `V_MFMA_SCALE_F32_16x16x128_F8F6F4` when `targetIsa.hasScaledMFMA` | gfx1250 |
-| `V_SWMMAC_F32_16x16x32_F16` | target has SWMMAC (no AMD target does today) | — (refuse, §R2) | gfx1250 |
+| `V_SWMMAC_F32_16x16x32_F16` | target has SWMMAC (no AMD target does today) | -- (refuse, §R2) | gfx1250 |
 
 The names line up with the TableGen `SubtargetFeature` definitions
 (`FeatureWMMA128bInsts`, `FeatureGFX1250Insts`, etc.) so `ISAProfile::
@@ -188,22 +188,22 @@ fromSubtarget` stays a one-line read from `MCSubtargetInfo::hasFeature`
 per bit.
 
 `hasScaledMFMA` is a new bit for gfx950's `V_MFMA_SCALE_*` family. On
-gfx942 it is false → Template C refuses (no software dequant fallback
+gfx942 it is false -> Template C refuses (no software dequant fallback
 per §5.4). On gfx1250 it is false too (native `V_WMMA_SCALED` is the
-intended path) → use the native path above.
+intended path) -> use the native path above.
 
 #### 5.0.2 Identity and same-family translation
 
 When the source and target flags coincide for a given SemOp the native
 path is always taken. Consequences:
 
-- **gfx1251 → gfx1250** (same family, both have `hasWMMA12` and
+- **gfx1251 -> gfx1250** (same family, both have `hasWMMA12` and
   `hasWMMA1250`): every WMMA, including scaled, becomes a native WMMA
   intrinsic. No `ds_bpermute`, no K-doubling fuse, no fragment-layout
   tables consulted. Template A/B/C code is completely bypassed. The
-  only remaining cost on this path is the LLVM IR roundtrip — which
+  only remaining cost on this path is the LLVM IR roundtrip -- which
   we already pay for the rest of the kernel.
-- **Identity (gfx1250 → gfx1250)** is a degenerate same-family case
+- **Identity (gfx1250 -> gfx1250)** is a degenerate same-family case
   and trivially uses the native path.
 
 This is the concrete argument that a separate "fast code path" for
@@ -218,7 +218,7 @@ registered shape descriptor. This subsection adds the second column to
 that table: for each `(sourceSemOp, targetIsa)` pair, exactly one of
 {native intrinsic name, decompose template id, `refuse(reason)`} is
 declared. The startup verifier fails loud if any row is missing. No
-handler is allowed to pick between paths implicitly — the decision is
+handler is allowed to pick between paths implicitly -- the decision is
 data, driven by the registered capability columns.
 
 ### 5.1 Template A: 1-to-1 K match, layout bridge only
@@ -229,22 +229,22 @@ and the same M×N. **One MFMA per WMMA** via the two-pass pattern of
 
 ```
 emit<ShapeX>WMMAtoMFMA(ctx, a, b, c):
-  aDwords[N_a] ← unpack(a)
-  bDwords[N_b] ← unpack(b)
-  cDwords[N_c] ← unpack(c)
-  laneId ← emitLaneId()
+  aDwords[N_a] <- unpack(a)
+  bDwords[N_b] <- unpack(b)
+  cDwords[N_c] <- unpack(c)
+  laneId <- emitLaneId()
   for groupBase in {0, 32}:
-    mfmaA, mfmaB ← redistributeInput<ShapeX>(aDwords, bDwords,
+    mfmaA, mfmaB <- redistributeInput<ShapeX>(aDwords, bDwords,
                                              lane-group mapping for ShapeX,
                                              groupBase)
-    mfmaC       ← redistributeAcc<ShapeX>(cDwords, groupBase)
-    result      ← mfma<ShapeX>(mfmaA, mfmaB, mfmaC)
-  resultDwords ← collectResult<ShapeX>(result0, result1, laneId)
+    mfmaC       <- redistributeAcc<ShapeX>(cDwords, groupBase)
+    result      <- mfma<ShapeX>(mfmaA, mfmaB, mfmaC)
+  resultDwords <- collectResult<ShapeX>(result0, result1, laneId)
   return pack(resultDwords)
 ```
 
 The per-shape work is (a) the dtype tables for pack/unpack, (b) the
-lane-group → WMMA-GPR index mapping inside `redistributeInput`, (c)
+lane-group -> WMMA-GPR index mapping inside `redistributeInput`, (c)
 the `redistributeAcc` mapping, (d) the `collectResult` mapping, and
 (e) the MFMA intrinsic ID.
 
@@ -264,8 +264,8 @@ MFMA. Correct if and only if:
 3. No side effect (store, atomic, cross-lane) separates them.
 
 Detection is a peephole over the instruction stream at raise time:
-find pairs `wmma_{16x16x64}_f8f6f4(a0, b0, c0) → c1` followed
-immediately by `wmma_{16x16x64}_f8f6f4(a1, b1, c1) → c2` where the
+find pairs `wmma_{16x16x64}_f8f6f4(a0, b0, c0) -> c1` followed
+immediately by `wmma_{16x16x64}_f8f6f4(a1, b1, c1) -> c2` where the
 chain register matches. Fuse into one `mfma_{16x16x128}_f8f6f4` with
 operands concatenated.
 
@@ -283,9 +283,9 @@ when a real kernel demands it.
 
 ### 5.3 Template C: Scaled MFMA
 
-Applies to `wmma_scaled` (MXFP) → `mfma_scale_*`. Structurally the
+Applies to `wmma_scaled` (MXFP) -> `mfma_scale_*`. Structurally the
 same as Template B (K-doubling fuse for the F8F6F4 shapes), with
-two additional input streams — per-block scale values for A and B.
+two additional input streams -- per-block scale values for A and B.
 
 The Gluon `wmma_scaled` carries:
 - `A_q` quantised tensor (FP8/FP4 etc.)
@@ -296,13 +296,13 @@ The Gluon `wmma_scaled` carries:
 The gfx950 `V_MFMA_SCALE_F32_16x16x128_F8F6F4` has matching
 operands: A, B, C, and a per-block scale carried in an extra SGPR
 operand. The scale format (E8M0) is identical between architectures
-— no dequantisation is required.
+-- no dequantisation is required.
 
 The translation:
 
 1. Fuse the pair of source WMMA_scaled calls per §5.2.
 2. Redistribute A, B, C fragments as in Template A.
-3. Redistribute the scale fragments (new — their lane layout is
+3. Redistribute the scale fragments (new -- their lane layout is
    defined in the ISA reference chapter 14.x). Scales live in VGPRs
    on both ISAs but with different per-lane packing.
 4. Emit the scaled MFMA intrinsic
@@ -319,7 +319,7 @@ dense F16 MFMA. Correct, slow (~30× overhead), and conceptually
 defeats the purpose of MXFP. Rejected per the "no fallback" policy.
 If Template C refuses, we refuse the kernel.
 
-**Scope note — distinguishing rejected-Template-D from the landed
+**Scope note -- distinguishing rejected-Template-D from the landed
 §7.4 ISA-level dequant lift.** The Template-D rejection above is
 scoped to *synthesis*: the raiser must not choose dequant-then-dense-
 matmul as an automatic fallback for a scaled WMMA/MFMA shape Template
@@ -386,10 +386,10 @@ per 32-element block; K=128 holds 4 scale blocks per operand.
 | Per-block scale block size ≠ 32 | Refuse (current target only supports 32) |
 | `wmma_scaled` output to non-F32 | Refuse (both platforms are F32-only here) |
 
-### 7.4 ISA-level MXFP4 dequant primitive — `v_cvt_scale_pk8_bf16_fp4`
+### 7.4 ISA-level MXFP4 dequant primitive -- `v_cvt_scale_pk8_bf16_fp4`
 
 > **Status:** cross-target lift landed. `scale_sel == 0` bit-exact on
-> gfx1250 → gfx942/gfx950; `scale_sel != 0` refuses loudly until the
+> gfx1250 -> gfx942/gfx950; `scale_sel != 0` refuses loudly until the
 > 4-bit field's semantics are pinned in-tree. This subsection is
 > additive to §7.1–§7.3 (the Gluon `wmma_scaled` path); the two
 > surfaces are orthogonal (see §5.4's scope note).
@@ -404,7 +404,7 @@ selected from the 4 bytes of a second VGPR via the 4-bit `scale_sel`
 immarg.
 
 Operand layout (handler reads via `AMDGPU::getNamedOperandIdx` +
-`OpName::scale_sel` — NOT by operand-index position, to survive a
+`OpName::scale_sel` -- NOT by operand-index position, to survive a
 future operand-table reorder):
 
 | MC index | Operand | Width | Semantics |
@@ -428,14 +428,14 @@ declare <8 x bfloat> @llvm.amdgcn.cvt.scale.pk8.bf16.fp4(
 
 | Path | Condition | Emitted IR shape |
 |---|---|---|
-| Same-target (identity or gfx1250→gfx1250, or any future target with `hasTensorOps`) | `ctx.targetIsa.hasTensorOps` true | `call <8 x bfloat> @llvm.amdgcn.cvt.scale.pk8.bf16.fp4(i32 %src, i32 %scale, i32 0)` — backend selects the hardware opcode directly. |
-| Cross-target (gfx1250 → gfx942/gfx950, or any target without `hasTensorOps`) | `ctx.targetIsa.hasTensorOps` false | Per-nibble bit-algebra expansion: 8× {FP4 field decomposition, BF16 synthesis, E8M0 exponent-bits add, priority merge} + `insertelement <8 x bfloat>` chain. See `handle-valu.cpp::emitCvtScalePk8Bf16Fp4CrossTargetExpansion`. |
+| Same-target (identity or gfx1250->gfx1250, or any future target with `hasTensorOps`) | `ctx.targetIsa.hasTensorOps` true | `call <8 x bfloat> @llvm.amdgcn.cvt.scale.pk8.bf16.fp4(i32 %src, i32 %scale, i32 0)` -- backend selects the hardware opcode directly. |
+| Cross-target (gfx1250 -> gfx942/gfx950, or any target without `hasTensorOps`) | `ctx.targetIsa.hasTensorOps` false | Per-nibble bit-algebra expansion: 8× {FP4 field decomposition, BF16 synthesis, E8M0 exponent-bits add, priority merge} + `insertelement <8 x bfloat>` chain. See `handle-valu.cpp::emitCvtScalePk8Bf16Fp4CrossTargetExpansion`. |
 
 Both paths share the same operand-shape validation (`scale_sel`
 immediate present; `scale_sel == 0`). A drift in the shared
 validation surfaces on both targets identically.
 
-#### 16-entry FP4 E2M1 → BF16 table
+#### 16-entry FP4 E2M1 -> BF16 table
 
 Pinned as constants in `transpiler/mxfp4-dequant.cpp` (see
 `kMxfp4ToBf16Table`). Reproduced here in hex for visibility; the
@@ -484,7 +484,7 @@ declared support set:
 by a power of 2, which is exact in floating-point with zero bits of
 rounding. We emit integer field manipulation instead of an fmul so
 the lowering is bit-identical regardless of the target's float-mode
-register state (FTZ / DAZ bits are irrelevant — no fmul runs).
+register state (FTZ / DAZ bits are irrelevant -- no fmul runs).
 
 #### Declared support set
 
@@ -507,12 +507,12 @@ hardware behaviour.
 
 This is **standalone cross-target coverage** for the MXFP4 dequant
 primitive; it narrows the kerneldex refusal surface for any future
-gfx1250→gfx942 kernel that uses the cvt primitive without going
+gfx1250->gfx942 kernel that uses the cvt primitive without going
 through scaled-WMMA.
 
 End-to-end lift of the two corpus matmul_ogs kernels
 (`_matmul_ogs_06d912ce88af`, `_matmul_ogs_0af655e6ea2b`) still blocks
-on pending **Template A** (BF16 16×16×32 WMMA → MFMA; see §T2) and on
+on pending **Template A** (BF16 16×16×32 WMMA -> MFMA; see §T2) and on
 async copy / tensor data movement (`global_load_async_to_lds_*`,
 landed separately). Those
 kernels emit 64× `v_cvt_scale_pk8_bf16_fp4` + 64× `v_wmma_f32_16x16x32_bf16`
@@ -532,25 +532,25 @@ in sequence once retried.
 
 _(filled in post-commit)_
 
-### R1 — Unrecognised shape
+### R1 -- Unrecognised shape
 
 Every WMMA SemOp has a registered shape descriptor. If an MC opcode
 maps to a SemOp whose descriptor has no target mapping, refuse with
 `matrixShapeUnsupported`.
 
-### R2 — SWMMAC (2:4 sparsity)
+### R2 -- SWMMAC (2:4 sparsity)
 
 No gfx950 equivalent. Refuse.
 
-### R3 — Unfusible K-doubled pair (§5.2)
+### R3 -- Unfusible K-doubled pair (§5.2)
 
-### R4 — Divergent EXEC at the WMMA site
+### R4 -- Divergent EXEC at the WMMA site
 
 WMMA assumes all 32 lanes are active. If SPE predication makes lanes
 inactive at the WMMA, the lowering's two-pass model breaks (some
 lanes have undefined fragment contents in the replicated copy). The
 existing F16 lowering sidesteps this by documenting the assumption
-("WMMA operations occur in non-divergent code — EXEC is all-ones",
+("WMMA operations occur in non-divergent code -- EXEC is all-ones",
 `wmma-lowering.cpp:89`). Formalise it as a per-kernel gate: every
 WMMA instruction must be uniformly reached (SPE's existing uniform-
 reachability predicate, to be extended).
@@ -565,11 +565,11 @@ semantics of `ds_bpermute` / MFMA / `v_cndmask` always work across
 all 64 lanes regardless of the source kernel's partial-wave launch
 shape. What R4 gates is that the source kernel author did not put
 the WMMA inside an if-statement that predicates away source lanes
-before the collective issues — that remains an IR-shape property
+before the collective issues -- that remains an IR-shape property
 the uniform-reachability predicate can check without looking at
 hardware EXEC at all.
 
-### R5 — AGPR-only accumulator expectations
+### R5 -- AGPR-only accumulator expectations
 
 Some MFMA shapes on gfx950 require the accumulator in AGPRs. The
 raised IR uses VGPRs; the target backend's AGPR allocator moves them
@@ -578,26 +578,26 @@ accumulators (has not been observed), refuse.
 
 ## 9. Principled fail-loudly gates
 
-### G1 — Shape registration coverage (startup)
+### G1 -- Shape registration coverage (startup)
 
 Every SemOp in the WMMA family must have an entry in
-`wmma_fragment_layouts` **and** in a shape→target-MFMA mapping
+`wmma_fragment_layouts` **and** in a shape->target-MFMA mapping
 table. Startup verifier
 `verifyMatrixShapeCoverage(sourceIsa, targetIsa, opcMap)` fails loud
 if any WMMA SemOp lacks a mapping.
 
-### G2 — Per-kernel fusibility scan (pre-Phase-2)
+### G2 -- Per-kernel fusibility scan (pre-Phase-2)
 
 For each Template-B / Template-C shape in the decoded instruction
 stream, run the peephole matcher. If any Template-B/C-class WMMA
 has no fusible partner, refuse.
 
-### G3 — Uniform-EXEC gate at WMMA site (per-kernel)
+### G3 -- Uniform-EXEC gate at WMMA site (per-kernel)
 
 At each `V_WMMA_*` decode, check SPE's uniform-reachability
 predicate. Refuse on non-uniform.
 
-### G4 — Dtype-table coverage (startup)
+### G4 -- Dtype-table coverage (startup)
 
 For F8F6F4: enumerate the cross-product of (A dtype, B dtype) Gluon
 emits and the subset gfx950 supports. Refuse combinations not in
@@ -605,21 +605,21 @@ the intersection.
 
 ## 10. Engineering tasks
 
-### T1 — Auto-generate fragment tables
+### T1 -- Auto-generate fragment tables
 
 Stand up a one-time generator from AMD Matrix Instruction Calculator
 output (Python script under the hotswap source tree) producing
 `wmma_fragment_layouts.inc` consumed by `wmma-lowering.cpp`. ~300
 LoC; removes the hand-transcribed table as a source of bugs.
 
-### T2 — BF16 and I8 16×16×32 shapes (Template A)
+### T2 -- BF16 and I8 16×16×32 shapes (Template A)
 
 Extend `handle-valu-vop3p.cpp` to dispatch on new SemOps
 `V_WMMA_F32_16x16x32_BF16`, `V_WMMA_I32_16x16x32_IU8`. Each is a
 direct parallel of the F16 code with pack/unpack dtype substitutions
 and the auto-generated layout table. ~200 LoC each.
 
-### T3 — F8F6F4 shapes (Template B, no scale)
+### T3 -- F8F6F4 shapes (Template B, no scale)
 
 Add `V_WMMA_F32_16x16x64_F8F6F4` SemOp. Implement the
 fusibility peephole in a new post-decode pass
@@ -627,13 +627,13 @@ fusibility peephole in a new post-decode pass
 `mfma_16x16x128_f8f6f4` per fused pair; solo WMMAs trigger G2
 refusal. ~400 LoC (peephole ~150, handler ~250).
 
-### T4 — Scaled WMMA (Template C) for MXFP
+### T4 -- Scaled WMMA (Template C) for MXFP
 
 Add `V_WMMA_SCALED_F32_16x16x64_F8F6F4`. Extend the peephole from T3
 to handle the scaled variant. Implement scale-layout redistribution
 (new tables). Handler emits `mfma_scale_16x16x128_f8f6f4`. ~500 LoC.
 
-### T5 — Uniform-reachability predicate for WMMA sites (G3)
+### T5 -- Uniform-reachability predicate for WMMA sites (G3)
 
 Reuse SPE's uniform-reachability analysis (already required by
 `wave-size-translation.md §5.1`). Extend `SemOpAttrs` with
@@ -655,7 +655,7 @@ T5 in parallel. T3, then T4.
   architectures, compare bit-for-bit where feasible and
   element-wise otherwise.
 
-## 12. Staging state — ModuloReplicationProjection-aware lowering (2026-04-22)
+## 12. Staging state -- ModuloReplicationProjection-aware lowering (2026-04-22)
 
 > **Status:** infrastructure landed. The ModuloReplicationProjection-aware
 > lowering described in this section is available behind the same proof
@@ -664,10 +664,10 @@ T5 in parallel. T3, then T4.
 > BLOCK=32 shapes with multiple parallel WMMAs remain the stress case for
 > this lowering family.
 
-The WMMA → MFMA lowering in `wmma-lowering.cpp` now supports TWO
+The WMMA -> MFMA lowering in `wmma-lowering.cpp` now supports TWO
 projections:
 
-1. **`WaveNativeProjection`** — the baseline. Kernel-entry
+1. **`WaveNativeProjection`** -- the baseline. Kernel-entry
    `@llvm.amdgcn.init_whole_wave` provides HW `EXEC = -1` kernel-
    wide, so the `runGroupPass` pipeline runs with every target lane
    participating. End-to-end validation covers this path.
@@ -677,7 +677,7 @@ projections:
    EXEC stays at the source-active mask kernel-wide, so target lanes
    past the source-wave width are HW-inactive for the rest of the
    kernel body (which is the whole point of the phantom-lane
-   fallback — their undef VGPRs can't contaminate cross-lane ops).
+   fallback -- their undef VGPRs can't contaminate cross-lane ops).
    The WMMA lowering scopes a local HW-EXEC = -1 region around just
    the redistribute / MFMA / collect chain by wrapping the MFMA
    outputs and each collect-output dword in `@llvm.amdgcn.strict.wwm`,
@@ -694,9 +694,9 @@ should only be relaxed with matching end-to-end evidence.
 
 | Symbol | Signature | Semantics |
 |---|---|---|
-| `WaveProjection::numSourceWavesPerTarget()` | `virtual unsigned` — pure virtual | Returns 1 under MODREP (phantom-lane = single source wave) or same-wave projections; 2 under `WaveNativeProjection` wave32→wave64 cross-widen; `report_fatal_error` under the unimplemented `ThreadLoopProjection`. Pure so every new projection class must answer the question explicitly. |
+| `WaveProjection::numSourceWavesPerTarget()` | `virtual unsigned` -- pure virtual | Returns 1 under MODREP (phantom-lane = single source wave) or same-wave projections; 2 under `WaveNativeProjection` wave32->wave64 cross-widen; `report_fatal_error` under the unimplemented `ThreadLoopProjection`. Pure so every new projection class must answer the question explicitly. |
 | `WaveProjection::wrapAsWWMValue(B, v)` | `Value *` helper | No-op under projections that guarantee HW EXEC=-1 kernel-wide (`WaveNativeProjection`); emits a per-value `@llvm.amdgcn.strict.wwm` call otherwise. Accepts any scalar/fixed-vector integer or floating-point type supported by the intrinsic's overload set; asserts on other types. |
-| `emitWMMAtoMFMA*` (internal) | — | Now iterates `runGroupPass` for `numSourceWavesPerTarget()` passes and wraps MFMA outputs + collect-output dwords via `wrapAsWWMValue`. Release-build-safe `report_fatal_error` guards catch a refusal-gate regression that flips the gate without vetting the MODREP path. |
+| `emitWMMAtoMFMA*` (internal) | -- | Now iterates `runGroupPass` for `numSourceWavesPerTarget()` passes and wraps MFMA outputs + collect-output dwords via `wrapAsWWMValue`. Release-build-safe `report_fatal_error` guards catch a refusal-gate regression that flips the gate without vetting the MODREP path. |
 
 ### 12.2 Gate-flip protocol
 
@@ -720,13 +720,13 @@ is ready to enable:
    MFMA chain).
 4. **Flip the lit fixture**
    `lit_tests/wmma_phantom_lane_refuse/wmma_phantom_lane_refuse.ll`
-   similarly — the K=4 f32 variant.
+   similarly -- the K=4 f32 variant.
 5. **Drop the release-build-safe guards** in `emitWMMAtoMFMA*`
    (`if (numSrcWaves != 2) report_fatal_error(...)`) once the
    `numSrcWaves == 1` branch is live. Keep the `numSrcWaves ∉ {1,
-   2}` guard — that's a contract check for new projection classes.
+   2}` guard -- that's a contract check for new projection classes.
 
-### 12.3 Prerequisite ABI fix — `ttmp7` init for `workgroup_id_y/z` (2026-04-22)
+### 12.3 Prerequisite ABI fix -- `ttmp7` init for `workgroup_id_y/z` (2026-04-22)
 
 The AMDGPU backend's entry-function ABI for gfx12+ preloads
 `workgroup_id_y` and `workgroup_id_z` into a packed `ttmp7` by
@@ -750,8 +750,8 @@ s_and_b32 sDST, ttmp7, 0xffff       ; wg_id_y
 (`workgroup_id_x`) and `ttmp8[29:25]` (`wave_id_in_workgroup`)
 for the canonical Tensile / rocBLAS BFE pattern, but left `ttmp7`
 uninitialised.  Under MODREP the uninitialised SGPR read as
-whatever the alloca's initial pattern yielded — effectively
-always zero — so every 2D-grid kernel's `workgroup_id_y` collapsed
+whatever the alloca's initial pattern yielded -- effectively
+always zero -- so every 2D-grid kernel's `workgroup_id_y` collapsed
 onto the Y=0 column.
 
 Bisection trace (against `matmul_fp16_16x16` M=32, all-ones ×
@@ -761,7 +761,7 @@ all-ones; expected output every cell = K = 32; host harness
 | Column range | Observed | Diagnosis |
 |---|---|---|
 | cols 0..15 | 32.0 (correct) | WG(\*, pid_n=0) writes |
-| cols 16..31 | `0xCDCD` (poison) | WG(\*, pid_n=1) never writes — all WGs see `pid_n = 0` |
+| cols 16..31 | `0xCDCD` (poison) | WG(\*, pid_n=1) never writes -- all WGs see `pid_n = 0` |
 
 The pattern is unambiguous: the kernel body was running every
 workgroup to completion but every WG wrote to its `pid_n=0`
@@ -791,7 +791,7 @@ pins the `@llvm.amdgcn.workgroup.id.{y,z}` + `shl ..., 16`
 IR shape at kernel entry.  A backwards-stride to pre-fix behaviour
 would drop at least one of those three anchors.
 
-### 12.4 Remaining `matmul_fp16` divergence — multi-WMMA + `v_permlane16_swap_b32`
+### 12.4 Remaining `matmul_fp16` divergence -- multi-WMMA + `v_permlane16_swap_b32`
 
 With §12.3's fix applied and the refusal gate lifted locally,
 `matmul_fp16_16x16` passes 5/5 in end-to-end validation.  The sibling
@@ -799,7 +799,7 @@ With §12.3's fix applied and the refusal gate lifted locally,
 without LDS round-trip) still diverges for non-uniform inputs.
 
 Host-harness bisection with deterministic `mode ∈ {0, 3..6}` input
-generators narrows the residual (harness not checked in — rebuilding
+generators narrows the residual (harness not checked in -- rebuilding
 for a future investigation is the right step, not re-reading the
 prior session's `/tmp` file):
 
@@ -812,9 +812,9 @@ prior session's `/tmp` file):
 The A-only-varying and all-uniform cases being bitwise correct
 while the B-only-varying case is systematically off by the
 sub-tile width strongly suggests the bug is specific to B's
-data-flow path rather than the (A↔B-symmetric) redistribute
+data-flow path rather than the (A<->B-symmetric) redistribute
 math, MFMA intrinsic choice, or collect mapping.  This is a
-bisection hypothesis, not a formal proof — a data-dependent
+bisection hypothesis, not a formal proof -- a data-dependent
 redistribute bug that happens to thread the wrong SSA value as
 the B fragment while A's SSA is correct would show the same
 asymmetry.  Getting to a formal localisation needs either a
@@ -849,7 +849,7 @@ Each swap exchanges a register PAIR between lanes 0..15 and 16..31,
 setting up the two-row-tile A fragment distribution.  The lift
 decomposes each `v_permlane16_swap_b32 vdst, src0` into a pair of
 EXEC-ungated `ds_bpermute` reads using `lane_id XOR 16` as the
-partner selector — semantics are correct per the AMDGPU ISA spec,
+partner selector -- semantics are correct per the AMDGPU ISA spec,
 and individual `v_permlane16_swap_b32` lit fixtures (`c2_permlane_swap`)
 pass.  The bug surfaces only under the joint regime:
 
@@ -858,7 +858,7 @@ pass.  The bug surfaces only under the joint regime:
   A and B operand vregs after the swap;
 - Non-uniform B input so the swap'd-vreg data matters.
 
-### 12.5 Prerequisite ABI fix — `amdgpu-lds-size` propagation (2026-04-22)
+### 12.5 Prerequisite ABI fix -- `amdgpu-lds-size` propagation (2026-04-22)
 
 Second prerequisite ABI bug surfaced during the matmul_fp16 multi-
 WMMA investigation, this time in the lifted kernel's static LDS
@@ -881,11 +881,11 @@ HSACO's KD metadata revealed `.group_segment_fixed_size: 0` despite
 the source's `.group_segment_fixed_size: 4096`.
 
 **Root cause.**  `raiser.cpp` emits LDS operations via raw
-`inttoptr i64 to ptr addrspace(3)` arithmetic — no module-level
+`inttoptr i64 to ptr addrspace(3)` arithmetic -- no module-level
 `addrspace(3)` `GlobalVariable`s.  The AMDGPU backend's KD emitter
 derives `group_segment_fixed_size` from addrspace(3) GVs plus the
 `amdgpu-lds-size` per-function attribute (see
-`AMDGPUMachineFunctionInfo::AMDGPUMachineFunctionInfo` —
+`AMDGPUMachineFunctionInfo::AMDGPUMachineFunctionInfo` --
 `LDSSizeRange.first` is read from the attr).  With neither GVs
 nor the attr, the emitter defaults to 0 and every LDS access
 targets an unallocated segment; reads return zero on gfx942.
@@ -908,7 +908,7 @@ entirely).
 `.group_segment_fixed_size: 0` and uses DYNAMIC LDS (512 / 2048
 bytes at launch per the Triton sidecar), so my fix does not
 affect its KD.  The matmul_fp16 multi-WMMA residual documented
-in §12.4 persists after this fix — it's a separate bug.
+in §12.4 persists after this fix -- it's a separate bug.
 
 ### 12.4.3 Session-4 per-cell characterization (2026-04-22)
 
@@ -919,7 +919,7 @@ Pinned the mode-5 error pattern to a PRECISE bit-level shape:
     correct for mode 5 since A=1s makes output lane-independent).
   * Both sub-tile WMMAs (WMMA(0,0) writing cols 0..15 and
     WMMA(0,1) writing cols 16..31) produce the SAME per-cell
-    value at matching col_local — i.e., got[i, j_local] ==
+    value at matching col_local -- i.e., got[i, j_local] ==
     got[i, j_local+16] for every j_local in [0,16).
 
 This mathematically constrains the bug to: "BOTH WMMAs receive
@@ -927,13 +927,13 @@ B fragment starting at B matrix col 8 (not B col 0 and B col 16
 respectively)."  Proof: mode-5 B[k, j] = j/16.  If the MFMA
 K=32 aggregate = K * B_val, observed K*B_val per cell = 2*col_local
 + 16.  Solving: B_val = col_local/16 + 0.5 = (col_local+8)/16.
-That's B[k, col_local+8] — a +8-column shift from the expected
+That's B[k, col_local+8] -- a +8-column shift from the expected
 fragment-start.
 
 The +8 col shift is UNIFORM across BOTH sub-tile WMMAs.  That
 rules out a per-WMMA fragment-indexing bug (which would shift
 sub-tile 0 and sub-tile 1 independently) and localises the
-corruption to a step SHARED between the two WMMAs — most
+corruption to a step SHARED between the two WMMAs -- most
 plausibly the LDS round-trip (writes originate in a single
 `ds_store_b16` sweep both WMMAs' B data shares) OR the B-fragment
 redistribute pre-sharing across the two WMMAs.
@@ -947,7 +947,7 @@ fp16 values = {0, 1/16, 2/16, 3/16} and v[178] should hold
 B[k, 16..19] = {16/16, 17/16, 18/16, 19/16}.  If instead both
 v[170] and v[178] hold {8/16, 9/16, 10/16, 11/16}, the LDS
 round-trip confirms the "+8 col shift" origin and the bug is
-in the load→LDS→read path, not in the WMMA lift.  Otherwise
+in the load->LDS->read path, not in the WMMA lift.  Otherwise
 the shift happens post-LDS in one of the redistribute /
 permlane16_swap / MFMA steps.
 
@@ -1016,7 +1016,7 @@ therefore be in an interaction my synthetics do not exercise:
     `matmul_fp16` heavily uses dual-issue VOPD ops to
     initialise the accumulator (`v_dual_mov_b32 v3, v2 ::
     v_dual_mov_b32 v6, v2` pattern, etc.).  The VOPD lift in
-    `handle_vopd.cpp` handles `v_bitop2_b32` correctly (LUT
+    `handle-vopd.cpp` handles `v_bitop2_b32` correctly (LUT
     expansion, verified in isolation), but a specific SEQUENCE
     of VOPD ops that end up in the K-loop body may introduce
     a subtle data-dependency the backend mishandles.
@@ -1053,8 +1053,8 @@ open, but the evidence pool has narrowed:
   * **MFMA-output `strict.wwm` wrap is NOT load-bearing for
     correctness on single-WMMA kernels.**  Dropping the
     `wrapAsWWMValue` calls on `mfma1` / `mfma2` results (keeping
-    only the collect-dword wrap) — leaving `SIWholeQuadMode` to
-    propagate WWM backward from the collect — keeps
+    only the collect-dword wrap) -- leaving `SIWholeQuadMode` to
+    propagate WWM backward from the collect -- keeps
     `matmul_fp16_16x16` bitwise correct across all five shapes AND
     does NOT change `matmul_fp16`'s mode-5 failure pattern (same
     1024/1024 mismatches, same ±16 offset).  This falsifies
@@ -1069,13 +1069,13 @@ open, but the evidence pool has narrowed:
     (including phantom lanes 32..63) execute the LDS read; the
     phantom lanes compute LDS addresses from their own `lane_id` /
     `mbcnt` output, which point past the LDS segment the source-
-    active lanes wrote — so those lanes read zero / uninitialised
+    active lanes wrote -- so those lanes read zero / uninitialised
     LDS, and their MFMA output is whatever that data computes to.
     This would naturally break target lanes 32..47 / 48..63, whose
     collect-stage bperm reads feed source-active lanes 16..31 (the
     second half of each wave32's output fragment).  `matmul_fp16_16x16`
     has the same pattern but passes, so the phantom-LDS-read
-    hypothesis must have a mitigating factor on the 16×16 path —
+    hypothesis must have a mitigating factor on the 16×16 path --
     perhaps because its collect doesn't need the phantom lanes'
     MFMA output (the output tile is 16×16 so only the first 16 of
     every 32 per-lane outputs are consumed via the store pattern).
@@ -1093,14 +1093,14 @@ open, but the evidence pool has narrowed:
     "all-15" / "all-0" per-lane output on mode-5 / mode-6 that I
     couldn't interpret earlier).  A valid repro needs to manually
     distribute the A/B matrix across lanes per the gfx12 wave32
-    WMMA fragment layout — this is the next concrete step.
+    WMMA fragment layout -- this is the next concrete step.
 
 Candidate root causes to investigate next (ordered by suspicion,
-all unverified — these are TODOs, not localisations):
+all unverified -- these are TODOs, not localisations):
 
 1. **`strict.wwm` region collapse across multiple parallel MFMAs.**
    Each of the 4 source WMMAs lowers to a pair of chained MFMAs
-   (K=32 → 2× K=16) wrapped in `@llvm.amdgcn.strict.wwm`.  The
+   (K=32 -> 2× K=16) wrapped in `@llvm.amdgcn.strict.wwm`.  The
    backend's `SIWholeQuadMode` pass may merge the 8 MFMA regions
    into a single large WWM scope; `SIPreAllocateWWMRegs`'s
    dedicated-physreg-per-WWM-vreg requirement may then produce a
@@ -1123,12 +1123,12 @@ all unverified — these are TODOs, not localisations):
    abandoned design wrapped MFMA outputs in `strict.wwm`; the
    current code re-introduces `strict.wwm` via `wrapAsWWMValue`
    for MODREP.  A genuinely scoped `s_or_saveexec_b64 sN, -1`
-   → MFMA → `s_mov_b64 exec, sN` sequence emitted directly by
+   -> MFMA -> `s_mov_b64 exec, sN` sequence emitted directly by
    the raiser (no `strict.wwm` markers, no WWM-region allocator
    dependency) would sidestep both issues.
 
 Until one of these is pinned, the K=32/K=64 refusal gate stays
-in place — the principled outcome for `matmul_fp16` remains
+in place -- the principled outcome for `matmul_fp16` remains
 EXIT=2 (refuse), and the gate's diagnostic in
 `handle-valu-vop3p.cpp` now surfaces the `matmul_fp16_16x16` WIN
 and the `matmul_fp16` OPEN items explicitly.
@@ -1150,7 +1150,7 @@ Triton-matrix coordinate the WMMA fragment holds; modes 8 and 10
 do the same for Triton.B.
 
 **WMMA.B operand (v170-177) per-lane layout** (empirically pinned,
-K-split between lane halves — matches the `gfx12` WMMA doc
+K-split between lane halves -- matches the `gfx12` WMMA doc
 comment in `wmma-lowering.cpp::redistributeInput` verbatim):
 
 | Lanes | dw{0,1} | dw{2,3} | dw{4,5} | dw{6,7} |
@@ -1162,12 +1162,12 @@ Each lane holds row=L%16 of the WMMA.B-slot operand (which in
 Triton's swapped layout holds Triton.A data) across 16 K-values
 per lane.  Lanes 0 and 16 both hold row 0, with disjoint K sets
 that together span K=0..31.  The current `redistributeInput` is
-CORRECT for this layout (verified by modes 6 and 7 passing —
+CORRECT for this layout (verified by modes 6 and 7 passing --
 both have Triton.B=1s so only the WMMA.B redistribution can
 surface variation).
 
 **WMMA.A operand (v186-193) per-lane layout** (empirically pinned,
-SURPRISE: NOT K-split — col-split between lane halves, SAME K set
+SURPRISE: NOT K-split -- col-split between lane halves, SAME K set
 at each GPR position across both halves):
 
 | Lanes | dw{0,1} | dw{2,3} | dw{4,5} | dw{6,7} |
@@ -1178,10 +1178,10 @@ at each GPR position across both halves):
 Lanes 0-15 hold cols 16-31 and lanes 16-31 hold cols 0-15 of
 Triton.B.  Both halves hold the SAME K subset (`{8-15, 24-31}`).
 The OTHER K subset (`{0-7, 16-23}`) is in v194-201 with the same
-col-split pattern — so together v186-v201 (16 VGPRs × 32 lanes ×
+col-split pattern -- so together v186-v201 (16 VGPRs × 32 lanes ×
 2 halves/dw = 1024 halves) covers Triton.B's full 32×32.  But
 the WMMA instruction consumes only v186-193 (8 VGPRs) as its A
-operand — per the instruction encoding and the LLVM intrinsic
+operand -- per the instruction encoding and the LLVM intrinsic
 signature (`<16 x half>` A, `<16 x half>` B).
 
 **This is the remaining open question**: how does the gfx1250
@@ -1199,10 +1199,10 @@ or its surrounding lowering code.
 **Consequence for the MFMA lowering**: `redistributeInput` is
 symmetric across A and B (same code path for `aDwords` and
 `bDwords`), so the K-split assumption bakes in for WMMA.A too.
-Mode 8 (`B[k,j]=k/32`, where Triton.B → WMMA.A slot is K-varying)
+Mode 8 (`B[k,j]=k/32`, where Triton.B -> WMMA.A slot is K-varying)
 surfaces this as a uniform +4 error on every output cell:
 `got = 19.5 vs ref = 15.5`.  Hand-calc confirms both MFMA-1 and
-MFMA-2 double-count `{k=8-15, 24-31}` and miss `{0-7, 16-23}` —
+MFMA-2 double-count `{k=8-15, 24-31}` and miss `{0-7, 16-23}` --
 consistent with the col-split layout returning the same K set for
 LG0/LG1 and LG2/LG3 (and zero coverage of the `{0-7, 16-23}` K
 half that lives in v194-201).
@@ -1218,7 +1218,7 @@ requires one of:
      swap data matches the K-split layout that `redistributeInput`
      assumes, rather than the observed col-split.  (The pre-swap
      data layout is unobserved; Session-6 TODO.)
-  3. Extending the WMMA → MFMA lowering to take BOTH v186-193 AND
+  3. Extending the WMMA -> MFMA lowering to take BOTH v186-193 AND
      v194-201 as a 16-VGPR A input; this requires lifting the
      WMMA intrinsic call to consume a `<32 x half>` (or two
      `<16 x half>` values), which is a raiser-level change not
@@ -1233,11 +1233,11 @@ investigation resumes.
 ### 12.4.5 Session-6 refusal-gate narrowing (2026-04-23)
 
 The Session-5 refusal gate was too broad: it blocked the K=32/K=64
-WMMA→MFMA lowering for EVERY MODREP kernel, even single-WMMA-per-K-
+WMMA->MFMA lowering for EVERY MODREP kernel, even single-WMMA-per-K-
 iter kernels like `matmul_fp16_16x16` whose lowering the rest of
 this document's analysis validates.  End-to-end corpus validation confirms
 `matmul_fp16_16x16` produces 5/5 `match` output with the gate off
-(see the corresponding validation results) — the gate was a
+(see the corresponding validation results) -- the gate was a
 false-positive refusal on that corpus recipe.
 
 The root cause of `matmul_fp16`'s remaining wrongness is specific to
@@ -1254,7 +1254,7 @@ Single-WMMA kernels never emit this opcode.
   * `raiser.cpp` pre-scans the decoded instruction stream once and
     sets `RaiseContext::kernelHasPermlane16Swap` if any
     `V_PERMLANE16_SWAP_B32` is present.
-  * `handle-valu-vop3p.cpp`'s K=32/K=64 (and K=4 f32) WMMA→MFMA
+  * `handle-valu-vop3p.cpp`'s K=32/K=64 (and K=4 f32) WMMA->MFMA
     refusal gates now require BOTH
     `!projection.providesFullWaveExecInvariant()` (MODREP) AND
     `ctx.kernelHasPermlane16Swap` (multi-WMMA marker) to refuse.
@@ -1267,12 +1267,12 @@ Single-WMMA kernels never emit this opcode.
 **Lit fixture updates** that fell out of the narrowing:
 
   * `lit_tests/wmma_phantom_lane_refuse/wmma_phantom_lane_refuse.ll`
-    — rewritten from `%not`-refusal CHECKs to affirmative
+    -- rewritten from `%not`-refusal CHECKs to affirmative
     CHECKs on the emitted MFMA K=4 f32 call + `strict.wwm` wrap
     (the kernel has no `permlane16_swap`, so the surgical gate
     correctly lets it through).
   * `lit_tests/wmma_phantom_lane_f16_chain/wmma_phantom_lane_f16_chain.ll`
-    — rewritten similarly to pin the 2-WMMA-chain K=32 f16 IR
+    -- rewritten similarly to pin the 2-WMMA-chain K=32 f16 IR
     shape (MFMA call + strict.wwm + collect bpermute).
 
 The still-broken `matmul_fp16` path's fix is the same open set
@@ -1281,7 +1281,7 @@ permlane16_swap, or raise a 16-VGPR `<32 x half>` A input); the
 narrowed gate just stops collateral damage to kernels that aren't
 actually affected by that investigation.
 
-### 12.4.6 Session-7 layout investigation — where we got stuck (2026-04-23)
+### 12.4.6 Session-7 layout investigation -- where we got stuck (2026-04-23)
 
 A follow-on investigation against Triton's WMMA lowering
 (`third_party/amd/lib/TritonAMDGPUToLLVM/DotOpToLLVM/WMMA.cpp`,
@@ -1291,7 +1291,7 @@ and the `AMDWmmaEncodingAttr` doc in
 instrumentation pinned down three additional structural facts.
 They close some doors but don't yet open the fix:
 
-**Fact 1 — the `isTransposed` operand swap is real.** For
+**Fact 1 -- the `isTransposed` operand swap is real.** For
 `version=3 isTransposed=true` (matmul_fp16's layout)
 `generateWMMAOp` calls `wmma(hb, ha, ...)`, i.e. the WMMA.A
 intrinsic operand slot receives Triton's B tensor data (`hb`) and
@@ -1306,28 +1306,28 @@ The WMMA instruction therefore computes
 and Triton stores `D` with the matching transposed output
 encoding.
 
-**Fact 2 — per-operand LinearLayout differs for A vs B.** The
+**Fact 2 -- per-operand LinearLayout differs for A vs B.** The
 `wmmaDotOperandToLinearLayout` body is the same for both opIdx,
 but `dimK` and `dimNonK` swap positions based on `getOpIdx()`.
 Observed on matmul_fp16 with `kWidth=16`, `depth=2`, `nonKDim=16`:
 
   Operand A (v170-177, ha):
-    lane L, register r → A[M = L%16,
+    lane L, register r -> A[M = L%16,
                            K = (r & 7) + 16*((r>>3)&1) + 8*((L>>4)&1)]
-  — lane bit 4 shifts K by 8 (the doc's "depth offsets K"
+  -- lane bit 4 shifts K by 8 (the doc's "depth offsets K"
   interpretation); register bit 3 shifts K by 16 (the "kWidth"
   offset that makes register 8..15 span the upper K half).
 
   Operand B PRE-swap (v186-193 pre-v_permlane16_swap):
-    lane L, register r → B[N = L%16 + 16*((L>>4)&1),
+    lane L, register r -> B[N = L%16 + 16*((L>>4)&1),
                            K = (r & 7) + 16*((r>>3)&1)]
-  — lane bit 4 shifts **N** by 16 (not K); register bit 3 shifts
+  -- lane bit 4 shifts **N** by 16 (not K); register bit 3 shifts
   K by 16.  So A's and B's per-lane layouts are NOT mirror
-  images — they diverge at the lane-bit-4 contribution.
+  images -- they diverge at the lane-bit-4 contribution.
 
-**Fact 3 — POST-swap v186-193 holds HALF of K, not full.** The
+**Fact 3 -- POST-swap v186-193 holds HALF of K, not full.** The
 `v_permlane16_swap_b32 v186, v194` cross-wires (lanes 0-15 v186)
-↔ (lanes 16-31 v194) and vice-versa, leaving post-swap v186-193
+<-> (lanes 16-31 v194) and vice-versa, leaving post-swap v186-193
 with only the K subset that pre-swap v194-201 held (K ∈ {8-15,
 24-31}).  The other K subset (K ∈ {0-7, 16-23}) stays in
 post-swap v194-201.  Combined across the four WMMA calls:
@@ -1340,7 +1340,7 @@ post-swap v194-201.  Combined across the four WMMA calls:
 **The structural barrier.** Given only 8 VGPRs (v186-193) enter
 the WMMA.A operand slot per call, and those 8 VGPRs hold only
 half of K, a per-WMMA-independent MFMA lowering CANNOT reconstruct
-the full K sum from a single WMMA intrinsic call's data — the
+the full K sum from a single WMMA intrinsic call's data -- the
 missing K data lives in a sibling register range (v194-201) that
 the single-intrinsic lowering model doesn't see.  The four
 accumulators (v[2:9], v[10:17], v[18:25], v[26:33]) go to
@@ -1352,7 +1352,7 @@ would let the MFMA lowering stay per-WMMA doesn't happen either.
 
   1. **Raiser-level 4-WMMA-pattern recognition (principled,
      expensive).**  Teach `raiser.cpp` to detect the quad-WMMA
-     fragment-shuffle idiom (= `v_permlane16_swap_b32` → 4 back-
+     fragment-shuffle idiom (= `v_permlane16_swap_b32` -> 4 back-
      to-back WMMAs sharing operand register ranges) and emit a
      single `<32 x half>` A operand tensor into the WMMA
      lowering.  The MFMA redistribution then has access to both
@@ -1373,7 +1373,7 @@ would let the MFMA lowering stay per-WMMA doesn't happen either.
 
   3. **Decode gfx1250 WMMA.A ISA layout from hardware (ideal,
      needs ISA-spec access).**  If the AMD gfx1250 ISA spec
-     documents the exact per-lane (M, K) ↔ (lane, register)
+     documents the exact per-lane (M, K) <-> (lane, register)
      mapping for `v_wmma_f32_16x16x32_f16`, we can write the
      correct post-swap `redistributeInput_A` that accounts for
      the layout asymmetry and skips the 16-VGPR raiser change.
@@ -1382,7 +1382,7 @@ would let the MFMA lowering stay per-WMMA doesn't happen either.
 Session 7 verified empirically that my Session-5 `redistributeInput`
 swap (LG1/LG2 interchange) IS correct for operand A (mode 7 /
 mode 9 confirm) but INCORRECT for operand B under the post-swap
-layout above — because the single-register-set assumption breaks
+layout above -- because the single-register-set assumption breaks
 down.  The experimental fix was reverted.  The narrowed refusal
 gate from §12.4.5 remains the principled outcome.
 
@@ -1393,7 +1393,7 @@ ISA decoding that wasn't accessible.  The user then made MI400
 Shader Programming Guide excerpts available via
 `hotswap/docs/manuals/`, and the § V_PERMLANE16_SWAP_B32 pragma
 showed the root cause was NOT in `wmma-lowering.cpp` /
-`redistributeInput` at all — it was one layer up, in the
+`redistributeInput` at all -- it was one layer up, in the
 `v_permlane16_swap_b32` lift itself (`handle-valu-cross-lane.cpp`
 `emitPermLaneSwapEmulation`).
 
@@ -1412,7 +1412,7 @@ for lane in 0:15 do
 endfor
 ```
 
-Our pre-Session-8 emulation was **symmetric** — two cross-wired
+Our pre-Session-8 emulation was **symmetric** -- two cross-wired
 `ds_bpermute` calls that unconditionally swapped both 16-lane
 halves via `lane XOR 16`:
 
@@ -1426,7 +1426,7 @@ UNCHANGED, corrupting every `matmul_fp16` input position and
 surfacing downstream as the `+16 col shift` / `+4 bias`
 residuals that Sessions 5–7 characterised at the MFMA-
 redistribution layer.  The `redistributeInput` asymmetries those
-sessions documented are **not** the root cause — they are
+sessions documented are **not** the root cause -- they are
 correct relative to a correct upstream swap.
 
 **The fix** (see `handle-valu-cross-lane.cpp::
@@ -1454,7 +1454,7 @@ pre-Session-8 symmetric bpermute cross-wire.  The existing
 `v_permlane32_swap_b32` and `c2_permlane_swap` lit fixtures
 (the latter tightened in this commit to pin the asymmetric
 shape on gfx1250 source) cover the two arms.  If a future
-gfx950→gfx942 regression surfaces that points at the symmetric
+gfx950->gfx942 regression surfaces that points at the symmetric
 arm, confirm the gfx950 pragma via `docs/manuals/` and
 either (a) extend the gate to the wave64 arm or (b) leave the
 symmetric shape in place, depending on the pragma text.
@@ -1470,7 +1470,7 @@ arithmetic (Triton's idiom was designed for the asymmetric
 semantic in the first place), so both passes are now obsolete:
 the xor3-partner pass's IR fingerprint (direct `xor(bpermute,
 bpermute)`) no longer matches because the bpermutes feed
-`select`s, and the selfpreserve pass's blanket `RAUW →
+`select`s, and the selfpreserve pass's blanket `RAUW ->
 seedRoot` actively corrupts the asymmetric select's partner-
 half output.  Defaults have been flipped to **off** for both;
 the raise_cli opt-in flags (`--enable-permlane16-xor3-partner`
@@ -1492,23 +1492,23 @@ audit / bisection only.
 
 The WMMA refusal gates in `handle-valu-vop3p.cpp` (Sessions 5/6
 K=4, K=32/K=64 MODREP with `kernelHasPermlane16Swap`) are
-**dropped** — the MODREP MFMA redistribution is now correct for
+**dropped** -- the MODREP MFMA redistribution is now correct for
 both single-WMMA (`matmul_fp16_16x16`) and multi-WMMA
 (`matmul_fp16`) regimes.  The `kernelHasPermlane16Swap` pre-scan
 infrastructure (`raise-context.hpp`, `raiser.cpp`) is retained as
-it's unscoped to this fix — any future cross-WMMA diagnostic
+it's unscoped to this fix -- any future cross-WMMA diagnostic
 that wants to detect the multi-WMMA pattern can reuse it.
 
 Regression guards landed with the fix:
 
-* `lit_tests/c2_permlane_swap/` — tightened to pin the ASYMMETRIC
+* `lit_tests/c2_permlane_swap/` -- tightened to pin the ASYMMETRIC
   shape on gfx1250 source (half-bit AND + icmp + two per-lane
   selects feeding the final `new_vdst` / `new_src0_out` VGPRs).
-* `lit_tests/v_permlane32_swap_b32/` — left pinned to the
+* `lit_tests/v_permlane32_swap_b32/` -- left pinned to the
   SYMMETRIC shape since the gate keeps gfx950 source on the
   pre-Session-8 arm.
 * `lit_tests/wmma_f32_16x16x4_f32/wmma_f32_16x16x4_f32_modrep.ll`
-  — closes the coverage gap on the K=4 WMMA MODREP path (the
+  -- closes the coverage gap on the K=4 WMMA MODREP path (the
   old refusal gate that was dropped for this commit had no
   corpus-level test keeping it honest).
 * Permlane16-swap regression coverage pins the asymmetric expectations
@@ -1521,7 +1521,7 @@ Regression guards landed with the fix:
 
 - **SPE / wave-size** (`wave-size-translation.md`): WMMA sites require uniform
   reachability (G3). The two-pass lowering is itself the
-  SPE-compatible decomposition — it runs both wave32 replicas of the
+  SPE-compatible decomposition -- it runs both wave32 replicas of the
   source fragment independently, which is exactly the modulo-
   replication projection SPE uses.
 - **Async copy / tensor data movement:** MFMA operands arrive through
