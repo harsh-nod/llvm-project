@@ -92,7 +92,7 @@ struct DecodedInst {
   // The 16-bit `OpName::offset` immediate of `ds_swizzle_b32` encodes
   // a swizzle-mode selector + per-mode parameters (SIDefines.h
   // `Swizzle::EncBits`). Both the Phase 1.4.5 obstruction classifier
-  // and `handle_ds.cpp::DS_SWIZZLE_B32` need this value: the
+  // and `handle-ds.cpp::DS_SWIZZLE_B32` need this value: the
   // classifier to gate cross-wave safety via `dsSwizzleSafeForModRep`,
   // the handler to materialise the `i32 immarg` for
   // `llvm.amdgcn.ds.swizzle`. We extract once at decode time so both

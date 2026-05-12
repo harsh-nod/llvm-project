@@ -746,7 +746,7 @@ enum class CanonicalOp : uint16_t {
   // (`int_amdgcn_ds_load_tr8_b64` gated isGFX1250Plus,
   // `int_amdgcn_ds_read_tr8_b64` gated HasGFX950Insts); both lower
   // through the same hand-rolled bpermute-based emulation in
-  // handle_ds.cpp because gfx942 (the transpiler's target ISA) has
+  // handle-ds.cpp because gfx942 (the transpiler's target ISA) has
   // neither isel pattern and no in-tree pre-isel emulation.
   DS_LOAD_TR8_B64,
   DS_READ_B32, DS_READ_B64,
@@ -773,7 +773,7 @@ enum class CanonicalOp : uint16_t {
   // offset is `rawFieldValue * 256` (B32) or `* 512` (B64) instead of
   // `* 4` / `* 8`, extending reach with the same 8-bit offset field
   // at the cost of a 64-dword stride granularity. Handled jointly
-  // with the non-ST64 variants in handle_ds.cpp's dedicated
+  // with the non-ST64 variants in handle-ds.cpp's dedicated
   // READ2/WRITE2 block; placed adjacent in the enum so the existing
   // `sop >= DS_READ_B32 && sop <= DS_READ_I8` range check continues
   // to classify them as DS reads (the dedicated block intercepts

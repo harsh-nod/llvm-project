@@ -45,13 +45,13 @@ namespace {
 // the same half-register selector baked into the opcode: store bits
 // [31:16] of the source VGPR (the "high half") rather than [15:0].
 // The lowered shape is `lshr i32 %src32, 16` followed by `trunc i32
-// to i16` — InstCombine folds this pair to the backend-preferred
+// to i16` -- InstCombine folds this pair to the backend-preferred
 // sub-dword-extraction shape on every AMDGPU target.
 //
 // Kept namespace-local (rather than as a public helper) because the
 // semantics are tied 1:1 to the FLAT family's sub-dword store lift
 // inside this file.  DS family has its own structurally-identical
-// emission in handle_ds.cpp (DS_WRITE_B16_D16_HI under
+// emission in handle-ds.cpp (DS_WRITE_B16_D16_HI under
 // `ds_st_d16_hi` / `ds_st_hi16_shr` breadcrumbs); MUBUF family has
 // the load-side companion in handle-mubuf.cpp (via `d16Half=2` in
 // `mubufClassify`).  Three addrspace-specific handlers, one
@@ -379,9 +379,9 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
     // SPE-gate the memory access itself, not just the VGPR write-back.
     // The store counterparts (GLOBAL_STORE_*, ~line 196 below) are
     // already wrapped in `emitUnderExec`; the asymmetric pre-2026-04-22
-    // handling where loads fired on every target lane — including
+    // handling where loads fired on every target lane -- including
     // WaveNative "phantom" lanes whose source-wave had no workitem at
-    // this position — caused HIP error 700 "illegal memory access"
+    // this position -- caused HIP error 700 "illegal memory access"
     // when phantom-lane pointer-arithmetic VGPRs held `undef` /
     // stale-VGPR-slot values that pointed outside any allocated
     // region. See `handle-flat.cpp::FLAT_LOAD_*` block comment below
@@ -389,7 +389,7 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
     // variants) for the full rationale. `ctx.Regs.writeReg32` (the
     // low-level alloca path) is called inside the body rather than
     // `ctx.writeReg32` (which would wrap the write in a nested
-    // `emitUnderExec` — harmless but redundant IR).
+    // `emitUnderExec` -- harmless but redundant IR).
     Ctx.emitUnderExec([&] {
       bool IsUnsigned = Sop == CanonicalOp::GLOBAL_LOAD_UBYTE ||
                         Sop == CanonicalOp::GLOBAL_LOAD_USHORT;
@@ -424,8 +424,8 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
 
     // Same SPE-gating rationale as the GLOBAL_LOAD sub-dword block
     // above: without `emitUnderExec` wrapping the `CreateLoad`, every
-    // target lane — including WaveNative "phantom" lanes whose
-    // pointer-arithmetic VGPRs hold `undef` / stale slot data —
+    // target lane -- including WaveNative "phantom" lanes whose
+    // pointer-arithmetic VGPRs hold `undef` / stale slot data --
     // dereferences the addr VGPR pair and faults at runtime (HIP
     // error 700).  For the vector-load case (`DWORDX{2,3,4}`), the
     // single load + N extract-write pairs all go inside one
@@ -461,12 +461,12 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
     int StoreDwords = 1;
     int StoreBits = 32;
     // `_D16_HI` variants store bits [31:16] of the source VGPR rather
-    // than [15:0] — a half-register selector baked into the opcode
+    // than [15:0] -- a half-register selector baked into the opcode
     // (AMDGPU ISA; see `global_store_d16_hi_b16` in
-    // FLATInstructions.td and handle_ds.cpp's DS_WRITE_B16_D16_HI for
+    // FLATInstructions.td and handle-ds.cpp's DS_WRITE_B16_D16_HI for
     // the existing DS-family precedent).  The compiler emits this
     // form to write the upper-16-bits half of a 32-bit value without
-    // an explicit `v_lshrrev_b32` shift — idiomatic in the fp32→bf16
+    // an explicit `v_lshrrev_b32` shift -- idiomatic in the fp32->bf16
     // round-to-nearest-even epilogue (`v_add3_u32 v, bits, odd_bit,
     // 0x7fff` produces the RNE-biased sum in a 32-bit VGPR, and
     // `global_store_d16_hi_b16` writes its upper 16 bits = the bf16
@@ -494,7 +494,7 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
     // scale_offset on stores scales the per-lane vaddr by the access
     // element size. For sub-dword stores (byte/short) the element size
     // is 1 or 2 bytes; for dword/dwordx{2,3,4} it is 4, 8, 12, or 16
-    // bytes — the compiler emits `global_store_dwordx4 … scale_offset`
+    // bytes -- the compiler emits `global_store_dwordx4 … scale_offset`
     // with a lane-index vaddr to lower `out[tid] = vec4` patterns.
     int ElemBytes = StoreBits < 32 ? (StoreBits / 8)
                                     : std::max(StoreDwords, 1) * 4;
@@ -526,13 +526,13 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
   }
 
   // ---------------------------------------------------------------------
-  // gfx1250 async global → LDS load (FLAT VFLAT 0x5f-0x62 — b8 / b32 /
+  // gfx1250 async global -> LDS load (FLAT VFLAT 0x5f-0x62 -- b8 / b32 /
   // b64 / b128).
   //
   // Operand layout from `FLAT_Global_Load_LDS_Pseudo<…, IsAsync=1>`
   // (FLATInstructions.td:391-417) is identical across all four widths
-  // (only the data byte size — and so the intrinsic ID / per-lane load
-  // type — varies):
+  // (only the data byte size -- and so the intrinsic ID / per-lane load
+  // type -- varies):
   //
   //   plain (4 srcs): vdst:VGPR_32, vaddr:VGPR_64,            offset, cpol
   //   SADDR (5 srcs): vdst:VGPR_32, saddr:SReg_64, vaddr:VGPR_32, offset, cpol
@@ -543,8 +543,8 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
   // `int_amdgcn_global_load_async_to_lds_b{8,32,64,128}`
   // (IntrinsicsAMDGPU.td:3939-3946, all sharing the
   // `AMDGPUAsyncGlobalLoadToLDS` signature on line 3904), which
-  // consumes the LDS pointer as `local_ptr_ty` — materialised via
-  // `inttoptr i32 → ptr addrspace(3)`. The cross-target arm emits a
+  // consumes the LDS pointer as `local_ptr_ty` -- materialised via
+  // `inttoptr i32 -> ptr addrspace(3)`. The cross-target arm emits a
   // synchronous per-lane `load <T> + store <T>` pair against the
   // same decoded operands; see the `GLOBAL_LOAD_ASYNC_TO_LDS_B*`
   // CanonicalOp doc block in `canonical-op.h` for the correctness argument and
@@ -554,7 +554,7 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
   // Operand parsing is shared between the two arms so any shape
   // that lifts on gfx1250 lifts identically on gfx942, modulo the
   // emission tail. The ISA source-of-truth pragma
-  // (`instruction_manual.pdf §13.6.9-12`, verbatim — identical
+  // (`instruction_manual.pdf §13.6.9-12`, verbatim -- identical
   // across all four widths except the LDS-store width):
   //
   //   pragma "vector" do
@@ -578,16 +578,16 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
       Sop == CanonicalOp::GLOBAL_LOAD_ASYNC_TO_LDS_B32 ||
       Sop == CanonicalOp::GLOBAL_LOAD_ASYNC_TO_LDS_B64 ||
       Sop == CanonicalOp::GLOBAL_LOAD_ASYNC_TO_LDS_B128) {
-    // ---- Width → (access type, bytes) dispatch (used by both arms) ----
+    // ---- Width -> (access type, bytes) dispatch (used by both arms) ----
     //
     // The ISA pragma stores per lane:
-    //   b8   →  1 byte                  (i8)
-    //   b32  →  4 bytes                 (i32)
-    //   b64  →  8 bytes  = 2  x i32     (<2 x i32>)
-    //   b128 →  16 bytes = 4  x i32     (<4 x i32>)
+    //   b8   ->  1 byte                  (i8)
+    //   b32  ->  4 bytes                 (i32)
+    //   b64  ->  8 bytes  = 2  x i32     (<2 x i32>)
+    //   b128 ->  16 bytes = 4  x i32     (<4 x i32>)
     //
     // `accessBytes` is consumed on the SADDR path for
-    // `scale_offset` (cpol bit 0x400) — the ISA specifies that the
+    // `scale_offset` (cpol bit 0x400) -- the ISA specifies that the
     // scaled-offset mode multiplies the per-lane VGPR vaddr by the
     // access element size before adding it to the SGPR base.  The
     // same-target arm passes cpol to the intrinsic and lets the
@@ -600,7 +600,7 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
     // GLOBAL_LOAD_DWORDX{2,3,4} path's handling of the same
     // aggregate shape) rather than as a single `iN` whose natural
     // alignment (16 B for b128) the source buffer would not
-    // necessarily satisfy — the vector type lets the backend
+    // necessarily satisfy -- the vector type lets the backend
     // pick a `global_load_b{64,128}` opcode with the aligned-load
     // attribute below.
     Type *AccessTy = nullptr;
@@ -661,7 +661,7 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
       // ("Instruction Fields") specifies that in the SADDR form
       // the VGPR vaddr is an "unsigned byte offset" added to the
       // SGPR base. The address-space decoder in `flat-addr.cpp`
-      // uses `sext` for the general GLOBAL_LOAD SADDR family — an
+      // uses `sext` for the general GLOBAL_LOAD SADDR family -- an
       // orthogonal pre-existing inconsistency (not addressed
       // here). We mirror the same-target arm's historical choice
       // so same-target and cross-target emit the same effective
@@ -674,13 +674,13 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
       // this point, WITHOUT the `scale_offset` multiplier applied.
       // Reasoning, one clause per arm:
       //
-      //   Same-target (gfx1250 → gfx1250, `hasTensorOps == true`):
+      //   Same-target (gfx1250 -> gfx1250, `hasTensorOps == true`):
       //     the intrinsic consumes cpol as an immarg that includes
       //     the `SCAL` bit (`AMDGPU::CPol::SCAL = 0x400`); on isel
       //     the backend matches the `saddr + voff` pattern on the
       //     intrinsic's `%gaddr` operand AND the cpol's SCAL bit,
       //     and emits the `global_load_async_to_lds_*_SADDR ...
-      //     scale_offset` real — the HARDWARE applies the scale on
+      //     scale_offset` real -- the HARDWARE applies the scale on
       //     execution.  Pre-multiplying in IR would produce
       //     `saddr + voff * N` as the `%gaddr`, which the backend
       //     would either (a) no longer recognise as a SADDR
@@ -691,11 +691,11 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
       //     (silent 4x / 16x / 64x miscompile).  Neither outcome
       //     is desirable.  The same-target lit fixture
       //     (`global_load_async_to_lds_same_target.ll`) pins the
-      //     `inttoptr i64` shape with no intervening multiply —
+      //     `inttoptr i64` shape with no intervening multiply --
       //     dropping the gate below would immediately fail that
       //     fixture with a double-scale in IR.
       //
-      //   Cross-target (gfx1250 → gfx942, `hasTensorOps == false`):
+      //   Cross-target (gfx1250 -> gfx942, `hasTensorOps == false`):
       //     we emit plain `load` / `store` without an intrinsic, so
       //     there is no backend folding to rely on; the multiply
       //     MUST be materialised explicitly here for the lane
@@ -707,7 +707,7 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
       //
       // Reading `di.hasScaleOffset` (the decoded typed boolean)
       // rather than `cpolImm & AMDGPU::CPol::SCAL` keeps the
-      // classification in one place — see
+      // classification in one place -- see
       // `decode.cpp::decodeScaleOffset` for the authoritative
       // SCAL-bit extraction.
       if (Di.HasScaleOffset && !Ctx.TargetIsa.HasTensorOps)
@@ -729,7 +729,7 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
       ImmStart = 2;
     }
 
-    // Trailing (offset, cpol) imm pair — first imm is `flat_offset`
+    // Trailing (offset, cpol) imm pair -- first imm is `flat_offset`
     // (signed 13-bit in the encoding, already sign-extended by MC),
     // second is `cpol` (gfx12+ cachepolicy bitfield: th, scope,
     // scale_offset).
@@ -753,7 +753,7 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
 
     // ---- Per-arm emission ----
     if (Ctx.TargetIsa.HasTensorOps) {
-      // Same-target (gfx1250 → gfx1250): emit the native intrinsic
+      // Same-target (gfx1250 -> gfx1250): emit the native intrinsic
       // directly; `IntrInaccessibleMemOrArgMemOnly` on the
       // intrinsic prevents downstream passes from CSEing or
       // reordering the asynchronous fetch across companion
@@ -791,7 +791,7 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
     // Apply `flat_offset` to BOTH pointers via i8-GEP before the
     // load/store (matching the ISA pragma's
     // `dsaddr = ... + INST_OFFSET` AND `memaddr = CalcGlobalAddr(
-    // ..., IOFFSET)` — the same-target intrinsic folds both onto
+    // ..., IOFFSET)` -- the same-target intrinsic folds both onto
     // the operand bank via its `offset` immarg; the cross-target
     // emulation materialises the GEP chains instead).
     //
@@ -800,7 +800,7 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
     // (negative strides, compiler-scheduled prefetches), same
     // convention as `flat-addr.cpp::toGlobalPtr`.  Zero offsets
     // are elided to keep the IR shape compact when the immediate
-    // is unused — which is the common case in the observed
+    // is unused -- which is the common case in the observed
     // corpus.
     Value *EmuGlobalPtr = GlobalPtr;
     Value *EmuLdsPtr = LdsPtr;
@@ -820,7 +820,7 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
     // `!hasTensorOps` so the same-target arm's intrinsic-driven
     // base is untouched).  The remaining bits (`th` temporal
     // hint, `scope` CU/DEV/SYS) are target-level tuning hints
-    // without a gfx942 encoding — the backend re-derives cache
+    // without a gfx942 encoding -- the backend re-derives cache
     // behaviour from the IR's `load` / `store` ordering (default
     // semantics = unordered).  Dropping them is the same posture
     // that `sync-translation.md §5.3` takes for atomic scope
@@ -850,10 +850,10 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
   }
 
   // ---------------------------------------------------------------------
-  // gfx1250 FLAT VMEM prefetch (VFLAT 0x05D — global_prefetch_b8).
+  // gfx1250 FLAT VMEM prefetch (VFLAT 0x05D -- global_prefetch_b8).
   //
   // Operand layout from `FLAT_Prefetch_Pseudo` (FLATInstructions.td
-  // :525-553) — note `has_vdst = 0`, so there is no dst slot:
+  // :525-553) -- note `has_vdst = 0`, so there is no dst slot:
   //
   //   plain (3 srcs): vaddr:VGPR_64,            offset, cpol
   //   SADDR (4 srcs): saddr:SReg_64, vaddr:VGPR_32, offset, cpol
@@ -863,7 +863,7 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
   // onto the pointer via a non-inbounds GEP before the call (the
   // intrinsic itself takes no offset operand). The call sits
   // OUTSIDE `emitUnderExec` because the intrinsic carries the EXEC
-  // mask implicitly through `IntrInaccessibleMemOrArgMemOnly` — a
+  // mask implicitly through `IntrInaccessibleMemOrArgMemOnly` -- a
   // hint with no observable side effect on inactive lanes, so an
   // extra `if-spe-active` guard would gratuitously inflate IR for
   // what hardware executes as a single broadcast hint.
@@ -883,7 +883,7 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
           << "amdgcn.s.prefetch.data requires a uniform SGPR "
           << "pointer which we cannot prove for the divergent "
           << "VGPR address used here without divergence "
-          << "analysis — refusing to emit a fallback or silently "
+          << "analysis -- refusing to emit a fallback or silently "
           << "drop the hint.\n";
       Hr.Failure = RaiseFailure::unsupportedShape(
           Di, "FLAT",
@@ -968,7 +968,7 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
     return Hr;
   }
 
-  // flat_load/flat_store — same structure as global but uses flat address
+  // flat_load/flat_store -- same structure as global but uses flat address
   // space on the plain-VGPR64 form (gfx9/10/11) and global address space
   // on the gfx12+ SADDR form.  Detection is by operand shape, matching
   // `decodeGlobalLoadAddr`'s discriminator but with address-space
@@ -981,7 +981,7 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
     bool IsByte = Sop == CanonicalOp::FLAT_LOAD_UBYTE || Sop == CanonicalOp::FLAT_LOAD_SBYTE;
     Value *Addr = nullptr;
     // SADDR form: saddr(SGPR64), vaddr(VGPR32), [scale_offset] [offset:imm]
-    // — semantically a global_load (SGPR base + per-lane VGPR offset),
+    // -- semantically a global_load (SGPR base + per-lane VGPR offset),
     // so delegate to the shared decoder and accept its addrspace(1)
     // conversion.
     if (Op.nSrcs() >= 2 && Op.isSrcReg(0) && Op.isSrcReg(1) &&
@@ -1013,7 +1013,7 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
     // GLOBAL_LOAD sub-dword block above: unguarded loads fault on
     // WaveNative phantom lanes whose pointer VGPRs hold `undef` or
     // stale data. FLAT (plain-VGPR64) loads can legitimately reach
-    // LDS / private / global — an out-of-range phantom-lane pointer
+    // LDS / private / global -- an out-of-range phantom-lane pointer
     // will still page-fault in whichever aperture it lands in.
     Ctx.emitUnderExec([&] {
       Value *Loaded = Ctx.B.CreateLoad(LoadTy, Addr, "flat_load_sub");
@@ -1037,13 +1037,13 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
     // Two operand-shape variants, with distinct address-space semantics:
     //
     //   (plain)  vaddr:VGPR64, [imms]
-    //              — gfx9/10/11 `flat_load_dword`: VGPR64 holds a full
+    //              -- gfx9/10/11 `flat_load_dword`: VGPR64 holds a full
     //              per-lane flat address that may legitimately reach
     //              LDS or private; lift as addrspace(0) so the target
     //              backend can re-emit `flat_load_*`.
     //
     //   (SADDR)  saddr:SGPR64, vaddr:VGPR32, [scale_offset] [offset:imm]
-    //              — gfx12+ `flat_load_b32 … scale_offset`: uniform
+    //              -- gfx12+ `flat_load_b32 … scale_offset`: uniform
     //              SGPR64 base + per-lane VGPR32 offset, semantically
     //              identical to `global_load_dword`'s SADDR form (the
     //              hardware's scale-offset + signed-imm arithmetic can
@@ -1062,7 +1062,7 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
     // `in[0x206/4] = in[518]` regardless of tid).
     // The shape discriminator below (`op.srcReg(0).kind == SGPR` AND
     // `op.srcReg(1).kind == VGPR`) matches `decodeGlobalLoadAddr`'s
-    // inner predicate but keeps the plain-form AS choice local — the
+    // inner predicate but keeps the plain-form AS choice local -- the
     // shared helper unconditionally casts its result to addrspace(1),
     // which is correct for SADDR and wrong for plain-flat on pre-gfx12.
     Value *Addr = nullptr;
@@ -1124,7 +1124,7 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
     int StoreDwords = 1;
     int StoreBits = 32;
     // `FLAT_STORE_SHORT_D16_HI` stores bits [31:16] of the source
-    // VGPR, not [15:0] — same half-register selector as
+    // VGPR, not [15:0] -- same half-register selector as
     // `GLOBAL_STORE_SHORT_D16_HI` above; see the comment block on
     // the GLOBAL_STORE_ branch for the full rationale (bf16 RNE
     // epilogue, pre-fix miscompile shape, etc.).
@@ -1143,8 +1143,8 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
     // Two operand-shape variants with distinct AS semantics; mirror
     // the FLAT_LOAD_DWORD handler's case split.  For stores:
     //
-    //   (plain)  vaddr:VGPR64, vdata:VGPR*, [imms]            → addrspace(0)
-    //   (SADDR)  vaddr:VGPR32, vdata:VGPR*, saddr:SGPR64, ... → addrspace(1)
+    //   (plain)  vaddr:VGPR64, vdata:VGPR*, [imms]            -> addrspace(0)
+    //   (SADDR)  vaddr:VGPR32, vdata:VGPR*, saddr:SGPR64, ... -> addrspace(1)
     //
     // See the FLAT_LOAD_DWORD comment block above for the full
     // derivation and rcp_sqrt_kernel regression anchor.
@@ -1198,7 +1198,7 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
     return Hr;
   }
 
-  // flat_atomic_* — same as global_atomic but flat address space
+  // flat_atomic_* -- same as global_atomic but flat address space
   if (Sop >= CanonicalOp::FLAT_ATOMIC_ADD && Sop <= CanonicalOp::FLAT_ATOMIC_ADD_F32) {
     // Contract: the RTN/non-RTN collapse in OpcodeMap relies on
     // IsAtomicRet <=> (numDefs > 0) to decide result writeback below.
@@ -1207,7 +1207,7 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
     // Two operand-shape variants, mirroring the FLAT_LOAD/STORE case
     // split and the GLOBAL_ATOMIC block below:
     //
-    //   (plain)  vaddr:VGPR64, vdata:VGPR*, [imms] → addrspace(0)
+    //   (plain)  vaddr:VGPR64, vdata:VGPR*, [imms] -> addrspace(0)
     //              gfx9/10/11 `flat_atomic_add v[A:B], vData, off[,offset]`:
     //              VGPR64 holds a full per-lane flat address that may
     //              legitimately reach LDS/private/global; preserve
@@ -1215,7 +1215,7 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
     //              on targets where plain-flat is still valid.
     //
     //   (SADDR)  vaddr:VGPR32, vdata:VGPR*, saddr:SGPR64,
-    //            [scale_offset] [offset:imm] → addrspace(1)
+    //            [scale_offset] [offset:imm] -> addrspace(1)
     //              gfx12+ `flat_atomic_* vAddr, vData, s[A:B]
     //              [scale_offset]`: scale-offset + signed-imm
     //              arithmetic can only reach globally-allocated memory
@@ -1228,16 +1228,16 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
     // Before this split, the handler hard-coded the plain shape and
     // used a "first non-zero imm wins" scan that misidentified the
     // CPol operand (packed scale_offset + scope bits) as the signed
-    // offset field.  The bug is DORMANT today — no recipe in the
+    // offset field.  The bug is DORMANT today -- no recipe in the
     // compare_correctness Triton corpus emits gfx12+ `flat_atomic_*`
     // (Triton's gfx1250 codegen prefers `global_atomic_*` whenever it
-    // knows the buffer lives in global) — but it's the identical
+    // knows the buffer lives in global) -- but it's the identical
     // class that bit GLOBAL_ATOMIC (see that block's comment for the
     // `sum_bitmatrix_rows_u32` failure and the
     // sum-bitmatrix-rows regression gate).  Fixed here
     // for symmetry to close the "handler assumes operand shape that
     // varies by subtarget" bug class across FLAT_LOAD / FLAT_STORE /
-    // FLAT_ATOMIC / GLOBAL_LOAD / GLOBAL_STORE / GLOBAL_ATOMIC — all
+    // FLAT_ATOMIC / GLOBAL_LOAD / GLOBAL_STORE / GLOBAL_ATOMIC -- all
     // six now route SADDR through the shared decoder.
     Value *Addr = nullptr;
     ParsedReg StData;
@@ -1330,7 +1330,7 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
     assert(((Di.TsFlags & SIInstrFlags::IsAtomicRet) != 0) == (Di.NumDefs > 0) &&
            "global atomic: IsAtomicRet disagrees with numDefs");
     // Delegate addressing to `decodeGlobalStoreAddr`.  Global atomics
-    // share the store's operand shape — (vaddr, vdata, [saddr], [imms]) —
+    // share the store's operand shape -- (vaddr, vdata, [saddr], [imms]) --
     // and we reuse the exact same decoder to get both shape variants
     // handled consistently:
     //
@@ -1343,7 +1343,7 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
     // wins" scan to pick up the signed offset.  Two bugs compounded on
     // `_sum_bitmatrix_rows`'s
     //   global_atomic_add_u32 v1, v0, s[4:5] scale_offset scope:SCOPE_DEV
-    // — the SADDR form:
+    // -- the SADDR form:
     //
     //   (1) `op.srcReg(0)` is VGPR32 `v1` (the vaddr offset), not a
     //       pointer; reading it as a VGPR64 pair pulled in v2 as the
@@ -1361,12 +1361,12 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
     //
     // Net device-visible symptom: `HIP error 700 (illegal memory
     // access)` on every launch of `sum_bitmatrix_rows_u32` (and the
-    // `_nw4` variant) — the atomic fired at the wrong address with
+    // `_nw4` variant) -- the atomic fired at the wrong address with
     // the wrong value.  `decodeGlobalStoreAddr` handles the shape
     // discriminator and uses `firstImmOffset` (FIRST imm, regardless
     // of value) for the offset field, so CPol no longer leaks into
     // the offset lookup.  See `hotswap/docs/learnings.md` entry
-    // "2026-04-23 — global_atomic SADDR form silently miscompiled"
+    // "2026-04-23 -- global_atomic SADDR form silently miscompiled"
     // for the full investigation and the regression gate.
     //
     // Element size for `scale_offset`: every atomic in the CanonicalOp range
@@ -1381,7 +1381,7 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
     Value *Addr = Fa.Ptr;
     // `stData` points to the base of the vdata VGPR range (32-bit for
     // the scalar atomics; CMPSWAP treats it as a 2-vgpr pair
-    // cmp/new — see the CMPSWAP branch below).
+    // cmp/new -- see the CMPSWAP branch below).
     Value *Data = Ctx.Regs.readReg32(Ctx.B, Fa.StData);
 
     if (Sop == CanonicalOp::GLOBAL_ATOMIC_CMPSWAP) {

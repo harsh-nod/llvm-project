@@ -862,7 +862,7 @@ static const Entry kCanonTable[] = {
     // (DSInstructions.td:1578); we canonicalise on the gfx11+
     // spelling, mirroring the s_set_pc_i64 / DS_LOAD_TR8_B64
     // precedent. The handler dispatches via the existing generic
-    // DS read range — see dsClassify in handle_ds.cpp for the
+    // DS read range — see dsClassify in handle-ds.cpp for the
     // {dwords=3, loadBits=96} entry.
     E(DS_READ_B96, DS_READ_B96),
     E(DS_READ_B128, DS_READ_B128),
