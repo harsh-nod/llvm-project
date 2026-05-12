@@ -308,6 +308,21 @@ target_include_directories(MXFP4DequantTests PRIVATE
 
 comgr_configure_test_target(MXFP4DequantTests)
 
+# -- C5PredicateChainTests -----------------------------------------------------------------
+
+add_executable(C5PredicateChainTests
+  C5PredicateChainTest.cpp)
+
+target_link_libraries(C5PredicateChainTests PRIVATE
+  ${COMGR_GTEST_LIBS}
+  ${LLVM_PTHREAD_LIB})
+comgr_link_hotswap_transpiler(C5PredicateChainTests)
+
+target_include_directories(C5PredicateChainTests PRIVATE
+  ${COMGR_GTEST_INCLUDE_DIRS})
+
+comgr_configure_test_target(C5PredicateChainTests)
+
 # Register every test binary with the test-unit / check-comgr plumbing.
 add_custom_target(test-unit
   COMMAND $<TARGET_FILE:HotswapElfTests>
@@ -319,7 +334,8 @@ add_custom_target(test-unit
   COMMAND $<TARGET_FILE:KernargLayoutTests>
   COMMAND $<TARGET_FILE:WaveProjectionTests>
   COMMAND $<TARGET_FILE:SourceHiddenArgsTests>
-  COMMAND $<TARGET_FILE:MXFP4DequantTests>)
+  COMMAND $<TARGET_FILE:MXFP4DequantTests>
+  COMMAND $<TARGET_FILE:C5PredicateChainTests>)
 add_dependencies(test-unit HotswapElfTests HotswapMCTests
   RaiserScaffoldingTests
   CodeObjectUtilsTests
@@ -328,5 +344,6 @@ add_dependencies(test-unit HotswapElfTests HotswapMCTests
   KernargLayoutTests
   WaveProjectionTests
   SourceHiddenArgsTests
-  MXFP4DequantTests)
+  MXFP4DequantTests
+  C5PredicateChainTests)
 add_dependencies(check-comgr test-unit)

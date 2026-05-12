@@ -138,6 +138,7 @@ add_library(hotswap-transpiler OBJECT
   ${HOTSWAP-TDM-RUNTIME-GENERATED-CPP}
   wave-size-obstruction.cpp
   rewrite-cross-lane-divergent.cpp
+  c5-predicate-chain-classifier.cpp
 )
 
 if(NOT TARGET hotswap::transpiler)

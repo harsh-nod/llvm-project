@@ -49,9 +49,9 @@ const char *obstructionKindName(ObstructionKind K) {
   case ObstructionKind::OutOfRangeLaneOperand:
     return "OutOfRangeLaneOperand (\u00a73 Class 1: readlane/writelane operand >= W_s)";
   case ObstructionKind::TtmpWaveIdLeak:
-    return "TtmpWaveIdLeak (\u00a73 Class 1: source read of ttmp8 under cross-widening — wave_id_in_wg field)";
+    return "TtmpWaveIdLeak (\u00a73 Class 1: source read of ttmp8 under cross-widening -- wave_id_in_wg field)";
   case ObstructionKind::WaveIdLiftScalarized:
-    return "WaveIdLiftScalarized (\u00a73 Class 1: canonical wave_id BFE lift + v_writelane/v_readlane + WMMA — cross-lane primitive scalarises the divergent lift, collapsing per-source-wave distinction)";
+    return "WaveIdLiftScalarized (\u00a73 Class 1: canonical wave_id BFE lift + v_writelane/v_readlane + WMMA -- cross-lane primitive scalarises the divergent lift, collapsing per-source-wave distinction)";
   case ObstructionKind::WorkitemIdPredicateChain:
     // see hotswap/docs/modrep-predicate-chain.md §5 (narrow-O1 classifier)
     return "WorkitemIdPredicateChain (\u00a73 Class 5: workitem.id.x() feeds a lane-position-scoped icmp against compile-time constant K \u2264 W_s-1, gating a side effect \u2014 wave-size-sensitive predicate chain under modulo-replication)";
@@ -164,7 +164,7 @@ std::optional<int64_t> extractLaneOperandImm(const DecodedInst &Di) {
   const MCOperand &Op = Inst.getOperand(Idx);
   if (Op.isImm())
     return Op.getImm();
-  return std::nullopt; // dynamic SGPR operand — cannot statically prove range
+  return std::nullopt; // dynamic SGPR operand -- cannot statically prove range
 }
 
 // Decide whether a `ds_swizzle_b32` immediate encodes a swizzle mode
@@ -182,21 +182,21 @@ std::optional<int64_t> extractLaneOperandImm(const DecodedInst &Di) {
 //
 // Within each envelope, only specific sub-encodings are *valid*:
 //
-//   QUAD_PERM     — bits 0..7  encode four 2-bit lane selectors.
+//   QUAD_PERM     -- bits 0..7  encode four 2-bit lane selectors.
 //                   All 256 imms in [0x8000, 0x80FF] are valid.
 //
-//   BITMASK_PERM  — bits 0..4  AND mask (0..31)
+//   BITMASK_PERM  -- bits 0..4  AND mask (0..31)
 //                   bits 5..9  OR mask  (0..31)
 //                   bits 10..14 XOR mask (0..31)
 //                   bit 15      = 0 (envelope discriminator)
 //                   All 32K imms in [0x0000, 0x7FFF] are valid.
 //
-//   FFT_MODE      — bits 0..4   FFT_SWIZZLE_MASK (0..31)
+//   FFT_MODE      -- bits 0..4   FFT_SWIZZLE_MASK (0..31)
 //                   bits 5..11  reserved, MUST be 0
 //                   bits 12..15 = 0xE (envelope discriminator)
 //                   Valid imms: exactly the 32 in [0xE000, 0xE01F].
 //
-//   ROTATE_MODE   — bits 0..4   reserved, MUST be 0
+//   ROTATE_MODE   -- bits 0..4   reserved, MUST be 0
 //                   bits 5..9   ROTATE_SIZE_MASK (0..31)
 //                   bit  10     ROTATE_DIR_MASK  (0|1)
 //                   bit  11     reserved, MUST be 0
@@ -215,12 +215,12 @@ std::optional<int64_t> extractLaneOperandImm(const DecodedInst &Di) {
 //
 // REFUSED imms (any of):
 //   * RESERVED top-nibble envelopes (top nibble in
-//     {0x9, 0xA, 0xB, 0xD, 0xF}) — `Swizzle::EncBits` assigns no
+//     {0x9, 0xA, 0xB, 0xD, 0xF}) -- `Swizzle::EncBits` assigns no
 //     semantics; hardware behavior is undefined.
-//   * FFT_MODE imms with reserved bits 5..11 set — within the FFT
+//   * FFT_MODE imms with reserved bits 5..11 set -- within the FFT
 //     envelope but outside the valid sub-encoding space; hardware
 //     behavior likewise undefined.
-//   * ROTATE_MODE imms with reserved bits 0..4 or 11 set — same
+//   * ROTATE_MODE imms with reserved bits 0..4 or 11 set -- same
 //     argument.
 //
 // Refusing these (rather than silently passing them through to
@@ -232,7 +232,7 @@ std::optional<int64_t> extractLaneOperandImm(const DecodedInst &Di) {
 // disjoint on the discriminator bits (bit 15 separates QUAD_PERM /
 // BITMASK_PERM; the top nibble separates FFT_MODE / ROTATE_MODE
 // from QUAD_PERM and from each other), so the order between them
-// is irrelevant for correctness. The implicit "no match → return
+// is irrelevant for correctness. The implicit "no match -> return
 // false" branch correctly catches all the REFUSED categories.
 bool dsSwizzleSafeForModRep(uint16_t Imm) {
   using namespace AMDGPU::Swizzle;
@@ -458,21 +458,21 @@ findLanePredicatedExecSites(ArrayRef<DecodedInst> Insts,
 }
 
 // Return true iff any source-operand register of `di` covers the 32-bit
-// TTMP8 lane — either as a bare `ttmp8` or as part of a larger tuple
+// TTMP8 lane -- either as a bare `ttmp8` or as part of a larger tuple
 // (e.g. `ttmp[8:9]`). Defs are skipped: only reads of TTMP8 constitute a
 // wave_id leak. The surrounding `(src.waveSize != tgt.waveSize)` check
 // in the caller gates this to cross-widening only.
 //
 // Detection strategy (TableGen-authoritative, no enum arithmetic):
-//   1. Find the TTMP_32 register class — its register at position 8 IS
+//   1. Find the TTMP_32 register class -- its register at position 8 IS
 //      the generation-agnostic pseudo for `ttmp8` (the class is declared
 //      `(add (sequence "TTMP%u", 0, 15))` in SIRegisterInfo.td so
 //      position == index).
 //   2. For every source reg operand (index >= di.numDefs), normalise
 //      each 32-bit sub-register via `mc2PseudoReg` (strips subtarget
-//      suffixes such as `TTMP8_gfx9plus` → `TTMP8`) and compare against
+//      suffixes such as `TTMP8_gfx9plus` -> `TTMP8`) and compare against
 //      the pseudo from step 1. A tuple like `ttmp[8:9]` contributes
-//      sub0 = TTMP8, sub1 = TTMP9 — we match on sub0.
+//      sub0 = TTMP8, sub1 = TTMP9 -- we match on sub0.
 bool readsTtmp8Source(const DecodedInst &Di, const MCRegisterInfo &MRI) {
   const MCRegisterClass &TTMP32 =
       MRI.getRegClass(AMDGPU::TTMP_32RegClassID);
@@ -512,7 +512,7 @@ bool readsTtmp8Source(const DecodedInst &Di, const MCRegisterInfo &MRI) {
 // Return true iff `di` is the canonical gfx1250 HIP-emitted wave_id
 // extraction pattern: `s_bfe_u32 sDST, ttmp8, 0x50019`. The immediate
 // encodes (offset=25, width=5), which extracts bits [29:25] of ttmp8
-// — the command processor's `wave_id_in_workgroup` field.
+// -- the command processor's `wave_id_in_workgroup` field.
 //
 // Pairs with the handle-sop2.cpp `S_BFE_U32` pattern-lift that emits
 // `dst = (workitem.id.x >> log2(W_s)) & 0x1F` for this exact shape.
@@ -552,7 +552,7 @@ bool isCanonicalWaveIdBfe(const DecodedInst &Di,
 } // namespace
 
 // ----------------------------------------------------------------------------
-// buildObstructionReport — the main walk.
+// buildObstructionReport -- the main walk.
 // ----------------------------------------------------------------------------
 
 ObstructionReport buildObstructionReport(ArrayRef<DecodedInst> Insts,
@@ -578,12 +578,12 @@ ObstructionReport buildObstructionReport(ArrayRef<DecodedInst> Insts,
   bool HaveWmma = false;
   SmallVector<LanePredicatedExecSite> LanePredicatedExecSites =
       findLanePredicatedExecSites(Insts, MRI);
-  // Deferred TtmpWaveIdLeak site emission. The canonical shape —
-  // `s_bfe_u32 sDST, ttmp8, 0x50019` — has a principled rescue in
+  // Deferred TtmpWaveIdLeak site emission. The canonical shape --
+  // `s_bfe_u32 sDST, ttmp8, 0x50019` -- has a principled rescue in
   // `handle-sop2.cpp`'s `S_BFE_U32` pattern-lift, which emits
   // `dst = (workitem.id.x >> log2(W_s)) & 0x1F` directly from the
   // divergent-leaf intrinsic and sidesteps the backend's implicit
-  // scalarisation of the formally-scalar BFE → SGPR path. The lift
+  // scalarisation of the formally-scalar BFE -> SGPR path. The lift
   // preserves per-source-wave semantics across cross-widening, so
   // the canonical shape is NOT recorded here (filtered via
   // `isCanonicalWaveIdBfe`).
@@ -595,7 +595,7 @@ ObstructionReport buildObstructionReport(ArrayRef<DecodedInst> Insts,
   // that reads other bits or uses a different bitfield extract
   // semantics would silently miscompile. Those sites are collected
   // here; non-WMMA kernels have a future escape hatch through
-  // `ThreadLoopProjection` (§2.2 — iterate the body R = W_t / W_s
+  // `ThreadLoopProjection` (§2.2 -- iterate the body R = W_t / W_s
   // times with a synthetic per-source-wave wave_id in ttmp8), and
   // WMMA kernels refuse because the §5.2 lane layout requires the
   // full target wave simultaneously and cannot be TLP-split.
@@ -612,7 +612,7 @@ ObstructionReport buildObstructionReport(ArrayRef<DecodedInst> Insts,
   //     hardware level. `v_writelane_b32` / `v_readlane_b32` enforce
   //     exactly that scalar-in rule (the `src0` operand is an SGPR in
   //     the encoding), and the backend materialises that by inserting
-  //     a readfirstlane on a divergent input — which collapses target
+  //     a readfirstlane on a divergent input -- which collapses target
   //     lanes 0..31 (source_wave[0]) with 32..63 (source_wave[1]) back
   //     to a single value. That collapse silently miscompiles every
   //     wave_id-dependent tile address the matmul encoded.
@@ -624,7 +624,7 @@ ObstructionReport buildObstructionReport(ArrayRef<DecodedInst> Insts,
   //     manufactured.
   //
   // Both buffers are emptied into `ObstructionReport::sites` after the
-  // walk completes, gated on `haveWMMA` — the non-WMMA case has a
+  // walk completes, gated on `haveWMMA` -- the non-WMMA case has a
   // future ThreadLoopProjection escape hatch (§2.2; iterate the body
   // R = W_t / W_s times with a synthetic per-source-wave wave_id in
   // ttmp8) and must not be refused preemptively here. WMMA kernels
@@ -657,7 +657,7 @@ ObstructionReport buildObstructionReport(ArrayRef<DecodedInst> Insts,
     // the site emission until after the loop has established whether
     // the kernel also contains WMMA (see below). Without WMMA the
     // leak is handled by ThreadLoopProjection; with WMMA it is
-    // unrewritable (TLP and WMMA are mutually exclusive — §5.2 WMMA
+    // unrewritable (TLP and WMMA are mutually exclusive -- §5.2 WMMA
     // lane layout requires the full target wave) and we refuse.
     if (readsTtmp8Source(Di, MRI) && !isCanonicalWaveIdBfe(Di, MRI))
       Ttmp8ReadSites.push_back(&Di);
@@ -676,8 +676,8 @@ ObstructionReport buildObstructionReport(ArrayRef<DecodedInst> Insts,
       CanonicalWaveIdBfeSites.push_back(&Di);
 
     // WMMA-family detection. If any of these show up in the kernel,
-    // the WMMA → MFMA lowering (matrix-translation.md) is going to be
-    // invoked and the TLP escape hatch is not available — every
+    // the WMMA -> MFMA lowering (matrix-translation.md) is going to be
+    // invoked and the TLP escape hatch is not available -- every
     // deferred ttmp8 site in this kernel becomes an unrewritable
     // refusal surface.
     switch (Sop) {
@@ -703,7 +703,7 @@ ObstructionReport buildObstructionReport(ArrayRef<DecodedInst> Insts,
       Site.Kind = ObstructionKind::MbcntHiLaneIdLeak;
       Site.Rewrite = RewriteId::None;
       Site.RewriteImplemented = false;
-      Site.Detail = "v_mbcnt_hi reads target exec_hi — no wave32 semantics "
+      Site.Detail = "v_mbcnt_hi reads target exec_hi -- no wave32 semantics "
                     "to preserve under modulo-replication";
       Report.Sites.push_back(std::move(Site));
       continue;
@@ -717,7 +717,7 @@ ObstructionReport buildObstructionReport(ArrayRef<DecodedInst> Insts,
       continue;
     }
     if (Sop == CanonicalOp::V_READLANE_B32 || Sop == CanonicalOp::V_WRITELANE_B32) {
-      // Track every readlane/writelane — in-bounds or otherwise — for
+      // Track every readlane/writelane -- in-bounds or otherwise -- for
       // the WaveIdLiftScalarized post-loop check. Out-of-range static
       // lane operands additionally emit an OutOfRangeLaneOperand site
       // in the block below; the two conditions are independent (a
@@ -766,7 +766,7 @@ ObstructionReport buildObstructionReport(ArrayRef<DecodedInst> Insts,
       // flagged" to "proved via LLVM uniformity / value-range
       // analysis on the raised IR" once the post-raise dataflow
       // analysis lands. Today this is a sound-not-complete choice
-      // toward false negatives on readlane/writelane specifically —
+      // toward false negatives on readlane/writelane specifically --
       // tracked in wave-size-obstruction.h's TODO block.
       continue;
     }
@@ -802,7 +802,7 @@ ObstructionReport buildObstructionReport(ArrayRef<DecodedInst> Insts,
       // P4 (permlane16_swap_b32) landed: ds_bpermute-emulated
       // partner = lane_id XOR 16, two bpermutes for the two-VGPR
       // exchange. The wider permlane32_swap_b32 variant stays
-      // unrewritable — its XOR-32 partner spans wave64's two
+      // unrewritable -- its XOR-32 partner spans wave64's two
       // 32-lane halves, which has no wave32 analogue, so a wave32
       // source kernel cannot meaningfully encode it. Seeing it in
       // a wave32 source binary indicates either a corrupted
@@ -847,7 +847,7 @@ ObstructionReport buildObstructionReport(ArrayRef<DecodedInst> Insts,
       if (!Di.HasDsSwizzleImm) {
         Site.RewriteImplemented = false;
         Site.Detail = "ds_swizzle_b32 missing/invalid OpName::offset "
-                      "immediate operand — disassembly malformed or "
+                      "immediate operand -- disassembly malformed or "
                       "outside 16-bit range";
       } else {
         Site.RewriteImplemented = dsSwizzleSafeForModRep(Di.DsSwizzleImm);
@@ -858,7 +858,7 @@ ObstructionReport buildObstructionReport(ArrayRef<DecodedInst> Insts,
              << format_hex_no_prefix(Di.DsSwizzleImm, 4)
              << " is not a valid swizzle encoding (not QUAD_PERM, "
                 "BITMASK_PERM, valid FFT_MODE, or valid ROTATE_MODE) "
-                "— RESERVED top-nibble or FFT/ROTATE reserved bits "
+                "-- RESERVED top-nibble or FFT/ROTATE reserved bits "
                 "set; AMDGPU hardware semantics undefined";
           Site.Detail = Os.str();
         }
@@ -870,7 +870,7 @@ ObstructionReport buildObstructionReport(ArrayRef<DecodedInst> Insts,
     // canonicalises DPP variants down to their base CanonicalOp, so the
     // CanonicalOp alone cannot identify them, but `di.tsFlags` is captured
     // from the *original* MCInstrDesc (see decode.cpp) so the DPP
-    // bit is still visible. Same for SDWA — though SDWA is same-lane
+    // bit is still visible. Same for SDWA -- though SDWA is same-lane
     // and not a cross-wave concern, so we don't flag it.
     if (Di.TsFlags & SIInstrFlags::DPP) {
       ObstructionSite Site;
@@ -886,7 +886,7 @@ ObstructionReport buildObstructionReport(ArrayRef<DecodedInst> Insts,
       // refuses rather than partially decoding. DPP16 FI is decoded but not
       // representable by `llvm.amdgcn.update.dpp`, so it is treated as pending
       // too. The `tsFlags & SIInstrFlags::DPP` check still fires for all forms
-      // — all are Class-2 cross-lane sites by the hotswap/docs/wave-size-
+      // -- all are Class-2 cross-lane sites by the hotswap/docs/wave-size-
       // translation.md §6 taxonomy; the flipped-by-form `rewriteImplemented`
       // bit separates "handled" from "pending" without changing the taxonomy.
       Site.RewriteImplemented = Di.HasDpp && !Di.DppFi;
@@ -928,7 +928,7 @@ ObstructionReport buildObstructionReport(ArrayRef<DecodedInst> Insts,
     // unsupportedOpcode path.
     //
     // Vector atomics (GLOBAL / FLAT / BUFFER _SWAP / _CMPSWAP): the
-    // race is *lane-level* — under modulo-replication the wave64
+    // race is *lane-level* -- under modulo-replication the wave64
     // source is projected onto two wave32 sub-waves, so lanes `i` and
     // `i + W_s` issue concurrently against the same target slot. For
     // non-commutative binops the two possible orderings produce
@@ -964,7 +964,7 @@ ObstructionReport buildObstructionReport(ArrayRef<DecodedInst> Insts,
     //     pre-instruction memory value).
     //   * S_ATOMIC_DEC under double-issue decrements twice, and both
     //     sub-waves see pre-decrement values that are off-by-one from
-    //     what the source program computed — fatal for the AITER
+    //     what the source program computed -- fatal for the AITER
     //     split-k "am I the last workgroup?" barrier idiom keyed on
     //     `old == 1`, which is the dominant corpus consumer today.
     //
@@ -998,7 +998,7 @@ ObstructionReport buildObstructionReport(ArrayRef<DecodedInst> Insts,
   // `ttmp8ReadSites` for the rationale: the `s_bfe_u32 ttmp8, 0x50019`
   // wave_id extraction is clang/hip boilerplate in every non-trivial
   // gfx1250 kernel, so unconditionally refusing on it would collapse
-  // coverage. We only refuse when the kernel also contains WMMA —
+  // coverage. We only refuse when the kernel also contains WMMA --
   // in which case ThreadLoopProjection (the §2.2 escape hatch for
   // class-4 wave_id leaks) cannot be applied because the §5.2 WMMA
   // lane layout requires the full target wave simultaneously. In the
@@ -1012,30 +1012,30 @@ ObstructionReport buildObstructionReport(ArrayRef<DecodedInst> Insts,
       Site.Rewrite = RewriteId::None;
       Site.RewriteImplemented = false;
       Site.Detail =
-          "source reads ttmp8 under cross-widening — bits [29:25] carry "
+          "source reads ttmp8 under cross-widening -- bits [29:25] carry "
           "wave_id_in_workgroup, which is a function of the target's "
           "absolute lane position (not of lane_id mod W_s). Kernel also "
-          "contains WMMA, so ThreadLoopProjection is not available — refuse.";
+          "contains WMMA, so ThreadLoopProjection is not available -- refuse.";
       Report.Sites.push_back(std::move(Site));
     }
   }
 
-  // WaveIdLiftScalarized — the canonical-BFE rescue collapses inside a
+  // WaveIdLiftScalarized -- the canonical-BFE rescue collapses inside a
   // cross-lane scalar primitive under WMMA.
   //
   // This is the Matmul128x128 / `matmul_f16_large_gfx1250` pattern:
   //
-  //     s_bfe_u32 s2, ttmp8, 0x50019          ; lifted → divergent wave_id
+  //     s_bfe_u32 s2, ttmp8, 0x50019          ; lifted -> divergent wave_id
   //     s_and_b32 s73, s2, 3                  ; tainted (SGPR but divergent)
   //     s_lshl_b32 s18, s2, 5                 ; tainted
   //     v_writelane_b32 vgpr256, s18, 4       ; backend readfirstlane(s18)
   //                                           ; collapses target lanes
   //                                           ; 0..31 with 32..63 to a
-  //                                           ; single value → per-
+  //                                           ; single value -> per-
   //                                           ; source-wave tile offset
   //                                           ; LOST.
   //     …
-  //     v_wmma_f32_16x16x32_f16 …             ; WMMA → TLP not available.
+  //     v_wmma_f32_16x16x32_f16 …             ; WMMA -> TLP not available.
   //     …
   //     v_readlane_b32 sDST, vgpr256, 4       ; reads the collapsed value.
   //     v_or_b32 v_col, sDST, v_col_within    ; per-source-wave column
@@ -1049,7 +1049,7 @@ ObstructionReport buildObstructionReport(ArrayRef<DecodedInst> Insts,
   // co-occurrence-based until a post-raise SSA query owns that path too.
   // Kernels that happen to contain all three constructs but do NOT
   // route the wave_id value into the cross-lane scalar source would be
-  // over-refused — benign (false positive). Kernels that are missing
+  // over-refused -- benign (false positive). Kernels that are missing
   // any of the three would not be refused here but ALSO cannot express
   // the matmul-shaped wave_id-dependent tile column bug (no canonical
   // BFE means ttmp8 is only read via other shapes, which fall to the
@@ -1062,7 +1062,7 @@ ObstructionReport buildObstructionReport(ArrayRef<DecodedInst> Insts,
   // precise check that the BFE's destination SGPR flows (through the
   // raised IR's SSA uses) into a v_writelane / v_readlane scalar
   // source operand. The LLVM Uniformity Analysis on the raised IR
-  // (post-Phase-2) is the natural place to land this — see
+  // (post-Phase-2) is the natural place to land this -- see
   // wave-size-obstruction.h's TODO block.
   if (HaveWmma && !CanonicalWaveIdBfeSites.empty() &&
       !CrossLaneScalarSites.empty()) {
@@ -1075,7 +1075,7 @@ ObstructionReport buildObstructionReport(ArrayRef<DecodedInst> Insts,
       // `rewrite_cross_lane_divergent.{hpp,cpp}` replaces the
       // collapsing cross-lane primitive with a per-source-wave
       // `select` / `ds.bpermute`). Tag it accordingly so the
-      // pre-translation abort below does NOT fire — the rewrite
+      // pre-translation abort below does NOT fire -- the rewrite
       // discharges the obstruction during Phase 6.5 of raiser.cpp.
       // Paired with a post-raise safety net in raiser.cpp that
       // verifies the rewrite pass actually rewrote at least one
@@ -1090,7 +1090,7 @@ ObstructionReport buildObstructionReport(ArrayRef<DecodedInst> Insts,
       }
       Site.Detail =
           "kernel also contains the canonical `s_bfe_u32 sDST, ttmp8, "
-          "0x50019` wave_id lift and v_wmma_* — the lift's per-lane "
+          "0x50019` wave_id lift and v_wmma_* -- the lift's per-lane "
           "divergent result is scalarised by the backend on entry to "
           "this cross-lane primitive's scalar source operand, "
           "collapsing source_wave[0]'s and source_wave[1]'s distinct "
@@ -1121,7 +1121,7 @@ ObstructionReport buildObstructionReport(ArrayRef<DecodedInst> Insts,
 }
 
 // ----------------------------------------------------------------------------
-// Rendering — stable-enough-for-lit trace format.
+// Rendering -- stable-enough-for-lit trace format.
 // ----------------------------------------------------------------------------
 
 std::string renderObstructionTrace(const ObstructionReport &Report,
@@ -1138,7 +1138,7 @@ std::string renderObstructionTrace(const ObstructionReport &Report,
 
   if (Report.Sites.empty()) {
     Os << "  obstructions found: none\n"
-       << "  outcome: (a) wave-size-oblivious — emit modulo-replication\n";
+       << "  outcome: (a) wave-size-oblivious -- emit modulo-replication\n";
     return Out;
   }
 
@@ -1158,33 +1158,33 @@ std::string renderObstructionTrace(const ObstructionReport &Report,
   }
 
   if (Report.hasUnrewritable()) {
-    Os << "  outcome: (c) refuse — at least one obstruction has no rewrite "
+    Os << "  outcome: (c) refuse -- at least one obstruction has no rewrite "
           "in wave-size-translation.md \u00a77's unrewritable table\n";
   } else if (Report.hasPendingRewrite()) {
-    Os << "  outcome: (c) refuse — rewrite(s) exist on paper but the "
+    Os << "  outcome: (c) refuse -- rewrite(s) exist on paper but the "
           "matching handler(s) have not yet landed "
           "(wave-size-translation.md \u00a77's pending-rewrite table)\n";
   } else {
-    Os << "  outcome: (b) rewrite-then-emit — all obstruction sites have "
+    Os << "  outcome: (b) rewrite-then-emit -- all obstruction sites have "
           "an implemented rewrite; emit modulo-replication\n";
   }
   return Out;
 }
 
 // ----------------------------------------------------------------------------
-// Failure selection — pick the first refusal-worthy site and package
+// Failure selection -- pick the first refusal-worthy site and package
 // it as a RaiseFailure for raiser.cpp to propagate.
 // ----------------------------------------------------------------------------
 
 RaiseFailure selectFailureFromReport(const ObstructionReport &Report) {
-  // Prefer unrewritable over pending — the caller should see the
+  // Prefer unrewritable over pending -- the caller should see the
   // strongest refusal reason first. Ties broken by decoded order (the
   // `sites` vector is in decoded order, so `firstUnrewritable` /
   // `firstPending` both return the earliest match).
   //
   // Twine lifetime: each `Twine(...) + ... + ...` chain is built and
   // consumed in the SAME full-expression as the factory call below.
-  // This is the LLVM-supported lifetime contract — Twine concat
+  // This is the LLVM-supported lifetime contract -- Twine concat
   // results are temporaries that hold references into their operands
   // and *must not* be bound to a named variable (`const Twine x = a +
   // b + c` would leave `x` referencing temporaries that are destroyed
@@ -1214,7 +1214,7 @@ RaiseFailure selectFailureFromReport(const ObstructionReport &Report) {
           Twine(obstructionKindName(Site->Kind)) + " [" + Site->Detail + "]");
     // The kinds below never set `rewrite = None` under
     // buildObstructionReport, so they cannot reach firstUnrewritable().
-    // If they do, our state is inconsistent — fail loudly rather than
+    // If they do, our state is inconsistent -- fail loudly rather than
     // silently fall through to the empty-RaiseFailure return below.
     case ObstructionKind::LaneGroupShuffle:
     case ObstructionKind::DsSwizzle:
@@ -1225,7 +1225,7 @@ RaiseFailure selectFailureFromReport(const ObstructionReport &Report) {
                        "buildObstructionReport never tags it that way");
     case ObstructionKind::WorkitemIdPredicateChain:
       // Produced only by the post-mem2reg IR-level classifier in
-      // `c5_predicate_chain_classifier.cpp`; that classifier surfaces
+      // `c5-predicate-chain-classifier.cpp`; that classifier surfaces
       // its own `RaiseFailure::crossWavePredicateChain` directly from
       // raiser.cpp Phase 6.6. buildObstructionReport's MC-level walk
       // cannot see `workitem.id.x` emission (it's an IR-level
@@ -1234,7 +1234,7 @@ RaiseFailure selectFailureFromReport(const ObstructionReport &Report) {
       // See hotswap/docs/modrep-predicate-chain.md §5.
       llvm_unreachable(
           "WorkitemIdPredicateChain is produced only by the IR-level "
-          "classifier (c5_predicate_chain_classifier.cpp); "
+          "classifier (c5-predicate-chain-classifier.cpp); "
           "buildObstructionReport must not tag a DecodedInst with it");
     }
     llvm_unreachable("unhandled ObstructionKind in selectFailureFromReport "
