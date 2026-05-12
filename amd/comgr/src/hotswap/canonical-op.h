@@ -41,7 +41,7 @@ enum class CanonicalOp : uint16_t {
   //     `GLOBAL_LOAD_ASYNC_TO_LDS_B*` CanonicalOp doc block for the full
   //     trade-off argument.
   //   * On gfx1250 (same-target): like every other wait counter in
-  //     `handle_sopp.cpp`, the raiser relies on LLVM's memory model
+  //     `handle-sopp.cpp`, the raiser relies on LLVM's memory model
   //     to re-emit the native wait from the IR's load/store
   //     ordering.  The async intrinsic's
   //     `IntrInaccessibleMemOrArgMemOnly` annotation prevents
@@ -254,7 +254,7 @@ enum class CanonicalOp : uint16_t {
   // For _B64, src0 is a 64-bit SGPR pair; src1 remains a 32-bit SReg
   // whose high 26/27 bits are ignored by the hardware (we apply the
   // mask in IR to preserve that invariant exactly instead of relying
-  // on undef-width behaviour).  The handler lives in handle_sopc.cpp
+  // on undef-width behaviour).  The handler lives in handle-sopc.cpp
   // next to the SOPC compares it mirrors.
   S_BITCMP0_B32, S_BITCMP1_B32,
   S_BITCMP0_B64, S_BITCMP1_B64,
@@ -1141,7 +1141,7 @@ enum class CanonicalOp : uint16_t {
   // the gfx942 backend re-inserts the `s_waitcnt lgkmcnt(0)` before
   // the reader.  On the same-target arm, `S_WAIT_ASYNCCNT` is still
   // a no-op at the raiser (like every other wait counter, per
-  // `handle_sopp.cpp`): the intrinsic's
+  // `handle-sopp.cpp`): the intrinsic's
   // `IntrInaccessibleMemOrArgMemOnly` annotation prevents reorder
   // across the wait site, and the backend re-emits the native
   // `s_wait_asynccnt` from that IR-level ordering.
