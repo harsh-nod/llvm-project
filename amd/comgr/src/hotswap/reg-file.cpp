@@ -73,11 +73,11 @@ void AllocaRegFile::init(IRBuilder<> &B, Type *I32Ty, Type *I1Ty,
   // EXEC storage width is chosen by the projection. Modulo-replication
   // keeps it at source wave width (the long-standing default); wave-
   // native cross-widening widens it to the target hardware mask so
-  // data-dependent EXEC writes survive the wave32 → wave64 lift
+  // data-dependent EXEC writes survive the wave32 -> wave64 lift
   // without truncation. See `WaveProjection::execStorageTy` for the
-  // contract and `wave_projection.cpp:WaveNativeProjection` for the
+  // contract and `wave-projection.cpp:WaveNativeProjection` for the
   // widened policy. `isa` continues to drive VGPR/AGPR bank sizing
-  // below — it's the *source* profile and thus the right place to
+  // below -- it's the *source* profile and thus the right place to
   // read `hasAGPR` from.
   ExecTy = Proj.execStorageTy();
 
@@ -105,7 +105,7 @@ void AllocaRegFile::init(IRBuilder<> &B, Type *I32Ty, Type *I1Ty,
   // deterministic "false / inactive" value rather than `undef`/poison.
   // Poison here would silently destroy SPE predication (the entry block
   // already reads EXEC, and VCC/SCC feed downstream branches). EXEC is
-  // the only register initialised to all-ones — that is the architectural
+  // the only register initialised to all-ones -- that is the architectural
   // boot state of a dispatched wave and is load-bearing for every
   // subsequent `emitLaneActiveBit` call.
   Vcc = B.CreateAlloca(I1Ty, nullptr, "Vcc");
@@ -114,10 +114,10 @@ void AllocaRegFile::init(IRBuilder<> &B, Type *I32Ty, Type *I1Ty,
   B.CreateStore(ConstantInt::getFalse(I1Ty), Scc);
   Exec = B.CreateAlloca(ExecTy, nullptr, "exec");
   // The initial EXEC value is projection-dependent. Default (same-wave
-  // / modulo-replication): all-ones. Wave-native Wave32 → Wave64
+  // / modulo-replication): all-ones. Wave-native Wave32 -> Wave64
   // cross-widening: `@llvm.amdgcn.init_whole_wave` captures the
   // original per-lane active mask and forces hardware EXEC = -1 so the
-  // WMMA → MFMA cross-lane pipeline can run across all 64 Wave64
+  // WMMA -> MFMA cross-lane pipeline can run across all 64 Wave64
   // lanes even on a partial-wave dispatch. See
   // `WaveProjection::emitInitialExec` and
   // `WaveNativeProjection::emitInitialExec` for the correctness
@@ -151,13 +151,13 @@ void AllocaRegFile::storeSGPR32(IRBuilder<> &B, int Idx, Value *V) {
 namespace {
 
 // Shared OOB check for the per-class load/store helpers. Fatal-errors
-// instead of returning undef / crashing inside LLVM — a caller that
+// instead of returning undef / crashing inside LLVM -- a caller that
 // hands us an out-of-range `idx` has already produced an invalid
 // ParsedReg, which is always a raiser bug rather than a kernel bug.
 [[noreturn]] void failOOB(const char *Fn, int Idx, size_t Cap) {
   report_fatal_error(Twine("transpiler: ") + Fn + " idx=" + Twine(Idx) +
                      " out of range [0.." + Twine(Cap) +
-                     ") or null; raiser bug, not a kernel bug — the "
+                     ") or null; raiser bug, not a kernel bug -- the "
                      "caller produced an invalid ParsedReg.");
 }
 
@@ -303,7 +303,7 @@ void AllocaRegFile::storeExec(IRBuilder<> &B, Value *V) {
 }
 
 Value *AllocaRegFile::readVCCAsWaveMask(IRBuilder<> &B, Type *ResultTy) {
-  assert(Projection && "readVCCAsWaveMask requires a WaveProjection — "
+  assert(Projection && "readVCCAsWaveMask requires a WaveProjection -- "
                         "call init() before using this reg-file");
   return Projection->ballotI1ToWidth(B, loadVCC(B), ResultTy, "vcc_ballot");
 }
@@ -346,7 +346,7 @@ Value *AllocaRegFile::readReg32(IRBuilder<> &B, ParsedReg Pr) {
       static_cast<unsigned>(Pr.BaseIdx) < Ttmp.size())
     return B.CreateLoad(B.getInt32Ty(), Ttmp[Pr.BaseIdx], "ttmp_val");
   // GFX9 src_lds_direct (encoding 254): reads one dword from LDS at the
-  // byte address in M0. There is NO auto-increment of M0 on GFX9 — the
+  // byte address in M0. There is NO auto-increment of M0 on GFX9 -- the
   // kernel manages M0 explicitly between reads. (GFX11+ DSDIR
   // `lds_direct_load` does auto-increment; if we ever raise GFX11+
   // kernels that use DSDIR, the increment must be modeled separately.)
@@ -365,7 +365,7 @@ Value *AllocaRegFile::readReg64(IRBuilder<> &B, ParsedReg Pr) {
   if (Pr.RegKind == ParsedReg::VGPR) return loadVGPR64(B, Pr.BaseIdx);
   // VCC as a 64-bit scalar read: route through the wave-mask ballot.
   // Previous implementations used `SExt(i1 -> i64)`, which replicates
-  // the CURRENT LANE's VCC bit across all 64 bits — a silent lie when
+  // the CURRENT LANE's VCC bit across all 64 bits -- a silent lie when
   // the consumer expects a wave-level mask (e.g. `s_and_b64 vcc, exec,
   // vcc`). All direct VCC reads must materialise the full per-lane
   // collection via `amdgcn.ballot`.
@@ -387,7 +387,7 @@ Value *AllocaRegFile::readReg64(IRBuilder<> &B, ParsedReg Pr) {
     Value *Hi = B.CreateZExt(B.CreateLoad(I32Ty, FlatScr[1]), I64Ty);
     return B.CreateOr(Lo, B.CreateShl(Hi, 32), "fscr64");
   }
-  // TTMP[baseIdx:baseIdx+1] read as i64 — combine the two adjacent
+  // TTMP[baseIdx:baseIdx+1] read as i64 -- combine the two adjacent
   // i32 lanes the same way SGPR pairs are combined. The 32-bit
   // single-lane read above lives in readReg32; this is the
   // S_LOAD_DWORDX2 / DWORDX4 path where the kernel addresses a TTMP
@@ -443,7 +443,7 @@ void AllocaRegFile::writeReg32(IRBuilder<> &B, ParsedReg Pr, Value *V) {
     //       source kernels rely on (`s_mov_b32 exec_hi, sN` after an
     //       `s_mov_b32 exec_lo, sM`).
     //
-    //   (b) Wave-native cross-widening broadcast (wave32 source →
+    //   (b) Wave-native cross-widening broadcast (wave32 source ->
     //       wave64 target, per `projection->broadcastNarrowExecLoWrite()`):
     //       the source author's wave32 view treats `exec_lo` as the
     //       whole wave mask, so the 32-bit value represents the
@@ -523,7 +523,7 @@ void AllocaRegFile::writeReg64(IRBuilder<> &B, ParsedReg Pr, Value *V) {
     B.CreateStore(B.CreateTrunc(B.CreateLShr(V, 32), I32Ty), FlatScr[1]);
     return;
   }
-  // 64-bit TTMP write — split into two i32 stores at baseIdx and
+  // 64-bit TTMP write -- split into two i32 stores at baseIdx and
   // baseIdx+1, matching the readReg64 TTMP shape above. Trap-handler
   // kernels routinely materialise a 64-bit address into a TTMP pair
   // before invoking the trap; we route them through the same alloca
@@ -552,7 +552,7 @@ void AllocaRegFile::writeRegExecWidth(IRBuilder<> &B, ParsedReg Pr, Value *V) {
     // before the store. See `WaveProjection::sourceWaveMaskTy` for the
     // width policy. This is the symmetric counterpart of the widen-by-
     // replication done when the value was first read via
-    // `readOpExecWidth` or computed by the `V_CMP → SGPR` ballot.
+    // `readOpExecWidth` or computed by the `V_CMP -> SGPR` ballot.
     Type *SourceWidthTy =
         (Projection && Projection->sourceWaveScopedLaneOps() && Pr.Width >= 2)
             ? B.getInt64Ty()
@@ -661,7 +661,7 @@ void AllocaRegFile::collectAllocas(SmallVectorImpl<AllocaInst *> &Out) {
   // `amdgpu-no-dispatch-ptr` attribute (see
   // AMDGPUPromoteAlloca.cpp::getLocalSizeYZ). Once dispatch_ptr is
   // re-enabled in the kernel descriptor, the regalloc treats s[0:1] as
-  // a free preloaded SGPR and uses s1 as scratch — corrupting buffer
+  // a free preloaded SGPR and uses s1 as scratch -- corrupting buffer
   // pointer high words and producing the gfx1250 Triton SIGSEGV (R1).
   // Lifting these allocas requires a dominating defining store for
   // every read; raiser.cpp Phase 4 seeds every ttmp with `i32 0` in
