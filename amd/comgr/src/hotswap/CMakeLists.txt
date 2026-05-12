@@ -74,6 +74,9 @@ add_library(hotswap-transpiler OBJECT
   handle-valu-small-ops.cpp
   handle-valu-cross-lane.cpp
   handle-valu-vcmp.cpp
+  handle-valu-vop3p.cpp
+  wmma-lowering.cpp
+  mxfp4-dequant.cpp
 )
 
 if(NOT TARGET hotswap::transpiler)
