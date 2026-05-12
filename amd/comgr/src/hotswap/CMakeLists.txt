@@ -135,10 +135,12 @@ add_library(hotswap-transpiler OBJECT
   handle-vopd.cpp
   handle-vimage.cpp
   tdm-runtime.cpp
-  ${HOTSWAP-TDM-RUNTIME-GENERATED-CPP}
+  ${HOTSWAP_TDM_RUNTIME_GENERATED_CPP}
   wave-size-obstruction.cpp
   rewrite-cross-lane-divergent.cpp
   c5-predicate-chain-classifier.cpp
+  pipeline.cpp
+  translation-cache.cpp
 )
 
 if(NOT TARGET hotswap::transpiler)

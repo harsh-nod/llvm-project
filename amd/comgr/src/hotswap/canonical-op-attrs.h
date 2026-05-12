@@ -27,13 +27,13 @@ class OpcodeMap;
 // obliviousness predicate from hotswap/docs/wave-size-translation.md
 // §7's decision procedure will attach here too).
 //
-// Default-constructed attrs mean "no declared guarantees" — the gate
+// Default-constructed attrs mean "no declared guarantees" -- the gate
 // aborts for any EXEC-writer encountered that does not have its
 // `routesExecThroughStoreExec` bit set, so the default is fail-closed.
 struct CanonicalOpAttrs {
   // The CanonicalOp's handler routes any write to ParsedReg::EXEC through
-  // `regs.storeExec` — either directly or via `writeReg{32,64,ExecWidth}`
-  // which dispatch EXEC→storeExec. Required for any CanonicalOp whose
+  // `regs.storeExec` -- either directly or via `writeReg{32,64,ExecWidth}`
+  // which dispatch EXEC->storeExec. Required for any CanonicalOp whose
   // MCInstrDesc declares EXEC as a def (the startup invariant in
   // `verifyExecAttrCoverage`); also required to pass the per-kernel
   // Phase 1.5 SPE gate when an explicit `exec_lo`/`exec_hi` operand
@@ -52,7 +52,7 @@ struct CanonicalOpAttrSpec {
 // Per-handler-TU registrations. Each handler that claims SemOps with
 // non-default attrs exposes a getter returning its static array of
 // specs. Adding a new EXEC-writing CanonicalOp therefore requires declaring
-// the attrs in the handler file that implements it — the attribute
+// the attrs in the handler file that implements it -- the attribute
 // registration moves with the handler.
 //
 // `theTable()` in `canonical-op-attrs.cpp` calls every getter declared here
@@ -61,6 +61,7 @@ struct CanonicalOpAttrSpec {
 // `canonical-op-attrs.cpp` aggregating it).
 llvm::ArrayRef<CanonicalOpAttrSpec> getHandlerSOP1Attrs();
 llvm::ArrayRef<CanonicalOpAttrSpec> getHandlerSOP2Attrs();
+llvm::ArrayRef<CanonicalOpAttrSpec> getHandlerValuVcmpAttrs();
 
 // O(1) lookup keyed on CanonicalOp. Returns a default-constructed CanonicalOpAttrs
 // for SemOps that have no declared attrs (fail-closed).

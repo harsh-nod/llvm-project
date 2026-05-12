@@ -33,7 +33,7 @@ namespace {
 // Materialise the attribute table once at first-use. Aggregates every
 // per-handler registration declared in `canonical-op-attrs.h`. The
 // `Meyers singleton`-style static local sidesteps any cross-TU static
-// initialisation ordering fuss — the table is built lazily, not at
+// initialisation ordering fuss -- the table is built lazily, not at
 // dynamic-init time.
 class AttrTable {
 public:
@@ -48,6 +48,7 @@ public:
     };
     Ingest(getHandlerSOP1Attrs());
     Ingest(getHandlerSOP2Attrs());
+    Ingest(getHandlerValuVcmpAttrs());
   }
 
   const CanonicalOpAttrs &operator[](CanonicalOp Op) const {
