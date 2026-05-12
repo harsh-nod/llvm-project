@@ -63,7 +63,7 @@ function(comgr_link_hotswap_transpiler target)
   target_include_directories(${target} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../src
     ${CMAKE_CURRENT_BINARY_DIR}/../include
-    # Tests that pull in transpiler internals (wave_projection.h,
+    # Tests that pull in transpiler internals (wave-projection.h,
     # opcode-map.h, ...) need AMDGPU target-private headers too:
     # SIDefines.h, SIInstrInfo.h, AMDGPUBaseInfo.h live in the LLVM
     # source tree, AMDGPUGen*.inc files in the LLVM build tree.
