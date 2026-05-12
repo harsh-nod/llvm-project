@@ -26,7 +26,7 @@ namespace COMGR::hotswap {
 
 // SPE attribute registrations. V_CMPX is a compare-and-AND-into-EXEC;
 // this handler routes the EXEC mutation through `regs.storeExec` after
-// folding the ballot through `WaveProjection::ballotI1ToWidth` — see
+// folding the ballot through `WaveProjection::ballotI1ToWidth` -- see
 // the V_CMPX branch below. Audit before adding more entries here.
 ArrayRef<CanonicalOpAttrSpec> getHandlerValuVcmpAttrs() {
   static constexpr CanonicalOpAttrSpec kAttrs[] = {
@@ -107,7 +107,7 @@ HandlerResult handleValuVcmp(RaiseContext &Ctx, const DecodedInst &Di,
   // read as i64; for 64-bit float compares we read as i64 and bitcast.
   // For 32-bit float compares we read as i32 and bitcast to f32. For
   // 16-bit float compares we read as i32, truncate to i16, and bitcast
-  // to half — required because srcF returns the raw 32-bit operand
+  // to half -- required because srcF returns the raw 32-bit operand
   // (e.g. an inline integer immediate -1 = 0xFFFFFFFF for `v_cmpx_lt_
   // f16 vcc, -1, vN`) and CreateFCmp asserts on non-FP operand types.
   Value *S0 = nullptr, *S1 = nullptr;
@@ -180,9 +180,9 @@ HandlerResult handleValuVcmp(RaiseContext &Ctx, const DecodedInst &Di,
     // per-lane "EXEC" instead of the single wave-level mask the SPE
     // model requires. The backend then lowers the SPE diamond as a
     // divergent branch on a per-lane value, narrowing hardware EXEC
-    // based on the wrong bit entirely — which surfaces as stores
+    // based on the wrong bit entirely -- which surfaces as stores
     // going missing on half the wave in cross-wave lifts (gfx1250
-    // wave32 → gfx942 wave64). Routing through `ballotI1ToWidth`
+    // wave32 -> gfx942 wave64). Routing through `ballotI1ToWidth`
     // matches the VCC read path (`readVCCAsWaveMask`) and keeps EXEC
     // wave-uniform.
     //
@@ -191,8 +191,8 @@ HandlerResult handleValuVcmp(RaiseContext &Ctx, const DecodedInst &Di,
     // (`execTy`). Under modulo-replication `execTy` equals the
     // source wave-mask width and the projection truncates the
     // hardware ballot to match. Under wave-native cross-widening
-    // (wave32 source → wave64 target) `execTy` equals the full
-    // hardware wave mask (i64) and no truncation occurs — which is
+    // (wave32 source -> wave64 target) `execTy` equals the full
+    // hardware wave mask (i64) and no truncation occurs -- which is
     // what allows a data-dependent `v_cmpx` to preserve its per-
     // target-lane answer on lanes 32..63. See
     // `lit_tests/v_cmpx_ballot` for the pinned IR shape (MODREP)
@@ -216,7 +216,7 @@ HandlerResult handleValuVcmp(RaiseContext &Ctx, const DecodedInst &Di,
         // divergent SSA and silently miscompile.
         //
         // Width choice. The destination is a single SGPR (wave32
-        // source) or an SGPR pair (wave64 source) — i.e. *source*
+        // source) or an SGPR pair (wave64 source) -- i.e. *source*
         // wave-mask width, not EXEC storage width. Under modulo-
         // replication these match; under wave-native cross-
         // widening they diverge (execTy=i64 vs sourceWaveMaskTy=
@@ -230,7 +230,7 @@ HandlerResult handleValuVcmp(RaiseContext &Ctx, const DecodedInst &Di,
         // below (see `ctx.recordSgprWaveMaskI1`), and whose out-of-
         // BB / scalar-interleaved / other-consumer cases remain the
         // obstruction classifier's responsibility to refuse
-        // (wave_size_obstruction.cpp).
+        // (wave-size-obstruction.cpp).
         Type *SourceWidth =
             (Ctx.Projection.sourceWaveScopedLaneOps() && D.Width >= 2)
                 ? Ctx.I64Ty
@@ -256,9 +256,9 @@ HandlerResult handleValuVcmp(RaiseContext &Ctx, const DecodedInst &Di,
         // Covers BOTH predicate compares (the asin / libdevice-math
         // branch shape) AND class compares
         // (v_cmp_class_f{16,32,64}). The `cmp` value is the same
-        // per-lane i1 shape in both arms of this handler — `fcmp`
+        // per-lane i1 shape in both arms of this handler -- `fcmp`
         // for the predicate-compare path, `llvm.amdgcn.class.f*`
-        // for the class path — so caching is sound either way.
+        // for the class path -- so caching is sound either way.
         // Gating only the predicate arm would leave class compares
         // under cross-widening miscompiling through the lossy
         // extract fallback for no reason.

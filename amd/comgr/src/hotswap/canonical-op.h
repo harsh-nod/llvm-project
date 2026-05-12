@@ -29,7 +29,7 @@ enum class CanonicalOp : uint16_t {
   // below (and `DS_ATOMIC_ASYNC_BARRIER_ARRIVE_B64`); `S_WAIT_TENSORCNT`
   // is the companion for `TENSOR_LOAD_TO_LDS` / `TENSOR_STORE_FROM_LDS`.
   // Both track dependency counters that do not exist on gfx942 (no
-  // `ASYNCcnt` / `TENSORcnt` hardware) — the raiser lowers them as
+  // `ASYNCcnt` / `TENSORcnt` hardware) -- the raiser lowers them as
   // no-ops on every target:
   //
   //   * On gfx942 (cross-target): the source async DMA is emulated
@@ -67,7 +67,7 @@ enum class CanonicalOp : uint16_t {
   // gfx12+ scalar narrow loads: fetch 1 or 2 bytes from a uniform address and
   // zero/sign-extend into a 32-bit SGPR. Older ISAs have no equivalent; on a
   // cross-target lift to gfx942 the backend will lower the narrow `load iN`
-  // to VMEM (per-lane global_load_{ubyte,sbyte,ushort,sshort}) — semantically
+  // to VMEM (per-lane global_load_{ubyte,sbyte,ushort,sshort}) -- semantically
   // correct but uniformity-lossy. See handle-smem.cpp for the design notes.
   S_LOAD_U8, S_LOAD_I8, S_LOAD_U16, S_LOAD_I16,
   S_STORE_B32, S_STORE_B64, S_STORE_B128,
@@ -102,7 +102,7 @@ enum class CanonicalOp : uint16_t {
   // s_ff0_i32_b{32,64}: find first 0 bit (lowest position), returning
   // -1 when the source is all-ones. SOPInstructions.td:278-279 (no
   // LLVM ISel pattern is provided, so the instruction is only emitted
-  // by hand-written asm / inline-asm — but the corpus contains it).
+  // by hand-written asm / inline-asm -- but the corpus contains it).
   // Lowers to `cttz(~src, is_zero_poison=false)` with a `cmov` to -1
   // on the all-ones input path, mirroring the V_FFBL_B32 / V_FFBH_U32
   // shape (the AMDGPU instruction returns 0xFFFFFFFF in the no-bit
@@ -132,12 +132,12 @@ enum class CanonicalOp : uint16_t {
   // SGPR pair holds an absolute 64-bit PC value. In our IR-on-LLVM
   // setting we model three principled lowerings (see setpc_analysis.{hpp,
   // cpp} for the static analysis that classifies each site):
-  //   DirectA      — statically resolvable intra-kernel branch (the
+  //   DirectA      -- statically resolvable intra-kernel branch (the
   //                  source SGPR pair was produced by a local
   //                  `s_get_pc_i64 + s_add_co_u32 + s_add_co_ci_u32`
   //                  chain). Lowers to `br label %BB_target` since
   //                  the target is a known intra-function label.
-  //   IndirectB    — subroutine return via an SGPR pair stashed at the
+  //   IndirectB    -- subroutine return via an SGPR pair stashed at the
   //                  call site (the canonical s[30:31] return-PC
   //                  idiom). Lowers to a `cmp eq + br` cascade (via
   //                  `emitEnumeratedDispatch` in handle-sop1.cpp)
@@ -152,7 +152,7 @@ enum class CanonicalOp : uint16_t {
   //                  each cascade `icmp eq i64 %marker, <offset>`
   //                  folds across the phi join under mem2reg + SCCP
   //                  + InstCombine and SimplifyCFG collapses the
-  //                  cmp+br to a direct branch — the same final
+  //                  cmp+br to a direct branch -- the same final
   //                  codegen as a fully-folded `indirectbr` would
   //                  produce. See `emitEnumeratedDispatch`'s
   //                  rationale block for why a cascade (LLVM's
@@ -162,7 +162,7 @@ enum class CanonicalOp : uint16_t {
   //                  `ptrtoint(blockaddress)` (AMDGPU ISel has no
   //                  pattern to materialise a `BlockAddress` as an
   //                  i64 register value).
-  //   DispatchSet  — multi-target dispatch via inter-block PC-chain
+  //   DispatchSet  -- multi-target dispatch via inter-block PC-chain
   //                  dataflow: each predecessor block writes a
   //                  different chain target into the same SGPR pair,
   //                  then a join block consumes it through
@@ -178,7 +178,7 @@ enum class CanonicalOp : uint16_t {
   // Sites the analysis cannot resolve (incomplete dataflow,
   // unbounded fan-in past kMaxDispatchTargets, or pair killed by an
   // unmodelled write before the use site) refuse loudly via
-  // RaiseFailure::unsupportedShape — never silently emit a stub.
+  // RaiseFailure::unsupportedShape -- never silently emit a stub.
   S_SET_PC_I64,
   // SOP1 branch-and-link. gfx1250 asm rename for `S_SWAPPC_B64`
   // (SOPInstructions.td:336 declares `isCall = 1`, line 2311 renames
@@ -190,13 +190,13 @@ enum class CanonicalOp : uint16_t {
   //   PC <- ssrc; sdst <- (return-PC)  (atomically)
   //
   // Three principled raisings, mirroring S_SET_PC_I64:
-  //   DirectA      — call target ssrc was produced by a local
+  //   DirectA      -- call target ssrc was produced by a local
   //                  `s_get_pc_i64 + s_add_co_u32 + s_add_co_ci_u32`
   //                  chain that resolves intra-block. Lowering writes
   //                  the return-address marker (the plain i64
   //                  source-MC byte offset of swap.offset+swap.size)
   //                  into sdst and emits `br label %BB_callee`.
-  //   DispatchSet  — call target reached via inter-block PC-chain
+  //   DispatchSet  -- call target reached via inter-block PC-chain
   //                  dataflow (the tensilelite "activation function
   //                  dispatcher" shape: each predecessor block
   //                  computes a distinct callee target into the same
@@ -214,16 +214,16 @@ enum class CanonicalOp : uint16_t {
   //                  a constant branch after SCCP. See
   //                  `emitEnumeratedDispatch`'s rationale block for
   //                  why a cascade (FixIrreducible compatibility
-  //                  under irreducible CFGs — the dominant shape
+  //                  under irreducible CFGs -- the dominant shape
   //                  this pattern produces) and why an integer
   //                  marker rather than `ptrtoint(blockaddress)`
   //                  (AMDGPU ISel cannot materialise a
   //                  `BlockAddress` as an i64).
-  //   Unresolvable — call target cannot be statically enumerated
+  //   Unresolvable -- call target cannot be statically enumerated
   //                  (incomplete dataflow, fan-in past
   //                  kMaxDispatchTargets, or runtime-derived value).
   //                  Refuse loudly via RaiseFailure::unsupportedShape
-  //                  — never emit a stub branch.
+  //                  -- never emit a stub branch.
   //
   // The analysis never produces IndirectB for a swap_pc site (a
   // swap_pc's source pair is the call target, not a return slot;
@@ -272,7 +272,7 @@ enum class CanonicalOp : uint16_t {
   // gfx12-renamed `S_ADD_NC_U64` below, created by the same commit
   // that first added the `s_add_u64` opcode-map row.  The row in
   // `opcode-map.cpp` was later replaced with the gfx12-renamed
-  // `CanonicalOp::S_ADD_NC_U64` target (matching S_SUB_U64 → S_SUB_NC_U64),
+  // `CanonicalOp::S_ADD_NC_U64` target (matching S_SUB_U64 -> S_SUB_NC_U64),
   // but the old `CanonicalOp::S_ADD_U64` enum entry + a defensive `||`
   // branch in `handle-sop2.cpp` + a stray duplicate opcode-map row
   // were left behind.  `canonToSem.try_emplace` (opcode-map.cpp:1506
@@ -284,14 +284,14 @@ enum class CanonicalOp : uint16_t {
   S_ADD_U32, S_ADDC_U32, S_SUB_U32, S_SUBB_U32,
   S_AND_B32, S_AND_B64, S_OR_B32, S_OR_B64, S_XOR_B32, S_XOR_B64,
   S_ANDN2_B32, S_ANDN2_B64, S_ORN2_B32, S_ORN2_B64,
-  // SOP2 negated bitops (gfx7+). SOPInstructions.td:789-803 — each
+  // SOP2 negated bitops (gfx7+). SOPInstructions.td:789-803 -- each
   // computes `dst = ~(src0 OP src1)` and sets SCC = (result != 0). These
   // are produced heavily by triton/tensilelite when constant-folding
   // bitfield masks (e.g. `s_nand_b32 sX, sY, 0xffff` to clear the low
   // 16 bits). All can target EXEC, so they must be marked
   // routesExecThroughStoreExec.
   S_NAND_B32, S_NAND_B64, S_NOR_B32, S_NOR_B64, S_XNOR_B32, S_XNOR_B64,
-  // SOP2 absolute-difference (gfx7+). SOPInstructions.td:886-888 —
+  // SOP2 absolute-difference (gfx7+). SOPInstructions.td:886-888 --
   // `dst = |src0 - src1|` on signed i32, SCC = (result != 0). Lower
   // through llvm.abs.i32 with is_int_min_poison=false: hardware wraps
   // for INT_MIN (the only value whose negation equals itself), so we
@@ -335,10 +335,10 @@ enum class CanonicalOp : uint16_t {
   V_LDEXP_F32,
   V_FLOOR_F32, V_CEIL_F32, V_TRUNC_F32, V_FRACT_F32,
   V_READFIRSTLANE_B32,
-  // VOP1 packed FP8/BF8 → 2x F32 expansion (VOP1Instructions.td:652-
+  // VOP1 packed FP8/BF8 -> 2x F32 expansion (VOP1Instructions.td:652-
   // 653, profile VOPProfileCVT_PK_F32_F8). Reads 16 bits of the i32
-  // src — the low half (bytes 0,1) when op_sel:[0,*] / SDWA WORD_0,
-  // the high half (bytes 2,3) when op_sel:[1,*] / SDWA WORD_1 — and
+  // src -- the low half (bytes 0,1) when op_sel:[0,*] / SDWA WORD_0,
+  // the high half (bytes 2,3) when op_sel:[1,*] / SDWA WORD_1 -- and
   // expands the two FP8/BF8 lanes into a v2f32 written to a VGPR
   // pair starting at vdst. FP8 is the OCP E4M3FN format; BF8 is the
   // OCP E5M2 format. Lowering selects the matching
@@ -348,19 +348,19 @@ enum class CanonicalOp : uint16_t {
   // disassembly text exactly as in V_ADD_NC_U16 / V_FMA_MIX_F32 (no
   // first-class "modifier" channel exists in our OperandView yet);
   // unparseable / out-of-range selectors fall through to word_sel=0
-  // — never silently corrupted, the parser invariant is the same as
+  // -- never silently corrupted, the parser invariant is the same as
   // for the other op_sel handlers. The reverse direction
   // (V_CVT_PK_FP8_F32 / V_CVT_PK_BF8_F32) lives in the VOP3 block
   // below; this is the read-side companion.
   V_CVT_PK_F32_FP8, V_CVT_PK_F32_BF8,
-  // VOP1 single-lane FP8/BF8 → F32 expansion (VOP1Instructions.td:650-
+  // VOP1 single-lane FP8/BF8 -> F32 expansion (VOP1Instructions.td:650-
   // 651, profile VOPProfileCVT_F32_F8). Reads ONE 8-bit lane of the
-  // i32 src — selected by SDWA src0_sel / e64 op_sel byte_sel — and
+  // i32 src -- selected by SDWA src0_sel / e64 op_sel byte_sel -- and
   // produces an f32. The SDWA encoding can pick any of the four bytes
   // (0..3); the e64 encoding's default (no op_sel printed) is byte 0
   // and is the only shape the gfx1250 corpus emits today (the LLVM
   // isel pattern in VOP1Instructions.td:670-680 maps non-zero
-  // byte_sel through the SDWA pseudo, which we have not yet wired —
+  // byte_sel through the SDWA pseudo, which we have not yet wired --
   // adding it would only widen this handler, not change its shape).
   // Lowering selects `llvm.amdgcn.cvt.f32.{fp8,bf8}(i32 src, i32
   // byte_sel)` and writeReg32 the result. SDWA / op_sel-bearing
@@ -368,7 +368,7 @@ enum class CanonicalOp : uint16_t {
   // future corpus drift surfaces immediately rather than silently
   // collapsing to byte 0.
   V_CVT_F32_FP8, V_CVT_F32_BF8,
-  // VOP3 scaled packed-8 FP4 → BF16 conversion (gfx1250 only,
+  // VOP3 scaled packed-8 FP4 -> BF16 conversion (gfx1250 only,
   // VOP3Instructions.td:1788; LLVM opcode V_CVT_SCALE_PK8_BF16_FP4_e64,
   // real form `..._gfx1250`).  Reads 1 VGPR of packed 8xFP4 (4 bits
   // each, 32 bits total) plus an E8M0-encoded scale value and a
@@ -378,7 +378,7 @@ enum class CanonicalOp : uint16_t {
   //                                                     i32 scale,
   //                                                     i32 immarg sel)`
   // which is declared inside the gfx1250-only block of
-  // IntrinsicsAMDGPU.td (AMDGPUCvtScaleIntrinsic w/ isGFX125xOnly) —
+  // IntrinsicsAMDGPU.td (AMDGPUCvtScaleIntrinsic w/ isGFX125xOnly) --
   // the handler therefore gates same-target lift on
   // `ctx.targetIsa.hasTensorOps` (FeatureGFX1250Insts) and refuses
   // cross-target lift to gfx942 loudly (no MX-FP4 scaling unit on
@@ -396,7 +396,7 @@ enum class CanonicalOp : uint16_t {
   V_CVT_SCALE_PK8_BF16_FP4,
   // VOP1 find-first-bit family (gfx7+, VOP1Instructions.td:371-373).
   // V_FFBH_U32  -> AMDGPUffbh_u32 = ctlz_zero_undef but returns -1 on
-  //                input 0; lower with llvm.ctlz(x, false) — LLVM
+  //                input 0; lower with llvm.ctlz(x, false) -- LLVM
   //                returns the bitwidth (32) for input 0, so we cmov
   //                to -1 explicitly to match hardware.
   // V_FFBL_B32  -> AMDGPUffbl_b32 = cttz_zero_undef but returns -1 on
@@ -426,7 +426,7 @@ enum class CanonicalOp : uint16_t {
   // which maps to `llvm.fshr.i32` in IR. src2 is masked to 5 bits
   // by hardware before the shift.
   V_ALIGNBIT_B32,
-  // VOP3 ternary xor — gfx10+ only (VOP3Instructions.td:1348),
+  // VOP3 ternary xor -- gfx10+ only (VOP3Instructions.td:1348),
   // .td has no SDAG `umin3`-style node, the iselect pattern at
   // line 1350 directly matches `(xor (xor a, b), c)`. Lift is the
   // same shape as V_OR3_B32 above.
@@ -509,7 +509,7 @@ enum class CanonicalOp : uint16_t {
   //                       mnemonic's narrow type
   // V_FMA_MIX_F32       : narrow type = f16  (all gfx targets)
   // V_FMA_MIX_F32_BF16  : narrow type = bf16 (gfx9.5+/gfx1250; the bf16
-  //                       narrow half → f32 extension is
+  //                       narrow half -> f32 extension is
   //                       cross-target-universal via `fpext bfloat to
   //                       float`, so no refusal is needed on gfx942)
   // Both CanonicalOps share the op_sel/op_sel_hi parser and write-back shape
@@ -527,7 +527,7 @@ enum class CanonicalOp : uint16_t {
   V_ADD_F16, V_MUL_F16, V_SUB_F16, V_SUBREV_F16, V_MAC_F16, V_FMAC_F16,
   // VOP2 F16 multiply-add-with-literal pseudos (mirror of
   // V_FMAMK_F32 / V_FMAAK_F32 for the f16 lane). Defined in
-  // VOP2Instructions.td:1206-1210 — both take a 16-bit constant K
+  // VOP2Instructions.td:1206-1210 -- both take a 16-bit constant K
   // alongside two F16 sources and lower to llvm.fma.f16:
   //   v_madmk_f16 dst, src0, K, src2 -> dst = src0 * K + src2
   //   v_madak_f16 dst, src0, src1, K -> dst = src0 * src1 + K
@@ -551,7 +551,7 @@ enum class CanonicalOp : uint16_t {
   V_ASHRREV_I16, V_LSHRREV_B16, V_LSHLREV_B16,
   V_MAX_U16, V_MIN_U16, V_MAX_I16, V_MIN_I16,
   // 16-bit integer arith (gfx8+, VOP2Instructions.td). Plain i16
-  // add/sub/subrev with wrapping overflow (no carry-out — distinct
+  // add/sub/subrev with wrapping overflow (no carry-out -- distinct
   // from the rarely-used v_add_co_u16). v_mul_lo_u16 returns the low
   // 16 bits of the multiply, naturally produced by `mul i16`.
   V_ADD_U16, V_SUB_U16, V_SUBREV_U16, V_MUL_LO_U16,
@@ -579,7 +579,7 @@ enum class CanonicalOp : uint16_t {
   V_MAX_NUM_F64, V_MIN_NUM_F64,
   // VOP1 FP64. v_rcp_f64 is a TRANS-class transcendental (see
   // VOP1Instructions.td: `let TRANS = 1, SchedRW = [WriteTrans64]`),
-  // not a true reciprocal — hardware returns a ~26-bit accurate
+  // not a true reciprocal -- hardware returns a ~26-bit accurate
   // approximation that the LLVM `int_amdgcn_rcp` intrinsic models
   // exactly. We deliberately lift to that intrinsic rather than to a
   // generic `fdiv 1.0, x` because (a) gfx942 isels the intrinsic
@@ -617,11 +617,11 @@ enum class CanonicalOp : uint16_t {
   V_PK_FMA_F16,
 
   // VOP3P packed-pair `<2 x i16>` int ops (gfx9+, available on both
-  // gfx942 and gfx1250 — same MC encoding family). Operand profile is
+  // gfx942 and gfx1250 -- same MC encoding family). Operand profile is
   // VOP_V2I16_V2I16_V2I16: 32-bit dst / 32-bit src0 / 32-bit src1, each
   // bitcast to `<2 x i16>` before the op and back to i32 for the
   // write-back. Inline literals encode a packed `<2 x i16>` directly
-  // (lo i16 = bits[15:0], hi i16 = bits[31:16]) — NO broadcast
+  // (lo i16 = bits[15:0], hi i16 = bits[31:16]) -- NO broadcast
   // analogue to the V_PK_F32 32-bit-element family, because the
   // literal width matches the operand width here.
   //
@@ -632,7 +632,7 @@ enum class CanonicalOp : uint16_t {
   //                   AMDGPU's hardware-clamp-to-element-width).
   //
   // op_sel / op_sel_hi modifiers select which i16 of each source feeds
-  // each output lane (defaults: op_sel=[0,0,0], op_sel_hi=[1,1,1] —
+  // each output lane (defaults: op_sel=[0,0,0], op_sel_hi=[1,1,1] --
   // natural lo->lo, hi->hi packing).
   //
   // Sibling V_PK_LSHRREV_B16 / V_PK_ASHRREV_I16 share the same handler
@@ -644,7 +644,7 @@ enum class CanonicalOp : uint16_t {
 
   V_BITOP3_B32, V_BITOP3_B16,
 
-  // GFX9 VOP3-only v_add/sub_i32 — plain add/sub when clamp=0,
+  // GFX9 VOP3-only v_add/sub_i32 -- plain add/sub when clamp=0,
   // saddsat/ssubsat when clamp=1.
   V_ADD_I32, V_SUB_I32,
 
@@ -654,7 +654,7 @@ enum class CanonicalOp : uint16_t {
   // (i64 dst, i32 shamt, i64 src1, reversed-operand convention:
   // `dst = src1 >> shamt`). Lower to LLVM `lshr` (logical right) and
   // `ashr` (arithmetic right) on the i64 src1, with the i32 shamt
-  // zext'd to i64 — the AMDGPU hardware masks the count to 6 bits so
+  // zext'd to i64 -- the AMDGPU hardware masks the count to 6 bits so
   // the LLVM behaviour matches as long as we feed a valid i32 (LLVM
   // shifts >= bitwidth are poison, the hardware masks; we don't paper
   // over the difference because corpus shifts always carry a finite
@@ -678,7 +678,7 @@ enum class CanonicalOp : uint16_t {
   // backend's AMDGPUISelDAGToDAG.cpp::SelectMad64_32 pattern-matches the
   // canonical `add(mul(zext/sext s0, zext/sext s1), s2_i64)` IR we emit
   // back into v_mad_(nc|co|_i64_i32) on whichever target the raise writes
-  // to — identical to how V_MAD_U64_U32 lowers today (see handle-valu.cpp
+  // to -- identical to how V_MAD_U64_U32 lowers today (see handle-valu.cpp
   // v_mad_u64_u32 arm and opcode-map.cpp's "LLVM no longer exposes a
   // distinct carry-out variant" comment for historical context).
   V_MAD_NC_U64_U32, V_MAD_NC_I64_I32,
@@ -717,7 +717,7 @@ enum class CanonicalOp : uint16_t {
   // return-value slot is written back.
   //
   // S_ATOMIC_DEC has wrap-at-zero semantics that do NOT match a plain
-  // `atomicrmw sub` — the hardware computes
+  // `atomicrmw sub` -- the hardware computes
   //   new = (old == 0 || old > src) ? src : old - 1
   // which is exactly LLVM's `AtomicRMWInst::UDecWrap` binop (landed in
   // LLVM 19).  The canonical split-k "last workgroup runs the epilogue"
@@ -725,7 +725,7 @@ enum class CanonicalOp : uint16_t {
   // `bf16gemm_*_splitk_clean.co` kernel), keyed on whether the returned
   // pre-decrement value equals 1.  Like S_ATOMIC_SWAP this op is classed
   // NonCommutative for the Class-3 wave-size obstruction classifier in
-  // wave_size_obstruction.cpp (a lane-id-derived decrement sequence's
+  // wave-size-obstruction.cpp (a lane-id-derived decrement sequence's
   // outcome is replica-order-dependent under modulo-replication).
   S_ATOMIC_SWAP,
   S_ATOMIC_DEC,
@@ -759,7 +759,7 @@ enum class CanonicalOp : uint16_t {
   // gfx942 backend lowers the 3-dword vector load to either a
   // native `ds_read_b96` (gfx9 inherits the `_vi` Real form) or
   // splits it into 3x `ds_read_b32` with the appropriate
-  // increments — both are correct in-place lowerings.
+  // increments -- both are correct in-place lowerings.
   // Inserted between DS_READ_B64 and DS_READ_B128 deliberately so
   // the existing range checks (`sop >= DS_READ_B32 &&
   // sop <= DS_READ_I8` for reads, parallel for writes) continue to
@@ -768,7 +768,7 @@ enum class CanonicalOp : uint16_t {
   DS_READ_B128,
   DS_READ2_B32, DS_READ2_B64,
   // gfx11+ stride-64 two-address LDS load forms
-  // (DSInstructions.td:1529,1542 — `ds_load_2addr_stride64_b{32,64}`).
+  // (DSInstructions.td:1529,1542 -- `ds_load_2addr_stride64_b{32,64}`).
   // Semantics parallel DS_READ2_B{32,64}, but the per-access byte
   // offset is `rawFieldValue * 256` (B32) or `* 512` (B64) instead of
   // `* 4` / `* 8`, extending reach with the same 8-bit offset field
@@ -797,7 +797,7 @@ enum class CanonicalOp : uint16_t {
   // D16_HI partial-store family (gfx8+ HasD16LoadStore):
   // store the upper 16 bits (B16_D16_HI) or bits [23:16] (B8_D16_HI)
   // of the source VGPR to LDS. The "D16_HI" suffix names the
-  // *source* register half being stored, not a dest-merge — these
+  // *source* register half being stored, not a dest-merge -- these
   // are write-only and there is no tied dest_in operand. The
   // companion D16 reads (DS_READ_U/I8_D16{,_HI}, DS_READ_U16_D16{,_HI})
   // are not yet on the worklist; if they surface, add them here as
@@ -807,9 +807,9 @@ enum class CanonicalOp : uint16_t {
   // Class 2 DsSwizzle (hotswap/docs/wave-size-translation.md §6).
   // Wave-width-specific cross-lane shuffle. The handler refuses with
   // `unsupportedShape` until the P6 rewrite (lift through
-  // llvm.amdgcn.ds.swizzle — see wave-size-translation.md §5.3 row
+  // llvm.amdgcn.ds.swizzle -- see wave-size-translation.md §5.3 row
   // P6) lands; the wave-size classifier
-  // (wave_size_obstruction.cpp) flags it before the handler is even
+  // (wave-size-obstruction.cpp) flags it before the handler is even
   // dispatched in the cross-wave case.
   DS_SWIZZLE_B32,
 
@@ -817,7 +817,7 @@ enum class CanonicalOp : uint16_t {
   BUFFER_LOAD_DWORD, BUFFER_LOAD_DWORDX2, BUFFER_LOAD_DWORDX3, BUFFER_LOAD_DWORDX4,
   BUFFER_LOAD_UBYTE, BUFFER_LOAD_SBYTE, BUFFER_LOAD_USHORT, BUFFER_LOAD_SSHORT,
   BUFFER_LOAD_SHORT_D16, BUFFER_LOAD_SHORT_D16_HI,
-  // D16 byte variants — gfx9+ partial-write loads. The 8-bit datum is
+  // D16 byte variants -- gfx9+ partial-write loads. The 8-bit datum is
   // sign- or zero-extended to i16 and merged into the lo (`_D16`) or
   // hi (`_D16_HI`) half of the destination VGPR; the other 16 bits
   // are preserved (BUFInstructions.td:1155-1169, predicate
@@ -882,7 +882,7 @@ enum class CanonicalOp : uint16_t {
   // 16x16x32 WMMA with f32 accumulator and 16-bit element types. Both
   // share the same per-lane fragment shape (A,B: <16 x t>, C/D:
   // <8 x f32>) and same K-decomposition path through the gfx942 MFMA
-  // lowering — `emitWMMAtoMFMA` is parameterised on input element
+  // lowering -- `emitWMMAtoMFMA` is parameterised on input element
   // type and routes to the matching CDNA3 MFMA intrinsic
   // (mfma_f32_16x16x16f16 vs mfma_f32_16x16x16bf16_1k).
   V_WMMA_F32_16x16x32_F16,
@@ -900,8 +900,8 @@ enum class CanonicalOp : uint16_t {
   // IntrinsicsAMDGPU.td:4113-4114) and is NOT part of the gfx12
   // RDNA4-base WMMA family (`AMDGPUWMMAIntrinsicsGFX12`,
   // FeatureWMMA{128,256}bInsts), so the same-target lift gates on
-  // `ISAProfile::hasTensorOps` (FeatureGFX1250Insts) — matching
-  // the LLVM intrinsic's actual subtarget gating — rather than
+  // `ISAProfile::hasTensorOps` (FeatureGFX1250Insts) -- matching
+  // the LLVM intrinsic's actual subtarget gating -- rather than
   // `hasWMMA12`. Call shape is `AMDGPUWmmaIntrinsicModsAllReuse`,
   // 8 args: `(A_mod, A, B_mod, B, C_mod, C, reuse_a, reuse_b)`.
   // Cross-target lift to gfx942 would need a new K=4 MFMA
@@ -916,7 +916,7 @@ enum class CanonicalOp : uint16_t {
   // per-lane fragment shape (A,B: <8 x i32> = 32 fp8/bf8 bytes per
   // Wave32 lane, C/D: <8 x f32>) and the same gfx942 MFMA decomposition
   // path through `emitWMMAtoMFMA`. The K=64 dimension splits into
-  // 2 chained K=32 MFMAs per Wave32 group, mirroring the K=32→2×K=16
+  // 2 chained K=32 MFMAs per Wave32 group, mirroring the K=32->2×K=16
   // split used for the 16-bit variants. The lane-redistribution math
   // is byte-identical between the two K-families (32 bytes per lane
   // either way), so the only divergence inside `emitWMMAtoMFMA` is the
@@ -976,7 +976,7 @@ enum class CanonicalOp : uint16_t {
   // `matrix_b_reuse`, `src2_modifiers`) so any future TableGen operand
   // reshuffle flows in for free.
   //
-  // === Same-target gfx1250 → gfx1250 contract ===
+  // === Same-target gfx1250 -> gfx1250 contract ===
   //
   // Lift directly to `int_amdgcn_wmma_scale_f32_16x16x128_f8f6f4` with
   // overloaded {<8 x f32>, <16 x i32>, <16 x i32>} type arguments
@@ -985,7 +985,7 @@ enum class CanonicalOp : uint16_t {
   // BF8 vs FP8 distinction). The call is NOT wrapped in
   // `emitUnderExec` because the WMMA intrinsic is `IntrConvergent`
   // and operates on the wave's matrix fragment, not per-lane
-  // divergent values — wrapping would emit one matrix multiply per
+  // divergent values -- wrapping would emit one matrix multiply per
   // active lane.
   //
   // === Cross-target (gfx942 and earlier) contract ===
@@ -1015,7 +1015,7 @@ enum class CanonicalOp : uint16_t {
   // `_d2` is the up-to-2D form (passes NULL for D# group 2/3); `_d4`
   // is the up-to-4D form. Both share the same CanonicalOp here because
   // their semantic intent is identical and their refusal contract is
-  // identical too — the handler `handleVIMAGE` discriminates on
+  // identical too -- the handler `handleVIMAGE` discriminates on
   // `di.Mnemonic` only when shape differentiation matters (e.g.,
   // a future native-target intrinsic-emit path that fills the
   // 0-init D# operands for `_d2`).
@@ -1029,7 +1029,7 @@ enum class CanonicalOp : uint16_t {
   TENSOR_LOAD_TO_LDS,
   TENSOR_STORE_FROM_LDS,
 
-  // -- gfx1250 async global → LDS load --
+  // -- gfx1250 async global -> LDS load --
   //
   // FLAT async global-to-LDS load, four widths per the b8 / b32 / b64 /
   // b128 family. Each width has both a plain VGPR_64 vaddr form and a
@@ -1052,23 +1052,23 @@ enum class CanonicalOp : uint16_t {
   // `AMDGPUAsyncGlobalLoadToLDS` (line 3904) and take the LDS
   // pointer as the second operand (`local_ptr_ty`); we materialise
   // it via `inttoptr i32 -> ptr addrspace(3)` from the per-lane
-  // VGPR_32. The width is encoded only in the intrinsic ID — the
+  // VGPR_32. The width is encoded only in the intrinsic ID -- the
   // operand bank is identical across all four widths.
   //
   // Separate CanonicalOps per width (rather than a single
   // `GLOBAL_LOAD_ASYNC_TO_LDS_BX` discriminated by mnemonic) so the
-  // CanonicalOp ↔ intrinsic mapping is direct and the handler is a small
-  // switch instead of string parsing — the canonical opcode_map
+  // CanonicalOp <-> intrinsic mapping is direct and the handler is a small
+  // switch instead of string parsing -- the canonical opcode_map
   // collapses each `_gfx1250` real onto its width-specific pseudo.
   //
-  // === Same-target gfx1250 → gfx1250 contract ===
+  // === Same-target gfx1250 -> gfx1250 contract ===
   //
   // gfx1250 has the asynccnt unit and the native intrinsic; the
   // handler emits a direct call inside an `emitUnderExec` diamond
   // (per-lane operation: each lane fires its own LDS write, inactive
   // lanes do not). `IntrInaccessibleMemOrArgMemOnly` on the
   // intrinsic prevents downstream passes from CSEing or reordering
-  // the asynchronous fetch across other memory sites — the
+  // the asynchronous fetch across other memory sites -- the
   // user-visible barrier semantics live in companion
   // `s_wait_asynccnt` instructions, not in this op. The intrinsic's
   // `offset` immediate corresponds to the FLAT instruction's
@@ -1080,7 +1080,7 @@ enum class CanonicalOp : uint16_t {
   // The asynccnt unit and `int_amdgcn_global_load_async_to_lds_b*`
   // are gfx1250-only (`SubtargetPredicate = isGFX1250Plus` on the
   // VFLAT reals, `FeatureGFX1250Insts`). gfx942 has no asynchronous
-  // global→LDS DMA channel and no equivalent burst path.
+  // global->LDS DMA channel and no equivalent burst path.
   //
   // We emit a **synchronous per-lane emulation**: for each active
   // lane, `load <T>, ptr addrspace(1) %gptr` followed by
@@ -1094,7 +1094,7 @@ enum class CanonicalOp : uint16_t {
   //     LDS[dsaddr].bN = MEM[memaddr].bN   // (N = 8/32/64/128)
   //   endpragma
   //
-  // — a per-lane global→LDS copy, width-parametric, identical in
+  // -- a per-lane global->LDS copy, width-parametric, identical in
   // every respect to what the synchronous `load` + `store` pair
   // produces *per lane*. `INST_OFFSET` applies to BOTH the LDS
   // address and the global address (confirmed by the explicit
@@ -1119,18 +1119,18 @@ enum class CanonicalOp : uint16_t {
   // `load` retires before the `store` publishes the data to LDS.
   //
   // This is a **throughput regression, not a correctness
-  // regression** — every lane's final LDS state is bit-identical
+  // regression** -- every lane's final LDS state is bit-identical
   // to the async version's state observed after
   // `s_wait_asynccnt 0`. Kernels that depend on *observable
   // effects under a partially-elapsed asynccnt* (e.g., a
   // hand-written pipeliner polling asynccnt state out of the wave's
-  // instruction stream — not a pattern LLVM IR can express anyway)
+  // instruction stream -- not a pattern LLVM IR can express anyway)
   // are NOT in the GPT-OSS corpus and remain explicitly out of
   // scope. The GPT-OSS MoE expert-GEMM kernels (`matmul_ogs_*`)
   // use the async DMA as a compiler-scheduled prefetch-into-LDS
   // whose only user-visible contract is "data lands in LDS before
   // the subsequent `s_wait_asynccnt 0` + `ds_read_*` chain reads
-  // it" — which the synchronous emulation preserves exactly.
+  // it" -- which the synchronous emulation preserves exactly.
   //
   // Companion `S_WAIT_ASYNCCNT` CanonicalOp (declared above) lowers to a
   // raiser-level no-op on the cross-target arm: the synchronous
@@ -1150,8 +1150,8 @@ enum class CanonicalOp : uint16_t {
   // previous loud refusal: every `matmul_ogs_*` variant in the
   // GPT-OSS MoE expert-GEMM surface (4 kernels, runtime-dominant
   // in inference) hits this opcode and was blocked end-to-end.
-  // The `matmul_fp16` / `matmul_fp16_16x16` path — the shared MFMA
-  // fragment redistribution surface — already works; unblocking the
+  // The `matmul_fp16` / `matmul_fp16_16x16` path -- the shared MFMA
+  // fragment redistribution surface -- already works; unblocking the
   // MoE GEMM was the single highest-impact change. The trade-off
   // is scoped and documented, not hidden, and matches the posture
   // the sibling TDM axis takes in `sync-translation.md §10` ("TDM
@@ -1166,7 +1166,7 @@ enum class CanonicalOp : uint16_t {
   // FLAT advisory prefetch on a per-lane (divergent) VGPR pointer. The
   // family is gated by `FeatureVmemPrefInsts` (AMDGPU.td:283) and is
   // currently only enabled inside `FeatureISAVersion12_50_Common`
-  // (AMDGPU.td:2092), i.e. gfx1250 / RDNA4 — no earlier ISA exposes a
+  // (AMDGPU.td:2092), i.e. gfx1250 / RDNA4 -- no earlier ISA exposes a
   // matching VMEM-prefetch encoding. The companion
   // `int_amdgcn_global_prefetch` intrinsic (IntrinsicsAMDGPU.td:3211)
   // takes a global-address-space pointer + an i32 cachepolicy immarg
@@ -1174,28 +1174,28 @@ enum class CanonicalOp : uint16_t {
   // `IntrInaccessibleMemOrArgMemOnly + IntrWillReturn + NoCapture +
   // IntrNoCallback + IntrNoFree`, so the SDAG models it as a memory
   // intrinsic that may overlap the load lattice but never publishes a
-  // value — exactly the hint contract the hardware promises.
+  // value -- exactly the hint contract the hardware promises.
   //
   // Operand layout (FLAT_Prefetch_Pseudo, FLATInstructions.td:525-553):
   //
   //   plain (3 srcs): vaddr:VGPR_64,            offset, cpol
   //   SADDR (4 srcs): saddr:SReg_64, vaddr:VGPR_32, offset, cpol
   //
-  // Note `has_vdst = 0`, so there is no destination and no LDS slot —
+  // Note `has_vdst = 0`, so there is no destination and no LDS slot --
   // distinct from the GLOBAL_LOAD_ASYNC_TO_LDS_B* family above. Width
   // is fixed at 8 bytes (the `_b8` mnemonic refers to the request
   // granularity, not data); a single CanonicalOp suffices for both
   // addressing-mode variants because `handleFLAT` discriminates on
   // `op.nSrcs()` exactly the same way the async-to-LDS family does.
   //
-  // === Same-target gfx1250 → gfx1250 contract ===
+  // === Same-target gfx1250 -> gfx1250 contract ===
   //
   // Lift directly to `int_amdgcn_global_prefetch(globalPtr, cpol)`.
   // The FLAT `flat_offset` is folded onto the address by GEP'ing
   // `globalPtr += offset` before the call (the intrinsic itself
   // takes no offset operand). The call sits OUTSIDE
   // `emitUnderExec` because the intrinsic carries the EXEC mask
-  // implicitly through `IntrInaccessibleMemOrArgMemOnly` — wrapping
+  // implicitly through `IntrInaccessibleMemOrArgMemOnly` -- wrapping
   // it in a per-lane diamond would emit one prefetch per active
   // lane, gratuitously inflating the IR for what the hardware
   // executes as a single broadcast hint.
@@ -1204,7 +1204,7 @@ enum class CanonicalOp : uint16_t {
   //
   // `int_amdgcn_global_prefetch` is gated by `HasVmemPrefInsts`
   // (FLATInstructions.td:1367) and has no isel coverage on
-  // gfx942 — emitting the call would compile-fail downstream.
+  // gfx942 -- emitting the call would compile-fail downstream.
   // The closest sibling, `int_amdgcn_s_prefetch_data`
   // (IntrinsicsAMDGPU.td:3188), requires a UNIFORM (SGPR) pointer,
   // which we cannot prove for the divergent VGPR address used here
@@ -1225,7 +1225,7 @@ enum class CanonicalOp : uint16_t {
 };
 
 // Stable human-readable identifier for a CanonicalOp (the enum's spelling,
-// e.g. `"V_CMPX"` for `CanonicalOp::V_CMPX`). Used in diagnostics — prefer
+// e.g. `"V_CMPX"` for `CanonicalOp::V_CMPX`). Used in diagnostics -- prefer
 // this over `(int)sop` so errors name the instruction class rather
 // than a raw enum position that drifts with enum edits.
 const char *canonicalOpName(CanonicalOp Op);

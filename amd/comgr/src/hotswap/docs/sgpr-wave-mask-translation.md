@@ -1,12 +1,12 @@
-# SGPR Wave-Mask Translation — V_CMP → SGPR → V_CNDMASK under Cross-Widening
+# SGPR Wave-Mask Translation -- V_CMP -> SGPR -> V_CNDMASK under Cross-Widening
 
 > **Status:** design accepted; **intra-BB shadow** implementation landing
 > now (first PR). The **widened-SGPR-storage** alternative is documented
 > in §4 for future reference; it is NOT implemented and not scheduled.
 >
-> **Scope:** wave32 source → wave64 target cross-widening (gfx1250 →
-> gfx942 / gfx950). Same-wave and narrowing directions (wave64 → wave32
-> — currently fatal-errored by `ModuloReplicationProjection::ballotI1ToWidth`)
+> **Scope:** wave32 source -> wave64 target cross-widening (gfx1250 ->
+> gfx942 / gfx950). Same-wave and narrowing directions (wave64 -> wave32
+> -- currently fatal-errored by `ModuloReplicationProjection::ballotI1ToWidth`)
 > are not affected by this design.
 
 ---
@@ -16,7 +16,7 @@
 Source-ISA `v_cmp_*_e64 sDST, a, b` writes a per-lane compare mask into
 a single source-width SGPR. On wave32 source that SGPR is physically 32
 bits. Under cross-widening to wave64 target hardware the ballot runs on
-64 target lanes and produces 64 correct per-lane compare bits — but a
+64 target lanes and produces 64 correct per-lane compare bits -- but a
 single SGPR still holds only 32 bits, so the writer truncates to 32
 bits before the store. Target lanes 32..63's compare results are
 destroyed at the write, before any consumer reads. A subsequent
@@ -31,7 +31,7 @@ that were never stored.
 
 ## 2. Where the information is lost
 
-In `handle-valu-vcmp.cpp`'s V_CMP → SGPR branch:
+In `handle-valu-vcmp.cpp`'s V_CMP -> SGPR branch:
 
 ```cpp
 Type *sourceWidth = ctx.projection.sourceWaveMaskTy();      // i32 (wave32)
@@ -52,10 +52,10 @@ if (wantedBits < waveBits)
 The comment there already acknowledges this as a residual:
 
 > "…a documented residual lossy path that the obstruction classifier
-> (`wave_size_obstruction.cpp`) still has to refuse downstream for
+> (`wave-size-obstruction.cpp`) still has to refuse downstream for
 > kernels that consume the narrowed mask as a per-lane wave mask."
 
-Either the classifier refuses such kernels (declined — loses corpus
+Either the classifier refuses such kernels (declined -- loses corpus
 coverage), or the data is preserved somewhere the consumer can still
 reach it.
 
@@ -67,11 +67,11 @@ a future reader can pick it up without re-running this analysis.
 
 | strategy | correctness domain | invasiveness | composes with future work |
 |---|---|---|---|
-| **3.1 Side-channel shadow** (chosen) | intra-BB V_CMP → V_CNDMASK without scalar interference — the dominant corpus pattern | localised: ~40 LOC touching 5 files, strictly additive | yes; becomes redundant once §4 or a future reaching-definitions pass lands |
-| **3.2 Obstruction classifier refusal** (declined — conversation history) | all cases where §3.1 or §4 would fix it | ~50 LOC in `wave_size_obstruction.cpp` | parallel second-line defence regardless of which fix lands |
-| **4 Widened SGPR storage** (not scheduled) | all V_CMP → SGPR → wave-mask-consumer patterns, cross-BB, scalar-interleaved, other consumers | systemic: reg-file model change, every SGPR handler audited | supersedes §3.1; orthogonal to §3.2 |
+| **3.1 Side-channel shadow** (chosen) | intra-BB V_CMP -> V_CNDMASK without scalar interference -- the dominant corpus pattern | localised: ~40 LOC touching 5 files, strictly additive | yes; becomes redundant once §4 or a future reaching-definitions pass lands |
+| **3.2 Obstruction classifier refusal** (declined -- conversation history) | all cases where §3.1 or §4 would fix it | ~50 LOC in `wave-size-obstruction.cpp` | parallel second-line defence regardless of which fix lands |
+| **4 Widened SGPR storage** (not scheduled) | all V_CMP -> SGPR -> wave-mask-consumer patterns, cross-BB, scalar-interleaved, other consumers | systemic: reg-file model change, every SGPR handler audited | supersedes §3.1; orthogonal to §3.2 |
 
-### 3.1 Chosen approach — intra-BB per-lane-i1 shadow
+### 3.1 Chosen approach -- intra-BB per-lane-i1 shadow
 
 **Insight.** At the moment the V_CMP handler emits the narrow-width
 ballot store, it still has the per-lane `i1` SSA value from its
@@ -100,7 +100,7 @@ if (sop == SemOp::V_CMP && d.kind == ParsedReg::SGPR)
   ctx.recordSgprWaveMaskI1(d.baseIdx, cmp);
 ```
 
-The narrow store is preserved unchanged — scalar consumers of `sN`
+The narrow store is preserved unchanged -- scalar consumers of `sN`
 (e.g. `s_mov_b32 sM, sN`) still see the source-semantic 32-bit value.
 The shadow is strictly additive.
 
@@ -121,54 +121,54 @@ if (Value *freshCmp = ctx.lookupSgprWaveMaskI1(condReg.baseIdx)) {
 
 **Invalidation.** Two sources:
 
-1. Scalar write to the SGPR — wire a `onSgprScalarWritten(baseIdx)`
+1. Scalar write to the SGPR -- wire a `onSgprScalarWritten(baseIdx)`
    callback from `AllocaRegFile::writeReg32 / writeReg64` on the SGPR
    path, analogous to the existing `onExecWritten` callback. The
    callback invalidates `map[baseIdx]`. Any new SGPR-writing handler
    that routes through the public `writeReg32/64` API picks up
    invalidation automatically.
-2. BB transition — piggyback on the existing BB-boundary hook in
+2. BB transition -- piggyback on the existing BB-boundary hook in
    `raiser.cpp` next to `ctx.vgprMSBs = 0;`, calling
    `ctx.clearSgprWaveMaskShadow()`.
 
 Note `writeRegExecWidth` (V_CMP, V_CMPX, `s_*saveexec_*`) does *not*
-invalidate — it is the path that *produces* fresh cache entries (V_CMP)
+invalidate -- it is the path that *produces* fresh cache entries (V_CMP)
 or operates on EXEC (V_CMPX / SAVEEXEC) rather than on an SGPR in its
 scalar role.
 
 **Correctness argument.** Three invariants:
 
-- **I1 — Additive, not replacing.** Narrow store and extract reader
+- **I1 -- Additive, not replacing.** Narrow store and extract reader
   are both preserved. Absence of the cache routes to the existing
   (known-semantics, lossy-under-cross-widening, correct-everywhere-else)
   path. The pre-existing extract path remains available when the shadow is absent.
-- **I2 — Same-BB, SSA-monotonic.** Within a BB, the raiser processes
+- **I2 -- Same-BB, SSA-monotonic.** Within a BB, the raiser processes
   instructions in program order. The SSA value in the cache *is* the
   last V_CMP's `i1` with no intervening write to the same SGPR.
-- **I3 — Any interference defeats the cache.** Scalar writes invalidate
+- **I3 -- Any interference defeats the cache.** Scalar writes invalidate
   via the reg-file callback; subsequent V_CMP writers overwrite
   `map[N]` (last-writer wins); BB transition clears everything.
 
 No case where the consumer reads a stale or mismatched `i1`.
 
 **Concrete impact on corpus_asin_fp32.** Each of 8 unroll blocks
-contains two `V_CMP_*_e64 s6, |vN|, 0.5` → `V_CNDMASK_B32_e64 ..., s6`
+contains two `V_CMP_*_e64 s6, |vN|, 0.5` -> `V_CNDMASK_B32_e64 ..., s6`
 pairs with no intervening write to `s6`. All 16 pairs in the kernel
 are intra-BB and cache-covered. Expected post-fix outcome: asin
 bit-exact against the CPU reference (or within fp32 polynomial rounding
 noise, ≪ 1e-5 tolerance).
 
-### 3.2 Rejected at conversation time — classifier refusal
+### 3.2 Rejected at conversation time -- classifier refusal
 
-Previously proposed in this project: detect `V_CMP → SGPR → consumed-as-
-per-lane-mask` patterns in `wave_size_obstruction.cpp` and refuse the
+Previously proposed in this project: detect `V_CMP -> SGPR -> consumed-as-
+per-lane-mask` patterns in `wave-size-obstruction.cpp` and refuse the
 kernel. Declined because it converts a correctness regression into a
 coverage regression, which the Triton / AITER corpora cannot afford.
 Can still land as a second-line defence behind §3.1, covering the
 residual cases (cross-BB, scalar-interleaved, other consumers) that the
 shadow does not reach.
 
-## 4. Not scheduled — widened-SGPR-storage (full-correctness alternative)
+## 4. Not scheduled -- widened-SGPR-storage (full-correctness alternative)
 
 Recorded here so a future investigator does not re-run the trade-off
 analysis. This IS the correct answer if §3.1 proves insufficient.
@@ -176,7 +176,7 @@ analysis. This IS the correct answer if §3.1 proves insufficient.
 ### 4.1 Idea
 
 Back every SGPR whose role includes "wave mask under cross-widening"
-with a target-wave-width alloca (i64 on wave32 → wave64), not the
+with a target-wave-width alloca (i64 on wave32 -> wave64), not the
 source-semantic i32. V_CMP's ballot stores the full 64 bits; V_CNDMASK
 reads the full 64 bits; `extractLaneBitFromWaveMask` indexes into a
 lossless mask.
@@ -190,7 +190,7 @@ lossless mask.
 - Scalar writers (`s_mov_b32 sM, sN`) must decide what to do with the
   "extra" 32 bits of sM: clear? Preserve from a prior wave-mask write?
   Source semantics do not define these bits, so any choice is an
-  invention — and the choice is now part of every lift's output.
+  invention -- and the choice is now part of every lift's output.
 - Wastes alloca space (~2×) regardless of how the SGPR is actually used.
 
 **4.2.2 Role-classified widening.** A pre-lift dataflow pass scans the
@@ -200,7 +200,7 @@ BOTH based on its writers and readers. Widen only WAVE_MASK and BOTH.
 - Smaller alloca cost.
 - Classification is non-trivial: SGPR reuse across unrelated roles is
   common (compilers spill scalar constants into the same SGPRs they
-  used for masks a few instructions earlier — the asin kernel reuses
+  used for masks a few instructions earlier -- the asin kernel reuses
   `s6` as both a wave mask AND as a polynomial-coefficient scalar).
 - A BOTH classification still has to solve the "what goes in the extra
   32 bits after a scalar write" problem of 4.2.1.
@@ -229,7 +229,7 @@ a read of the other role triggers a lossy projection.
   kernarg unpacking in `handle-smem.cpp`, `s_load_b128` decomposition,
   …) has to stay consistent with whatever the pair model becomes.
 - **Scalar op semantics on widened SGPRs.** `s_mov_b32`, `s_and_b32`,
-  `s_or_b32`, `s_xor_b32`, the entire SOP family — each must pick a
+  `s_or_b32`, `s_xor_b32`, the entire SOP family -- each must pick a
   rule for what happens to the high 32 bits of a widened destination.
   Source semantics are silent on those bits; we invent a rule, and the
   rule has to be the same across every handler to not miscompile.
@@ -245,15 +245,15 @@ a read of the other role triggers a lossy projection.
 - **Obstruction-classifier interaction.** Many of the "Class 4" lane-
   position-dependent refusals (`CmpxFromLaneId`, `SaveExecFromLaneId`)
   operate on the same SGPR dataflow. Widened storage potentially lets
-  some of those refusals become emits — the classifier's decision
+  some of those refusals become emits -- the classifier's decision
   procedure has to be re-audited with the new reg-file model.
-- **Same-wave / narrowing no-ops.** On same-wave lifts (wave32 →
-  wave32, wave64 → wave64) the widening is unnecessary; the design
+- **Same-wave / narrowing no-ops.** On same-wave lifts (wave32 ->
+  wave32, wave64 -> wave64) the widening is unnecessary; the design
   should degenerate to the current narrow storage to keep same-wave
   codegen quality unchanged. That means the reg-file constructor
   branches on `(srcIsa, tgtIsa)` and every handler has to handle both
   branches. (Or we widen unconditionally and rely on the backend to
-  eliminate dead bits — which it mostly does but can miss edge cases.)
+  eliminate dead bits -- which it mostly does but can miss edge cases.)
 - **Test burden.** Every existing lit fixture that pins a specific IR
   shape involving an SGPR alloca has to be audited for the width
   change. Some pin the narrow form on purpose (regression guards for
@@ -270,7 +270,7 @@ Only when §3.1's limitations hurt a real corpus kernel. Specifically:
   spill the mask across a control-flow join).
 - A kernel sandwiches scalar bitwise ops on a wave-mask SGPR between
   V_CMP and V_CNDMASK (e.g. `v_cmp s6, ...; s_andn2_b32 s6, vcc, s6;
-  v_cndmask ..., s6` — the shadow invalidates at `s_andn2_b32`, and
+  v_cndmask ..., s6` -- the shadow invalidates at `s_andn2_b32`, and
   the fallback is the lossy extract). Widened storage does not need
   the shadow because the SGPR alloca itself carries full fidelity.
 - The wave-mask consumers expand beyond V_CNDMASK_B32 into operations
@@ -297,9 +297,9 @@ additionally pins a cross-BB / scalar-interleaved variant.
 
 ### Out of scope for this PR
 
-- **Cross-BB V_CMP → V_CNDMASK.** Falls back to the extract. A future
+- **Cross-BB V_CMP -> V_CNDMASK.** Falls back to the extract. A future
   reaching-definitions pass on the raised IR (hinted at as the
-  dataflow-upgrade TODO in `wave_size_obstruction.cpp`) is the natural
+  dataflow-upgrade TODO in `wave-size-obstruction.cpp`) is the natural
   landing site for this.
 - **Scalar-interleaved pattern.** `V_CMP; s_mov_b32 sN, imm;
   V_CNDMASK` falls back correctly. Fixing this requires §4 or a scalar-
@@ -317,7 +317,7 @@ additionally pins a cross-BB / scalar-interleaved variant.
 
 ## 6. Test plan
 
-- **Lit fixture — fused path.** `lit_tests/v_cmp_cndmask_sgpr_fused/`.
+- **Lit fixture -- fused path.** `lit_tests/v_cmp_cndmask_sgpr_fused/`.
   Same HIP kernel shape as the existing `v_cmp_cndmask_sgpr/` (inline-
   asm-forced `v_cmp_ge_f32_e64 s4, |x|, 0.5` + `v_cndmask_b32_e64
   r, -1.0, 1.0, s4`). The raised IR CHECK lines pin the direct-i1
@@ -325,7 +325,7 @@ additionally pins a cross-BB / scalar-interleaved variant.
   intervening `ballot.i64` + `trunc` + `lshr` / `and` / `icmp ne 0`
   chain between them. A CHECK-NOT on `mask_lane_idx` for that
   specific pair proves the shadow path was taken.
-- **Lit fixture — fallback companion.** `lit_tests/v_cmp_cndmask_
+- **Lit fixture -- fallback companion.** `lit_tests/v_cmp_cndmask_
   sgpr_scalar_clobber/`. Adds an inline-asm `s_mov_b32 s4, 0x5A5A5A5A`
   between the V_CMP and the V_CNDMASK. The raised IR CHECK lines pin
   the extract chain is STILL emitted (`mask_lane_idx` / `lshr` / `and
@@ -346,7 +346,7 @@ additionally pins a cross-BB / scalar-interleaved variant.
 
 ## 7. Evolution path
 
-- **Step 1 (this PR, §3.1).** Intra-BB V_CMP → V_CNDMASK cache.
+- **Step 1 (this PR, §3.1).** Intra-BB V_CMP -> V_CNDMASK cache.
   Closes the corpus_asin_fp32 miscompile.
 - **Step 2 (follow-up, optional).** Obstruction-classifier refusal
   (§3.2) for the residual cases the cache does not cover. Converts

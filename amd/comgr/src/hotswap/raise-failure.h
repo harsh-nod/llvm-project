@@ -53,7 +53,7 @@ enum class RaiseFailureReason : uint16_t {
   // wave-size-translation.md §7's three-outcome decision procedure).
   // One reason per refusal *decision* so diagnostics can bucket
   // failures without parsing the failure text. See
-  // `wave_size_obstruction.h` for the classifier
+  // `wave-size-obstruction.h` for the classifier
   // taxonomy and the mapping between these reasons and the more
   // specific `ObstructionKind` values.
   //
@@ -103,7 +103,7 @@ struct RaiseFailure {
   RaiseFailureReason Reason = RaiseFailureReason::None;
   // Offending instruction mnemonic (e.g. `global_store_dwordx4`).
   std::string Mnemonic;
-  // Encoding-format category (e.g. `VALU`, `FLAT`, `MUBUF`) — stable
+  // Encoding-format category (e.g. `VALU`, `FLAT`, `MUBUF`) -- stable
   // bucketing key for the batch / corpus test summaries. For non-
   // decode-level failures (e.g. `TargetMachineCreationFailed`) this
   // is the `reasonString` of `Reason`.
@@ -131,7 +131,7 @@ struct RaiseFailure {
                                         const llvm::Twine &Detail = {});
 
   // Raiser main loop / pre-translation gates. These are only built by
-  // `raiser.cpp` — the factories live here so every reason is
+  // `raiser.cpp` -- the factories live here so every reason is
   // constructed consistently, not via aggregate init that could leave
   // `hasFailed()` disagreeing with the field contents.
 

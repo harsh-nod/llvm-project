@@ -82,7 +82,7 @@ Value *WaveProjection::wrapAsWWMValue(IRBuilder<> &B, Value *V,
     return V;
   // `@llvm.amdgcn.strict.wwm`'s overload set in IntrinsicsAMDGPU.td is
   // `llvm_any_ty`, but in practice the backend lowers only a restricted
-  // set of scalar and vector element types — integers up to i64 and
+  // set of scalar and vector element types -- integers up to i64 and
   // float/half/bfloat/f32/f64 (plus their fixed-vector shapes).
   // Calling it with a pointer, aggregate, token, or other
   // backend-unsupported type would surface as a cryptic signature
@@ -153,7 +153,7 @@ Value *ModuloReplicationProjection::ballotI1ToWidth(
   // `wantedBits > waveBits`: wave64 source on wave32 target. No correct
   // modulo-replication projection exists (the wider source wave has
   // lanes that do not exist in the narrower target), so zero-extending
-  // would invent bits. Bail so a future wave64→wave32 lift lands here
+  // would invent bits. Bail so a future wave64->wave32 lift lands here
   // rather than silently miscompiles.
   report_fatal_error(
       "ballotI1ToWidth: wantedBits > waveBits (wave64 source on wave32 "
@@ -177,14 +177,14 @@ Value *ModuloReplicationProjection::extractLaneBitFromWaveMask(
     // read via `loadSGPR32`) has to be widened to the target wave-mask
     // width before the per-lane shift extracts a single bit.  A plain
     // `zext` zeros the upper `dstBits - srcBits` positions, which
-    // under wave32 → wave64 makes target lanes 32..63 always read a
+    // under wave32 -> wave64 makes target lanes 32..63 always read a
     // zero (their `lane_id` shift lands in the zero-padded upper
     // half), and downstream every narrow-mask-guarded `v_cndmask_b32`
     // unconditionally picks its FALSE branch on those lanes.  In the
     // Triton SwiGLU shape (`corpus_swiglu_fp32`) that FALSE branch is
     // the 0x80000000 OOB-sentinel offset used to neutralise masked-
     // out buffer accesses, so all target-wave-upper-half stores land
-    // out-of-bounds and the SRD bounds check silently drops them —
+    // out-of-bounds and the SRD bounds check silently drops them --
     // the observed "half of every target wave64's outputs stay at
     // their zero-initialised value" miscompile.  MODREP's contract
     // (`wave-size-translation.md` §6 / class-"modulo-replication"
@@ -209,7 +209,7 @@ Value *ModuloReplicationProjection::extractLaneBitFromWaveMask(
   Value *LaneIdx = emitLaneIdx(B);
   // Twine names are neutral (`mask_*`) rather than `vcc_*`: the helper
   // is called from every consumer that reads a wave mask as a per-lane
-  // predicate — the VCC consumer path via `readVCCAsWaveMask` AND the
+  // predicate -- the VCC consumer path via `readVCCAsWaveMask` AND the
   // SGPR-source `V_CNDMASK_B32_e64` consumer path in
   // `handle-valu-vop3p.cpp`. Keeping the old `vcc_` prefix would make
   // raised-IR dumps for e.g. the corpus_asin_fp32 kernel print
@@ -222,10 +222,10 @@ Value *ModuloReplicationProjection::extractLaneBitFromWaveMask(
 }
 
 // ----------------------------------------------------------------------------
-// WaveNativeProjection — cross-widening (wave32 → wave64).
+// WaveNativeProjection -- cross-widening (wave32 -> wave64).
 //
 // The base `WaveMaskTy` is already `tgtIsa.isWave32() ? i32 : i64`,
-// which on the only supported direction (wave32 source → wave64
+// which on the only supported direction (wave32 source -> wave64
 // target) is `i64`. We reuse it directly for both the EXEC alloca
 // storage and the ballot/lane-active arithmetic so the widths line up
 // without any extra casting.
@@ -238,13 +238,13 @@ WaveNativeProjection::WaveNativeProjection(const ISAProfile &SrcIsa,
   // Restrict to the one translation direction where the wave-native
   // projection's extra invariants are well-defined. Same-wave paths
   // don't need a widened EXEC (ModRep already collapses to identity
-  // there), and narrowing (wave64 source → wave32 target) loses lanes
-  // regardless of policy — `ModuloReplicationProjection` documents the
+  // there), and narrowing (wave64 source -> wave32 target) loses lanes
+  // regardless of policy -- `ModuloReplicationProjection` documents the
   // narrowing bail via `report_fatal_error` in `ballotI1ToWidth`; the
   // wave-native projection is not a second answer for that direction.
   if (!(SrcIsa.isWave32() && !TgtIsa.isWave32()))
     report_fatal_error(
-        "WaveNativeProjection is defined only for wave32 source → "
+        "WaveNativeProjection is defined only for wave32 source -> "
         "wave64 target cross-widening; other directions must use "
         "ModuloReplicationProjection (same-wave / narrowing) or a "
         "future ThreadLoopProjection implementation. See hotswap/"
@@ -253,7 +253,7 @@ WaveNativeProjection::WaveNativeProjection(const ISAProfile &SrcIsa,
 }
 
 Value *WaveNativeProjection::emitInitialExec(IRBuilder<> &B) const {
-  // Wave32 → Wave64 cross-widening decouples the hardware EXEC (what
+  // Wave32 -> Wave64 cross-widening decouples the hardware EXEC (what
   // the target gfx942 wavefront actually applies) from the modeled
   // source EXEC (what the transpiler's `emitUnderExec` diamonds read
   // through the alloca). At kernel entry we call
@@ -267,12 +267,12 @@ Value *WaveNativeProjection::emitInitialExec(IRBuilder<> &B) const {
   // value to seed the EXEC alloca with. From this point on the
   // `emitUnderExec` diamonds guard every VGPR write, memory store,
   // LDS op, and atomic through an IR-level `br i1 %lane_active`
-  // derived from the alloca — the backend lowers those divergent
+  // derived from the alloca -- the backend lowers those divergent
   // branches by setting hardware EXEC to the ballot of the
   // per-lane predicate inside each `do` block and restoring to
   // `EXEC = -1` afterwards, so no inactive source lane ever
   // commits a side effect. Between `emitUnderExec` diamonds the
-  // hardware EXEC is -1, which is exactly what the WMMA → MFMA
+  // hardware EXEC is -1, which is exactly what the WMMA -> MFMA
   // cross-lane pipeline in `wmma-lowering.cpp` needs to produce
   // correct per-lane output on all 64 Wave64 lanes.
   //
@@ -337,19 +337,19 @@ Value *WaveNativeProjection::ballotI1ToWidth(IRBuilder<> &B, Value *Pred,
     // `v_cmp_lt_u32_e64 s4, ...` on wave32) cannot hold a 64-bit
     // mask. The `handle-valu-vcmp.cpp` V_CMPX branch asks for
     // `resultTy = execStorageTy() = WaveMaskTy` and stays at full
-    // width; only the V_CMP→SGPR branch asks for the narrower source
+    // width; only the V_CMP->SGPR branch asks for the narrower source
     // width and takes this trunc. Kernels that consume the truncated
     // mask as a per-lane wave mask downstream can still miscompile,
     // and such patterns remain the obstruction classifier's
-    // responsibility to refuse (see `wave_size_obstruction.cpp`).
+    // responsibility to refuse (see `wave-size-obstruction.cpp`).
     return B.CreateTrunc(WaveMask, ResultTy, Name + "_trunc");
   // `wantedBits > waveBits`: wave32 target hardware ballot requested
   // wider than its native mask. This direction only arises on same-
-  // target-wave lifts (not our wave32→wave64 cross-widening), so
+  // target-wave lifts (not our wave32->wave64 cross-widening), so
   // reaching it under WaveNativeProjection is a raiser bug.
   report_fatal_error(
       "WaveNativeProjection::ballotI1ToWidth: wantedBits > waveBits "
-      "is not defined for wave32 source → wave64 target cross-"
+      "is not defined for wave32 source -> wave64 target cross-"
       "widening; caller must request resultTy ≤ waveMaskTy");
 }
 
@@ -368,15 +368,15 @@ Value *WaveNativeProjection::extractLaneBitFromWaveMask(IRBuilder<> &B,
     // output of `ballotI1ToWidth(..., i32, ...)` above) is widened
     // back to target width by *replication* so target lane K and
     // K+W_src read the same bit. Under wave-native this is the
-    // conservative choice — it matches what the V_CMP→SGPR trunc
+    // conservative choice -- it matches what the V_CMP->SGPR trunc
     // already implicitly assumed when it picked lanes 0..W_src-1 as
-    // canonical — and it keeps `v_cndmask_b32` / `s_and_b64 exec,
+    // canonical -- and it keeps `v_cndmask_b32` / `s_and_b64 exec,
     // ..., sN` rounds trips behaving like modulo-replication for
     // the residual save/restore pattern. Replacing replication with
     // a zero-extend would silently deactivate target lanes 32..63
     // whenever the kernel restores EXEC through a 32-bit SGPR; the
-    // replication choice is the one that keeps the `v_cmpx →
-    // predicated store → s_mov_b32 exec_lo, -1` shape working.
+    // replication choice is the one that keeps the `v_cmpx ->
+    // predicated store -> s_mov_b32 exec_lo, -1` shape working.
     Value *Zext = B.CreateZExt(V, TargetTy);
     Value *Shifted = B.CreateShl(Zext, SrcBits);
     V = B.CreateOr(Zext, Shifted, "wn_mask_widen");
@@ -386,7 +386,7 @@ Value *WaveNativeProjection::extractLaneBitFromWaveMask(IRBuilder<> &B,
     V = B.CreateBitCast(V, TargetTy);
   }
   Value *LaneIdx = emitLaneIdx(B);
-  // Neutral `mask_*` naming parity with the ModRep variant above —
+  // Neutral `mask_*` naming parity with the ModRep variant above --
   // same two-caller story (VCC consumer + SGPR-source V_CNDMASK_B32
   // consumer), same reason to avoid the old `wn_vcc_*` identifiers
   // surfacing in raised-IR dumps for kernels whose mask source is a
@@ -399,7 +399,7 @@ Value *WaveNativeProjection::extractLaneBitFromWaveMask(IRBuilder<> &B,
 }
 
 // ----------------------------------------------------------------------------
-// ThreadLoopProjection — second rung of the coverage ladder described
+// ThreadLoopProjection -- second rung of the coverage ladder described
 // in hotswap/docs/wave-size-translation.md §2.2.
 //
 // This implementation is intentionally conservative at the projection
@@ -577,7 +577,7 @@ bool emitCrossWaveWarning(const WaveProjection &Proj, const MCState &Mc,
               "correct for kernels whose EXEC writers are lane-position-"
               "independent (pointwise ops with bounds checks against a "
               "uniform >= target_wave_bits). The Phase 1.4.5 classifier "
-              "(wave_size_obstruction.cpp) is the principled path for "
+              "(wave-size-obstruction.cpp) is the principled path for "
               "deciding between outcome (a)/(b)/(c) per hotswap/docs/"
               "wave-size-translation.md \u00a77.\n";
   });
