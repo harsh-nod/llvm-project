@@ -51,7 +51,7 @@ namespace {
 //   * DPP/SDWA encodings carry a tied "old" input (fallback value for
 //     inactive lanes, named `$old` or `$vdst_in` in TableGen). In our
 //     all-lanes-active scalar model that slot is never read, so we skip
-//     it. Not every tied-to-def operand is a fallback — VOP2 MAC forms
+//     it. Not every tied-to-def operand is a fallback -- VOP2 MAC forms
 //     (v_fmac_f32, v_mac_f32, v_dot2c_*) tie `$src2` to the dst and
 //     atomics tie `$vdata_in`/`$sdst_in`/`$addr_in`; in those cases the
 //     tied operand is a real accumulator/read-modify input and must stay
@@ -107,7 +107,7 @@ void buildSrcMap(DecodedInst &Di, const MCInstrDesc &Desc) {
 // CAVEAT: this list reflects whether the *handler* should treat the
 // tied operand as a real read (yes for `sdst_in`/`vdata_in`/etc.; no
 // for `old`/`vdst_in`). It does NOT promise that the AMDGPU
-// disassembler will materialise an MCOperand for that slot — for
+// disassembler will materialise an MCOperand for that slot -- for
 // SOP1 `sdst_in` (S_BITSET0/1_B{32,64}) and SOP1 `S_CMOV_B{32,64}`
 // the disassembler collapses the tied slot and produces only
 // `(sdst, src0)`, so `srcMap` won't contain an entry for the prior-
@@ -154,7 +154,7 @@ void driftCheckTiedIn(const DecodedInst &Di, const MCInstrDesc &Desc) {
       std::string Msg;
       raw_string_ostream Os(Msg);
       Os << "transpiler: tied-to-def operand has an OpName not in the "
-            "audited set — classify explicitly (fallback to skip vs. real "
+            "audited set -- classify explicitly (fallback to skip vs. real "
             "input to keep) before proceeding for " << Di.RawMnemonic
          << " (opcode=" << Opc << "): index=" << I
          << ", tiedTo=" << Tied
@@ -169,7 +169,7 @@ void driftCheckTiedIn(const DecodedInst &Di, const MCInstrDesc &Desc) {
 // naming (VALU, VOPC, SOP1/SOP2, a handful of scalar forms), the first
 // N entries of srcMap / modMap must agree with LLVM's named-operand
 // table. Catches operand-layout drift for the large majority of opcodes
-// — but notably NOT for DS / MUBUF / FLAT / SMEM / image encodings,
+// -- but notably NOT for DS / MUBUF / FLAT / SMEM / image encodings,
 // which don't use srcN naming; those formats are only protected by the
 // walk's correctness and drift check A.
 //
@@ -203,11 +203,11 @@ void driftCheckSrcN(DecodedInst &Di, const MCInstrDesc &Desc) {
   unsigned Opc = Di.Inst.getOpcode();
 
   // VOP2 MADMK exception: `v_fmamk_f32` and friends use VOP_MADMK
-  // (VOP2Instructions.td), whose Ins32 is `(src0, K-imm, src1)` —
+  // (VOP2Instructions.td), whose Ins32 is `(src0, K-imm, src1)` --
   // i.e., the 32-bit literal sits at MCInst index 2 BETWEEN src0
   // (index 1) and src1 (index 3). The natural positional walk in
   // `buildSrcMap` produces srcMap = [src0, K-imm, src1], which
-  // matches what the V_FMAMK_F32 handler in handle_valu.cpp
+  // matches what the V_FMAMK_F32 handler in handle-valu.cpp
   // expects (`srcF(0)=src0, srcF(1)=K, srcF(2)=src2` per its own
   // documentation block).
   //
@@ -223,8 +223,8 @@ void driftCheckSrcN(DecodedInst &Di, const MCInstrDesc &Desc) {
   // Detection: the opcode exposes both `OpName::imm` and
   // `OpName::src0` / `OpName::src1`, with the imm operand index
   // strictly between src0 and src1. (Compare to MADAK forms like
-  // `v_fmaak_f32`, whose Ins32 is `(src0, src1, K-imm)` — K
-  // trailing — where the positional walk happens to coincide with
+  // `v_fmaak_f32`, whose Ins32 is `(src0, src1, K-imm)` -- K
+  // trailing -- where the positional walk happens to coincide with
   // OpName order and the drift check passes naturally.)
   //
   // The modifier-map check below remains in force; MADMK has no
@@ -270,7 +270,7 @@ void driftCheckSrcN(DecodedInst &Di, const MCInstrDesc &Desc) {
 // identity constants rather than register-name string matches. We
 // normalise through `mc2PseudoReg` first, which strips subtarget
 // suffixes (``_gfxNplus``) and converts aliases to their canonical
-// pseudo-register id — same pattern used by `parseReg`.
+// pseudo-register id -- same pattern used by `parseReg`.
 void classifyImplicitDefs(DecodedInst &Di, const MCInstrDesc &Desc) {
   for (MCPhysReg R : Desc.implicit_defs()) {
     llvm::MCRegister Reg = AMDGPU::mc2PseudoReg(R);
@@ -320,7 +320,7 @@ void decodeScaleOffset(DecodedInst &Di) {
 //
 // Preconditions:
 //   - `di.tsFlags` is populated from the ORIGINAL (pre-canonicalisation)
-//     MCInstrDesc — the DPP bit here is the authoritative signal that
+//     MCInstrDesc -- the DPP bit here is the authoritative signal that
 //     SOME DPP form is in play, but it does NOT distinguish DPP16 from
 //     DPP8 (both `VOP_DPP8_Base` and VOP_DPP set `let DPP = 1`, see
 //     VOPInstructions.td).
@@ -346,7 +346,7 @@ void decodeDppModifiers(DecodedInst &Di) {
   const MCInst &Inst = Di.Inst;
   const unsigned Opc = Inst.getOpcode();
   // Detect DPP8 form by presence of the `dpp8` named operand. If this
-  // is a DPP8 instruction, leave `hasDpp` false — see the header
+  // is a DPP8 instruction, leave `hasDpp` false -- see the header
   // comment for the classifier-refusal contract.
   if (AMDGPU::getNamedOperandIdx(Opc, AMDGPU::OpName::dpp8) >= 0)
     return;
@@ -367,7 +367,7 @@ void decodeDppModifiers(DecodedInst &Di) {
   if (!Ctrl || !RowMask || !BankMask || !BoundCtrl) {
     // MCInstrDesc declared DPP and it is not a DPP8 variant, yet the
     // MCInst operand list is missing one of the four DPP16 modifier
-    // fields. This is a decoder-vs-tblgen drift situation — fail
+    // fields. This is a decoder-vs-tblgen drift situation -- fail
     // loudly rather than emit IR with default (possibly wrong)
     // values. DPP8 was already filtered above, so we only reach here
     // on a genuinely unrecognised DPP form.
@@ -428,7 +428,7 @@ void decodeDsSwizzleImm(DecodedInst &Di) {
 // Pull every branch-target offset out of a branch instruction's
 // immediates and insert the resulting byte offsets into `blockStarts`.
 // Signed 16-bit PC-relative offset * 4 bytes, relative to the
-// instruction's successor (off + 4, not off + instSize — matches the
+// instruction's successor (off + 4, not off + instSize -- matches the
 // hardware encoding definition).
 
 void failVopdDecode(const DecodedInst &Di, const Twine &Detail) {

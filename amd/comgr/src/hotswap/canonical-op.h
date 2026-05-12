@@ -513,7 +513,7 @@ enum class CanonicalOp : uint16_t {
   //                       cross-target-universal via `fpext bfloat to
   //                       float`, so no refusal is needed on gfx942)
   // Both CanonicalOps share the op_sel/op_sel_hi parser and write-back shape
-  // in handle_valu_vop3p.cpp; only the narrow element type differs.
+  // in handle-valu-vop3p.cpp; only the narrow element type differs.
   V_FMA_MIX_F32, V_FMA_MIX_F32_BF16,
   // VOP3P BF16 destination mixed FMA (gfx1250
   // VOP3PInstructions.td:464): compute
@@ -678,7 +678,7 @@ enum class CanonicalOp : uint16_t {
   // backend's AMDGPUISelDAGToDAG.cpp::SelectMad64_32 pattern-matches the
   // canonical `add(mul(zext/sext s0, zext/sext s1), s2_i64)` IR we emit
   // back into v_mad_(nc|co|_i64_i32) on whichever target the raise writes
-  // to — identical to how V_MAD_U64_U32 lowers today (see handle_valu.cpp
+  // to — identical to how V_MAD_U64_U32 lowers today (see handle-valu.cpp
   // v_mad_u64_u32 arm and opcode-map.cpp's "LLVM no longer exposes a
   // distinct carry-out variant" comment for historical context).
   V_MAD_NC_U64_U32, V_MAD_NC_I64_I32,
@@ -921,7 +921,7 @@ enum class CanonicalOp : uint16_t {
   // is byte-identical between the two K-families (32 bytes per lane
   // either way), so the only divergence inside `emitWMMAtoMFMA` is the
   // per-MFMA pack type (i64 vs <4 x half|i16>) and the dispatched
-  // intrinsic ID. See `WMMAInputType` in `wmma_lowering.h` for the
+  // intrinsic ID. See `WMMAInputType` in `wmma-lowering.h` for the
   // full enumeration.
   V_WMMA_F32_16x16x64_FP8_FP8,
   V_WMMA_F32_16x16x64_FP8_BF8,
@@ -995,7 +995,7 @@ enum class CanonicalOp : uint16_t {
   // `V_MFMA_SCALE_F32_16x16x128_F8F6F4`), but the WMMA-to-MFMA lane
   // redistribution for K=128 + per-matrix-fmt selection + the
   // matrix_a/b_scale_fmt × scale_src0/src1 exponent application is
-  // not modelled in `wmma_lowering.cpp` (only K=32 / K=64 fp16/bf16/
+  // not modelled in `wmma-lowering.cpp` (only K=32 / K=64 fp16/bf16/
   // fp8/bf8/iu8 paths exist). Per the user-rules (no silent
   // fallbacks) and consistent with the gfx1250-only refusal contract
   // applied to `V_WMMA_F32_16x16x4_F32` above, we refuse loudly via

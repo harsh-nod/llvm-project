@@ -20,7 +20,7 @@ namespace COMGR::hotswap {
 // emits, so adding a new AMDGPU generation does not require touching this
 // struct; we just read the already-defined FeatureFoo bit.
 //
-// This is a pure value snapshot — the factory copies bits out of the
+// This is a pure value snapshot -- the factory copies bits out of the
 // MCSubtargetInfo and does not retain any reference to it. Callers must
 // construct via `fromSubtarget`; there is intentionally no default ctor.
 struct ISAProfile {
@@ -36,7 +36,7 @@ struct ISAProfile {
   bool HasWmmA12 = false;
   // True iff the subtarget exposes the gfx1250 TENSOR cnt unit
   // (FeatureGFX1250Insts gates the VIMAGE TENSOR pseudo-instructions
-  // `tensor_load_to_lds_d{2,4}` and `tensor_store_from_lds_d{2,4}` —
+  // `tensor_load_to_lds_d{2,4}` and `tensor_store_from_lds_d{2,4}` --
   // see `isGFX125xOnly` in AMDGPU.td and the
   // `int_amdgcn_tensor_load_to_lds` /
   // `int_amdgcn_tensor_store_from_lds` intrinsics in
@@ -54,7 +54,7 @@ struct ISAProfile {
   // IntrinsicsAMDGPU.td:3694), which is the gfx950 cross-target for
   // `v_wmma_scale_f32_16x16x128_f8f6f4`.  gfx942 has `HasMfma == true` but
   // no scaled F8F6F4 hardware, so the WMMA-scale handler in
-  // `handle_valu_vop3p.cpp` must gate on `HasGfx950Insts` rather than
+  // `handle-valu-vop3p.cpp` must gate on `HasGfx950Insts` rather than
   // `HasMfma` to avoid a silent miscompile (the `HasMfma` predicate would
   // emit `int_amdgcn_mfma_scale_f32_16x16x128_f8f6f4` on gfx942, where the
   // intrinsic has no codegen pattern and llc would crash at lowering).
@@ -92,10 +92,10 @@ struct ISAProfile {
 
   // Test-only factory.  Constructs an `ISAProfile` with only the
   // `waveSize` dimension set (the other feature flags default to
-  // `false`) so unit tests exercising wave-direction-gated code —
+  // `false`) so unit tests exercising wave-direction-gated code --
   // `WaveNativeProjection`'s ctor assertion, `emitLaneActiveBit`'s
   // source / target wave-width arithmetic, the
-  // `providesFullWaveExecInvariant` contract —
+  // `providesFullWaveExecInvariant` contract --
   // don't have to stand up a full `MCSubtargetInfo` (which would
   // require pulling in the LLVM AMDGPU target init chain just to
   // read one bit).  Production code MUST use `fromSubtarget`:

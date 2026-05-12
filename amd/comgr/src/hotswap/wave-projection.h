@@ -25,7 +25,7 @@ namespace COMGR::hotswap {
 struct MCState;
 
 // ============================================================================
-// WaveProjection — the cross-wave translation policy surface.
+// WaveProjection -- the cross-wave translation policy surface.
 //
 // A *projection* maps a source-ISA wavefront onto a target-ISA wavefront
 // when the two wave widths differ. This is an abstract base; see
@@ -93,8 +93,8 @@ public:
   // the transpiler's `emitUnderExec` diamonds read through the alloca)
   // override this to emit an entry-block side effect that captures the
   // hardware EXEC into the alloca while forcing hardware EXEC to all-
-  // ones. Wave-native Wave32→Wave64 cross-widening is the canonical
-  // case: the WMMA→MFMA redistribution pipeline in `wmma_lowering.cpp`
+  // ones. Wave-native Wave32->Wave64 cross-widening is the canonical
+  // case: the WMMA->MFMA redistribution pipeline in `wmma-lowering.cpp`
   // must run under hardware EXEC = -1 so lanes 32-63 participate in
   // the Wave64 MFMA (otherwise they never write their destination
   // VGPRs on a partial-wave launch and MFMA reads garbage), and
@@ -118,7 +118,7 @@ public:
   // which cannot fit in gfx942's 256-VGPR pool once the kernel's
   // own computation has claimed its share. Moving the EXEC=-1
   // guarantee to kernel entry sidesteps the allocator pressure
-  // entirely because no intermediate vreg is ever "inside WWM" —
+  // entirely because no intermediate vreg is ever "inside WWM" --
   // the whole kernel body runs under HW EXEC=-1 and regalloc is
   // ordinary.
   virtual llvm::Value *emitInitialExec(llvm::IRBuilder<> &B) const;
@@ -126,7 +126,7 @@ public:
   // True iff a 32-bit write to EXEC_LO carries "replicate across the
   // full widened EXEC" semantics rather than the source-architectural
   // "replace the low half, keep the high half" semantics. Only wave-
-  // native cross-widening sets this: on wave32 source → wave64 target
+  // native cross-widening sets this: on wave32 source -> wave64 target
   // the source author's `s_mov_b32 exec_lo, v` means "set the whole
   // wavefront's EXEC to v", and the wave-native projection models
   // each target lane as an independent source thread, so a
@@ -159,7 +159,7 @@ public:
 
   // Given the current EXEC alloca value (source-width iN), return an i1
   // true iff the current lane is active. Concrete projections define
-  // what "active" means — modulo-replication fans each target lane onto
+  // what "active" means -- modulo-replication fans each target lane onto
   // bit `lane_id mod W_src` of the source EXEC mask.
   virtual llvm::Value *emitLaneActiveBit(llvm::IRBuilder<> &B,
                                           llvm::Value *ExecVal) const = 0;
@@ -190,8 +190,8 @@ public:
 
   // True iff this projection guarantees hardware EXEC = -1 between
   // `emitUnderExec` diamonds *kernel-wide*.  When this is true the
-  // WMMA → MFMA redistribute / MFMA / collect pipeline in
-  // `wmma_lowering.cpp` can run without any additional EXEC
+  // WMMA -> MFMA redistribute / MFMA / collect pipeline in
+  // `wmma-lowering.cpp` can run without any additional EXEC
   // scaffolding because every target-wave lane is already HW-active
   // for the entire kernel body.  When this is false the handler
   // must route the pipeline through `emitUnderFullWaveExec` below,
@@ -202,7 +202,7 @@ public:
   // `ModuloReplicationProjection` returns false because it keeps
   // hardware EXEC at the source-wave active mask (see
   // `emitInitialExec`'s comment on why this is correct for the wave-
-  // size-oblivious class of kernels — phantom target lanes stay
+  // size-oblivious class of kernels -- phantom target lanes stay
   // HW-inactive kernel-wide, which prevents undef-VGPR contamination
   // of the source author's own cross-lane ops but means the WMMA
   // lowering has to locally widen HW EXEC for its own synthesised
@@ -221,15 +221,15 @@ public:
 
   // Number of source waves whose per-lane fragment data is present in
   // each target wave under this projection's mapping.  Callers that
-  // synthesise per-source-wave passes (most notably the WMMA → MFMA
-  // redistribute / MFMA / collect pipeline in `wmma_lowering.cpp`)
+  // synthesise per-source-wave passes (most notably the WMMA -> MFMA
+  // redistribute / MFMA / collect pipeline in `wmma-lowering.cpp`)
   // iterate `groupBase ∈ {0, W_src, ..., (numSourceWavesPerTarget() -
   // 1) * W_src}` so that each pass covers exactly one source wave's
   // worth of data.
   //
-  // `WaveNativeProjection` (wave32 → wave64 cross-widening) maps two
-  // source waves into one target wave (source wave 0 → target lanes
-  // 0..31, source wave 1 → target lanes 32..63) — returns 2.
+  // `WaveNativeProjection` (wave32 -> wave64 cross-widening) maps two
+  // source waves into one target wave (source wave 0 -> target lanes
+  // 0..31, source wave 1 -> target lanes 32..63) -- returns 2.
   //
   // `ModuloReplicationProjection` in the cross-widening direction is the
   // raiser's fallback for the statically-known phantom-lane regime
@@ -245,8 +245,8 @@ public:
   // wrap count.
   //
   // Pure virtual so every new projection must answer the question
-  // explicitly — a silent default would let a new cross-widening
-  // projection pick the wrong pass count in `wmma_lowering.cpp` and
+  // explicitly -- a silent default would let a new cross-widening
+  // projection pick the wrong pass count in `wmma-lowering.cpp` and
   // emit a bogus second-source-wave MFMA that read undef from
   // phantom lanes.
   virtual unsigned numSourceWavesPerTarget() const = 0;
@@ -270,7 +270,7 @@ public:
   // Typing: `strict.wwm`'s overload set is `llvm_any_ty`, so this
   // helper accepts any SSA type (scalar i32 for per-dword wrapping,
   // `<4 x float>` for an MFMA accumulator, `<2 x half>` for a
-  // bitcast-ready operand pack, etc.).  WMMA→MFMA lowering uses
+  // bitcast-ready operand pack, etc.).  WMMA->MFMA lowering uses
   // i32 for per-dword result wrapping and `<4 x float>` / `<4 x
   // i32>` for per-MFMA-output wrapping so the MFMA itself is
   // dragged into the WWM backward slice.
@@ -278,7 +278,7 @@ public:
   // Why per-MFMA-output wrapping (and not only per-result-dword):
   // SIWholeQuadMode's backward propagation from a `strict.wwm` on a
   // `ds_bpermute` result stops at the bpermute boundary because
-  // `ds_bpermute`'s read is EXEC-independent — the backend sees
+  // `ds_bpermute`'s read is EXEC-independent -- the backend sees
   // that the bpermute picks up source lanes 0..W_src-1 by address
   // and concludes that the MFMA output on lanes W_src..2*W_src-1
   // is "not consumed".  That's correct under a single-pass MFMA,
@@ -310,7 +310,7 @@ protected:
 };
 
 // ============================================================================
-// ModuloReplicationProjection — today's sole concrete projection.
+// ModuloReplicationProjection -- today's sole concrete projection.
 //
 // Modulo-replication's bet is:
 //
@@ -321,7 +321,7 @@ protected:
 //   * A wave-level mask projected back onto a per-lane bit indexes by
 //     `lane_id mod W_src` (`extractLaneBitFromWaveMask`).
 //
-// None of that is a hardware fact — it is a *choice*. See hotswap/
+// None of that is a hardware fact -- it is a *choice*. See hotswap/
 // docs/wave-size-translation.md §6 for the correctness theorem
 // (wave-size-obliviousness) and §2.2 for the alternatives.
 class ModuloReplicationProjection final : public WaveProjection {
@@ -346,12 +346,12 @@ public:
 };
 
 // ============================================================================
-// WaveNativeProjection — cross-widening (wave32 → wave64) projection
+// WaveNativeProjection -- cross-widening (wave32 -> wave64) projection
 // that preserves the full target-hardware EXEC mask.
 //
 // Whereas `ModuloReplicationProjection` keeps the EXEC alloca sized to
 // the *source* wave width and truncates a target ballot to that width
-// (losing the upper half on wave32 → wave64 cross-widening), the wave-
+// (losing the upper half on wave32 -> wave64 cross-widening), the wave-
 // native projection widens the EXEC alloca to the *target* hardware
 // wave-mask width. Each target lane is treated as an independent
 // source-thread equivalent, so a data-dependent `v_cmpx` that
@@ -367,7 +367,7 @@ public:
 // The price: source-width EXEC writes (`s_mov_b32 exec_lo, v`, `s_*_
 // saveexec_b32 sN, ...`) must be reconciled with the widened storage.
 // This projection picks the symmetry that matches the source author's
-// intent on a wave32 kernel — "the whole wave" — by replicating the
+// intent on a wave32 kernel -- "the whole wave" -- by replicating the
 // 32-bit value into both halves of the widened EXEC. Symmetrically,
 // reads that narrow EXEC to 32 bits (e.g. `s_mov_b32 sN, exec_lo`)
 // take the low half; the save/restore round trip is lossless as long
@@ -375,7 +375,7 @@ public:
 // independently of the lower half, which wave32 source ISAs cannot
 // express.
 //
-// Scope. This projection is correct only for wave32 → wave64 cross-
+// Scope. This projection is correct only for wave32 -> wave64 cross-
 // widening. Instantiating it for same-wave or narrowing directions
 // would make `broadcastNarrowExecLoWrite()` change EXEC semantics in
 // directions the source author can disambiguate, so the constructor
@@ -393,11 +393,11 @@ public:
   bool broadcastNarrowExecLoWrite() const override { return true; }
   // `init_whole_wave` in `emitInitialExec` forces HW EXEC=-1 for the
   // kernel body, so this projection does provide the full-wave-EXEC
-  // invariant that WMMA→MFMA lowering (and other
+  // invariant that WMMA->MFMA lowering (and other
   // all-lanes-must-participate collectives) require.
   bool providesFullWaveExecInvariant() const override { return true; }
-  // Wave32 → wave64 cross-widening: two source waves stack into one
-  // target wave (source wave 0 → target lanes 0..31, source wave 1 →
+  // Wave32 -> wave64 cross-widening: two source waves stack into one
+  // target wave (source wave 0 -> target lanes 0..31, source wave 1 ->
   // target lanes 32..63).  Callers emitting per-source-wave passes
   // run two iterations under this projection.
   unsigned numSourceWavesPerTarget() const override { return 2; }
@@ -414,7 +414,7 @@ public:
 };
 
 // ============================================================================
-// ThreadLoopProjection — second rung of the coverage ladder described
+// ThreadLoopProjection -- second rung of the coverage ladder described
 // in hotswap/docs/wave-size-translation.md §2.2.
 //
 // The thread-loop rung is the coverage-ladder home for source-wave-scoped
@@ -445,7 +445,7 @@ public:
 //      (follow the projection sketch in wave-size-translation.md
 //      §2.2's projections table).
 //   2. Add the additional correctness obligations the thread-loop
-//      projection introduces — barrier hoisting, LDS-aliasing — as
+//      projection introduces -- barrier hoisting, LDS-aliasing -- as
 //      extra checks in `buildObstructionReport` gated on the current
 //      projection choice.
 //   3. Extend `decideProjection` to try thread-loop after modulo-
@@ -480,11 +480,11 @@ private:
 };
 
 // ============================================================================
-// EXEC-writer detection — architecture-neutral, authoritative.
+// EXEC-writer detection -- architecture-neutral, authoritative.
 //
 // Derivation strategy (no string matching, no per-opcode allow-lists):
 //
-//   (a) Implicit defs — canonical LLVM TableGen-derived source of truth.
+//   (a) Implicit defs -- canonical LLVM TableGen-derived source of truth.
 //       `MCInstrDesc::implicit_defs()` is iterated during decoding and
 //       each result is normalised through `AMDGPU::mc2PseudoReg` (strips
 //       subtarget-variant suffixes) before classification. Results are
@@ -493,7 +493,7 @@ private:
 //       EXEC/EXEC_LO/EXEC_HI canonical-alias family. Instructions like
 //       `v_cmpx_*` and `s_*_saveexec_*` surface here.
 //
-//   (b) Explicit defs — required because LLVM models some EXEC writers
+//   (b) Explicit defs -- required because LLVM models some EXEC writers
 //       with EXEC as an *explicit* destination operand (e.g.
 //       `s_mov_b64 exec, sN`, `s_and_b32 exec_lo, exec_lo, s2`).
 //       `hasImplicitDefOfPhysReg` does NOT cover these by design. Walk
@@ -508,7 +508,7 @@ private:
 bool instructionWritesEXEC(const DecodedInst &Di, const MCState &Mc);
 
 // ============================================================================
-// Cross-wave safety warning (Phase 1.4) — legacy warn-only surface.
+// Cross-wave safety warning (Phase 1.4) -- legacy warn-only surface.
 //
 // Kept for the `lit_tests/cross_wave_warn` regression test, which
 // validates the principle that a cross-wave translation with only

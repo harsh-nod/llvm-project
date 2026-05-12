@@ -52,7 +52,7 @@ namespace {
 //   LLVM's `FixIrreducible` pass (Transforms/Utils/FixIrreducible.cpp,
 //   relied on by AMDGPU's structurizer) only handles `UncondBrInst`,
 //   `CondBrInst` and `CallBrInst` as predecessors of an irreducible
-//   cycle header — it `llvm_unreachable`s for any other terminator.
+//   cycle header -- it `llvm_unreachable`s for any other terminator.
 //   Tensilelite-shaped lifted CFGs (kernels using `s_swappc_b64` for
 //   activation-function dispatch) place the dispatch block inside an
 //   irreducible cycle, so an `indirectbr` (or `switch`) terminator
@@ -69,7 +69,7 @@ namespace {
 //   path. In practice the hi/lo split imposed by `storeSGPR64` (AMDGPU
 //   SGPR pairs are two i32 halves joined back with shl/or at the
 //   dispatch site) defeats that fold across phi joins, and the
-//   `BlockAddress` SDNode survives into AMDGPU ISel — which has no
+//   `BlockAddress` SDNode survives into AMDGPU ISel -- which has no
 //   pattern for materialising a `BlockAddress` as an i64 register
 //   value (there is no relocation for "address of arbitrary BB inside
 //   a kernel"). llc then aborts with
@@ -134,7 +134,7 @@ void emitEnumeratedDispatch(RaiseContext &Ctx, Value *TargetInt,
 
   // Builder is now positioned at the start of unreachableBB. Emit the
   // unreachable terminator. The block is a BlockAddress-free terminal
-  // sink — no other code emits into it.
+  // sink -- no other code emits into it.
   B.CreateUnreachable();
 }
 
@@ -157,8 +157,8 @@ void emitScalarF32Rounding(RaiseContext &Ctx, OpResolver &Op,
 } // namespace
 
 // SPE attribute registrations. Every CanonicalOp listed here has been audited
-// to route EXEC writes through `regs.storeExec` — directly for the
-// SAVEEXEC family, via `writeReg{32,64,ExecWidth}` → `storeExec` for
+// to route EXEC writes through `regs.storeExec` -- directly for the
+// SAVEEXEC family, via `writeReg{32,64,ExecWidth}` -> `storeExec` for
 // S_MOV_B{32,64} and S_NOT_B{32,64}. See AGENTS.md's SPE audit note
 // before touching this list.
 ArrayRef<CanonicalOpAttrSpec> getHandlerSOP1Attrs() {
@@ -199,10 +199,10 @@ HandlerResult handleSOP1(RaiseContext &Ctx, const DecodedInst &Di,
     Hr.Handled = true;
     return Hr;
   }
-  // S_*_SAVEEXEC_B32 family — save old EXEC into dst SGPR and
+  // S_*_SAVEEXEC_B32 family -- save old EXEC into dst SGPR and
   // update EXEC via the family-specific combine.  The dst SGPR is
   // source-width (32-bit on wave32 source) so the i64 oldExec is
-  // truncated when it lands in the alloca — lossy under wave-native
+  // truncated when it lands in the alloca -- lossy under wave-native
   // cross-widening where the two halves of i64 EXEC can differ.
   //
   // Shadow propagation: we have the full-width `oldExec` in hand.
@@ -216,14 +216,14 @@ HandlerResult handleSOP1(RaiseContext &Ctx, const DecodedInst &Di,
   // per-lane i1 instead of the narrow-mask fallback.
   //
   // Covers the Triton gfx1250 tl.sort at small BLOCK_N idiom
-  // `s_and_saveexec_b32 sN, vcc; s_xor_b32 sN, exec_lo, sN` —
+  // `s_and_saveexec_b32 sN, vcc; s_xor_b32 sN, exec_lo, sN` --
   // SAVEEXEC records `oldExec`'s i1 on sN, the sibling S_XOR_B32
   // handler extracts the current EXEC's i1 and XORs with the
   // shadowed sN i1, producing the wave-correct "lanes that became
   // inactive" mask for the V_CNDMASK consumer.
   //
   // Structurally safe: if the dst isn't an SGPR (e.g., dst == EXEC
-  // itself — non-saveexec form?  there isn't one for these
+  // itself -- non-saveexec form?  there isn't one for these
   // opcodes) the helper is a no-op.  The recorded i1 is a fresh
   // SSA value so `I2` (SSA-monotonic within a BB) holds.
   auto RecordOldExecShadowOnDst = [&](Value *OldExec) {
@@ -337,7 +337,7 @@ HandlerResult handleSOP1(RaiseContext &Ctx, const DecodedInst &Di,
     case SetPcSiteInfo::Kind::DispatchSet: {
       // Both shapes lower to the same enumerated-dispatch cascade:
       // read the source SGPR pair as i64 (it holds the per-predecessor
-      // marker — the resolved target's source-MC byte offset, written
+      // marker -- the resolved target's source-MC byte offset, written
       // either by the call-site chain-terminator hook in raiser.cpp for
       // IndirectB, or by the dispatch-target chain-terminator hook for
       // DispatchSet), then emit a cmp+br cascade against each
@@ -368,7 +368,7 @@ HandlerResult handleSOP1(RaiseContext &Ctx, const DecodedInst &Di,
     // pair (ssrc) as DirectA (chain resolves the absolute callee
     // offset intra-block), DispatchSet (inter-block dataflow
     // enumerates a bounded set of callee/branch targets reaching
-    // this site through distinct CFG paths — the tensilelite
+    // this site through distinct CFG paths -- the tensilelite
     // "activation function dispatcher" shape), or Unresolvable (the
     // pair's value cannot be statically enumerated).
     //
@@ -419,13 +419,13 @@ HandlerResult handleSOP1(RaiseContext &Ctx, const DecodedInst &Di,
     if (Info.SiteKind == SetPcSiteInfo::Kind::IndirectB) {
       // Defensive: the analysis should never produce IndirectB for
       // a swap_pc site (a swap_pc's source pair is a call target,
-      // not a return slot — IndirectB is the return-side use of
+      // not a return slot -- IndirectB is the return-side use of
       // such a pair). If it ever does, refuse loudly so the
       // mismatch surfaces rather than silently mis-lowering.
       Hr.Failure = RaiseFailure::unsupportedShape(
           Di, "SOP1",
           "s_swap_pc_i64 classified as IndirectB by setpc_analysis "
-          "(unexpected — IndirectB is the return-side classification "
+          "(unexpected -- IndirectB is the return-side classification "
           "for s_set_pc_i64; a swap_pc reaching this code path "
           "indicates an analysis invariant violation)");
       return Hr;
@@ -505,10 +505,10 @@ HandlerResult handleSOP1(RaiseContext &Ctx, const DecodedInst &Di,
     Hr.Handled = true;
     return Hr;
   }
-  // s_ff0_i32_b{32,64} — find first 0 bit (lowest position), -1 if
+  // s_ff0_i32_b{32,64} -- find first 0 bit (lowest position), -1 if
   // none. SOPInstructions.td:278-279 omits an LLVM ISel pattern, so
   // we lower directly: invert the source and reuse the cttz path
-  // shared with V_FFBL_B32 (handle_valu_small_ops.cpp), then patch
+  // shared with V_FFBL_B32 (handle-valu-small-ops.cpp), then patch
   // the all-ones-input case to -1 since llvm.cttz with
   // is_zero_poison=false returns the bitwidth (32 / 64) for a zero
   // input rather than the AMDGPU's -1 sentinel.
@@ -562,12 +562,12 @@ HandlerResult handleSOP1(RaiseContext &Ctx, const DecodedInst &Di,
     Hr.Handled = true;
     return Hr;
   }
-  // s_flbit_i32 / s_flbit_i32_i64 — signed find-leading-bit-not-equal-
+  // s_flbit_i32 / s_flbit_i32_i64 -- signed find-leading-bit-not-equal-
   // to-sign-bit. SOPInstructions.td:296-298. Lower via the dedicated
   // llvm.amdgcn.sffbh intrinsic, which is overloaded on the source
   // integer type and selects back to v_ffbh_i32_e32 (or its 64-bit
   // pseudo equivalent) on AMDGPU. Hardware returns -1 for uniform-sign
-  // input (0 or all-ones) — the intrinsic shares the same convention,
+  // input (0 or all-ones) -- the intrinsic shares the same convention,
   // so no explicit zero-fixup is needed.
   if (Sop == CanonicalOp::S_FLBIT_I32) {
     Function *Sffbh = Intrinsic::getOrInsertDeclaration(
@@ -685,14 +685,14 @@ HandlerResult handleSOP1(RaiseContext &Ctx, const DecodedInst &Di,
   // `tied_in=1` and `Constraints = "$sdst = $sdst_in"`), and the bit
   // index arrives in `src0` at src index 0.  SCC is not updated.
   //
-  // The MC layer collapses the tied `$sdst_in` slot — the AMDGPU
+  // The MC layer collapses the tied `$sdst_in` slot -- the AMDGPU
   // disassembler emits a 2-operand MCInst (`sdst`, `src0`) and the
   // tie is reconstituted only at MachineInstr lowering time. This
   // matches the S_CMOV_B{32,64} pattern below: the prior dst value
   // must be read explicitly via `regs.readReg{32,64}(op.dst())`, not
   // pulled from `op.src(1)`. (The `KKnownTiedIn` audit in
-  // decode.cpp keeps `sdst_in` in the *driftCheck* allow-list — i.e.
-  // we declare it semantically a real input — but no actual MCInst
+  // decode.cpp keeps `sdst_in` in the *driftCheck* allow-list -- i.e.
+  // we declare it semantically a real input -- but no actual MCInst
   // operand survives disassembly to land in srcMap, so the read has
   // to come from the destination register itself.)
   if (Sop == CanonicalOp::S_BITSET0_B32 || Sop == CanonicalOp::S_BITSET1_B32 ||
@@ -727,7 +727,7 @@ HandlerResult handleSOP1(RaiseContext &Ctx, const DecodedInst &Di,
   //
   // LLVM's SOP1_32/SOP1_64 pseudo for S_CMOV_B{32,64} declares
   //   `(outs sdst), (ins src0)`
-  // *without* a tied sdst_in input — the dst-on-SCC=0 read-modify
+  // *without* a tied sdst_in input -- the dst-on-SCC=0 read-modify
   // is implicit in the hardware encoding rather than modeled at
   // the MachineInstr level. So `op.nSrcs()` is 1 here (just src0)
   // and the prior dst value must be read explicitly via
@@ -754,7 +754,7 @@ HandlerResult handleSOP1(RaiseContext &Ctx, const DecodedInst &Di,
     Hr.Handled = true;
     return Hr;
   }
-  // S_SET_VGPR_MSB is SOPP format — handled in handleSOPP, not here.
+  // S_SET_VGPR_MSB is SOPP format -- handled in handleSOPP, not here.
   // GFX12+ `s_barrier_signal` appears in SOP1 encoding; model it as a no-op
   // (the paired SOPP `s_barrier_wait` does the actual rendezvous).
   if (Sop == CanonicalOp::S_BARRIER_SIGNAL) {

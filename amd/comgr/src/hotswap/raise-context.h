@@ -117,13 +117,13 @@ struct RaiseContext {
 
   ParsedReg parseReg(llvm::MCRegister Reg, int MciOpIdx = -1) const;
 
-  // Operand reading — mirrors the lambdas in the original raiseToIR.
+  // Operand reading -- mirrors the lambdas in the original raiseToIR.
   llvm::Value *readOp32(const DecodedInst &Di, unsigned OpIdx);
   llvm::Value *readOp64(const DecodedInst &Di, unsigned OpIdx);
   llvm::Value *readOpExecWidth(const DecodedInst &Di, unsigned OpIdx);
 
   // Emit `llvm.amdgcn.update.dpp.<i32>(old, src, ctrl, row_mask, bank_mask,
-  // bound_ctrl)` — the P5 lowering for src0-path DPP modifiers; see the
+  // bound_ctrl)` -- the P5 lowering for src0-path DPP modifiers; see the
   // DPP row of hotswap/docs/wave-size-translation.md §5.3 for the rewrite
   // contract. `src` and `old` must be 32-bit (i32 or f32/bitcastable); a
   // future 64-bit lift would extend the intrinsic overload set and the
@@ -153,7 +153,7 @@ struct RaiseContext {
   // arbitrary later BBs).
   //
   // Delegates to `projection.emitLaneIdx(B)` for the actual mbcnt
-  // sequence — `WaveProjection` remains the single source of truth
+  // sequence -- `WaveProjection` remains the single source of truth
   // for *how* lane id is computed; `RaiseContext` only handles
   // caching.
   llvm::Value *emitLaneIdx();
@@ -268,20 +268,20 @@ struct RaiseContext {
   // single entry (baseIdx only), which matters for the adjacent-
   // invalidation rule in `invalidateSgprWaveMaskI1`.
   //
-  // Motivation. The V_CMP -> SGPR store at `handle_valu_vcmp.cpp`
+  // Motivation. The V_CMP -> SGPR store at `handle-valu-vcmp.cpp`
   // truncates the full target-hardware ballot down to the source
   // SGPR's physical 32-bit width (`ballotI1ToWidth(cmp, source
   // WaveMaskTy, ...)` -> `CreateTrunc`), destroying lanes 32..63's
   // compare results on wave32 source / wave64 target cross-
   // widening. A V_CNDMASK_B32_e64 consumer in the same BB has no
-  // way to recover those bits from the narrow SGPR — but it does
+  // way to recover those bits from the narrow SGPR -- but it does
   // not need to, because the writer still holds the full per-lane
   // `i1` SSA value. This cache carries that `i1` across to the
   // consumer.
   //
   // Invariants (maintained in concert by
-  //   * handle_valu_vcmp.cpp V_CMP -> SGPR path writes `cmp` here,
-  //   * handle_valu_vop3p.cpp V_CNDMASK_B32 SGPR-source path reads,
+  //   * handle-valu-vcmp.cpp V_CMP -> SGPR path writes `cmp` here,
+  //   * handle-valu-vop3p.cpp V_CNDMASK_B32 SGPR-source path reads,
   //   * AllocaRegFile::onSgprWritten invalidates on any SGPR write
   //     (with pair-aware adjacent invalidation for the high half
   //     of a pair rooted at baseIdx-1), and
@@ -341,7 +341,7 @@ struct RaiseContext {
 
   // Record the per-lane compare i1 produced by a V_CMP_*_e64 write
   // to SGPR baseIdx in the current BB. Overwrites any prior entry
-  // (last-writer wins — a later V_CMP obviates the earlier value
+  // (last-writer wins -- a later V_CMP obviates the earlier value
   // for any consumer that reads after the write). `isPair` should
   // be true iff the V_CMP's destination ParsedReg has `width >= 2`
   // (a wave64-source SGPR pair), so subsequent writes to baseIdx+1
@@ -432,8 +432,8 @@ struct RaiseContext {
   // Pending failure raised during operand-read dispatch (e.g.
   // `readOp32` / `readOp64` encountering an unmodeled aperture
   // register such as SRC_SHARED_BASE / SRC_FLAT_SCRATCH_BASE_LO).
-  // Read paths cannot bail mid-handler — they must return some
-  // Value* — so they record the failure here and the per-instruction
+  // Read paths cannot bail mid-handler -- they must return some
+  // Value* -- so they record the failure here and the per-instruction
   // dispatch loop in `raiser.cpp` checks `pendingFailure` after each
   // handler returns and aborts the kernel raise. Set via
   // `recordReadFailure`; cleared per instruction by the dispatch
@@ -453,11 +453,11 @@ struct RaiseContext {
 // Return value from every format handler.
 //
 // Handlers communicate back in three ways:
-//   * `handled = true` → the handler fully lowered the instruction.
-//   * `handled = false`, `failure.reason = None` → this handler does
+//   * `handled = true` -> the handler fully lowered the instruction.
+//   * `handled = false`, `failure.reason = None` -> this handler does
 //     not claim the instruction; the main loop falls through to the
 //     generic `UnsupportedOpcode` diagnostic.
-//   * `handled = false`, `failure.reason != None` → the handler
+//   * `handled = false`, `failure.reason != None` -> the handler
 //     recognised the instruction but refuses to lower it (e.g. operand
 //     shape unsupported); the main loop records the structured failure
 //     and aborts without consulting other handlers.
@@ -508,9 +508,9 @@ struct OpResolver {
   // DPP src-path wrapping. DPP is a src0-only data-pathway modifier: on
   // hardware, src0 is shuffled across lanes per the DPP control bits
   // *before* any fmods (neg/abs) and before the ALU op consumes it.
-  // Callers apply ordering: DPP wrap → applyMods → ALU.
+  // Callers apply ordering: DPP wrap -> applyMods -> ALU.
   //
-  // `%old` — the intrinsic's "inactive-lane value" operand — is the
+  // `%old` -- the intrinsic's "inactive-lane value" operand -- is the
   // current VGPR value of the instruction's vdst (MCInst operand 0);
   // we read it lazily and cache within this OpResolver because
   // handlers that emit multiple side effects for a single source
@@ -521,7 +521,7 @@ struct OpResolver {
   // Width dispatch: `src(0)` / `srcF(0)` go through the 32-bit read
   // path and cache `cachedDppOldVdst32`; `src64(0)` goes through the
   // 64-bit read path and caches `cachedDppOldVdst64`. Handlers that
-  // mix widths on the same instruction (which would be unusual — a
+  // mix widths on the same instruction (which would be unusual -- a
   // VALU op reads its src0 at a single width) would hit both caches
   // but each lookup stays coherent. `emitUpdateDpp` supports both
   // widths; other widths abort loudly.

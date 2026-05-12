@@ -124,7 +124,7 @@ static const Entry kCanonTable[] = {
     // Barriers. GFX < 12 has a single SOPP `S_BARRIER` pseudo; GFX12+ splits
     // it into a SOPP wait and a SOP1 signal (both IMM and M0 forms). All
     // `_ISFIRST`/`_INIT`/`_JOIN`/`_LEAVE` variants are intentionally left
-    // unmapped — the raiser does not model them yet.
+    // unmapped -- the raiser does not model them yet.
     E(S_BARRIER, S_BARRIER),
     E(S_BARRIER_WAIT, S_BARRIER_WAIT),
     E(S_BARRIER_SIGNAL_IMM, S_BARRIER_SIGNAL),
@@ -254,7 +254,7 @@ static const Entry kCanonTable[] = {
     // (S_BITCMP0_B32_gfx{10,11,12,13}, etc.) is canonicalised onto
     // during the MC->pseudo step in `OpcodeMap::canonicalize`, so a
     // single entry per variant covers every AMDGPU generation back to
-    // gfx6.  Writes SCC only — no scalar destination register — which
+    // gfx6.  Writes SCC only -- no scalar destination register -- which
     // matches the SOPC compare shape already implemented alongside in
     // handle-sopc.cpp.
     E(S_BITCMP0_B32, S_BITCMP0_B32),
@@ -277,16 +277,16 @@ static const Entry kCanonTable[] = {
     E(S_SUB_U32, S_SUB_U32), E(S_SUB_I32, S_SUB_U32),
     E(S_SUBB_U32, S_SUBB_U32),
     // S_ADD_U64 is intentionally mapped below in the gfx12-rename block
-    // alongside S_SUB_U64 — both surface as `CanonicalOp::S_{ADD,SUB}_NC_U64`
+    // alongside S_SUB_U64 -- both surface as `CanonicalOp::S_{ADD,SUB}_NC_U64`
     // to mirror the gfx12 `s_{add,sub}_nc_u64` assembler mnemonics used
     // downstream in `handle-sop2.cpp` and the lit fixtures.  A naive
     // `E(S_ADD_U64, S_ADD_U64)` row used to live here and lost the
     // routing race silently to `canonToSem.try_emplace` (which keeps
-    // the FIRST insertion — opcode-map.cpp:1506), which meant every
+    // the FIRST insertion -- opcode-map.cpp:1506), which meant every
     // `s_add_u64` lift actually decoded as `CanonicalOp::S_ADD_U64` rather
     // than the intended `S_ADD_NC_U64`.  The handler's defensive
     // `sop == S_ADD_U64 || sop == S_ADD_NC_U64` disjunct masked the
-    // miscompile into a "same behavior either way" no-op — which is
+    // miscompile into a "same behavior either way" no-op -- which is
     // the exact pattern a diligent reviewer catches as dead code.
     // Cleaned up in the same commit that adds this comment.
     E(S_AND_B32, S_AND_B32), E(S_AND_B64, S_AND_B64),
@@ -322,14 +322,14 @@ static const Entry kCanonTable[] = {
     E(S_LSHL1_ADD_U32, S_LSHL1_ADD_U32), E(S_LSHL2_ADD_U32, S_LSHL2_ADD_U32),
     E(S_LSHL3_ADD_U32, S_LSHL3_ADD_U32), E(S_LSHL4_ADD_U32, S_LSHL4_ADD_U32),
     // gfx12 `s_add_nc_u64` (renamed from `s_add_u64` in the
-    // assembler — see SOPInstructions.td 2300-ish range, same
+    // assembler -- see SOPInstructions.td 2300-ish range, same
     // pattern as `s_sub_u64 ... "s_sub_nc_u64"` below).  LLVM's
     // pseudo is still `S_ADD_U64`; surface it as
     // `CanonicalOp::S_ADD_NC_U64` so the handler dispatch, the lit
     // fixtures (`lit_tests/s_sub_nc_u64/` and any future
     // `s_add_nc_u64` sibling), and the runtime diagnostics all
     // speak the same gfx12+ mnemonic.  This row is the ONLY
-    // `S_ADD_U64` entry in `kCanonTable` — an earlier version
+    // `S_ADD_U64` entry in `kCanonTable` -- an earlier version
     // of this file had a stray `E(S_ADD_U64, S_ADD_U64)` row in
     // the SOP2 family block above that won the
     // `canonToSem.try_emplace` race and quietly routed every
@@ -337,7 +337,7 @@ static const Entry kCanonTable[] = {
     // that block for the audit trail.
     E(S_ADD_U64, S_ADD_NC_U64),
     // gfx12 `s_sub_nc_u64` (renamed from `s_sub_u64` in the
-    // assembler — see SOPInstructions.td 2311
+    // assembler -- see SOPInstructions.td 2311
     // `S_SUB_U64 ... "s_sub_nc_u64"`). LLVM's pseudo is still
     // `S_SUB_U64`; surface it as `CanonicalOp::S_SUB_NC_U64` to mirror
     // the S_ADD_NC_U64 convention.
@@ -429,7 +429,7 @@ static const Entry kCanonTable[] = {
     // IEEE-754 2019 ternary NaN-propagating max/min (gfx11+/gfx12 only,
     // gated by `HasMinimum3Maximum3F32` in AMDGPU.td:194).  Lowered as a
     // chain of two 2-source `llvm.maximum`/`llvm.minimum` calls in
-    // handle_valu.cpp; llc on gfx950 selects v_max3/v_min3 when NaN
+    // handle-valu.cpp; llc on gfx950 selects v_max3/v_min3 when NaN
     // propagation isn't material, or two 2-source ops otherwise.
     E(V_MAXIMUM3_F32_e64, V_MAXIMUM3_F32),
     E(V_MINIMUM3_F32_e64, V_MINIMUM3_F32),
@@ -483,7 +483,7 @@ static const Entry kCanonTable[] = {
     E(V_AND_OR_B32_e64, V_AND_OR_B32),
     E(V_OR3_B32_e64, V_OR3_B32),
     // gfx9+ ternary xor+add (VOP3Instructions.td:684, iselect
-    // pattern at :831 — `add(xor(a, b), c)`).
+    // pattern at :831 -- `add(xor(a, b), c)`).
     E(V_XAD_U32_e64, V_XAD_U32),
     // gfx6+ funnel-shift right (VOP3Instructions.td:218,
     // gfx11/gfx12 opcode 0x216 at :1787). The `_t16` and
@@ -510,7 +510,7 @@ static const Entry kCanonTable[] = {
     E(V_BFE_I32_e64, V_BFE_I32),
     // gfx6+ VOP3 bit-field insert. Ternary, e64-only (no VOP1/VOP2
     // form). Hardware semantic: `dst = (src0 & src1) | (~src0 & src2)`
-    // — src0 is the mask, src1 provides bits where mask=1, src2
+    // -- src0 is the mask, src1 provides bits where mask=1, src2
     // provides bits where mask=0. See VOP3Instructions.td
     // `AMDGPUbfiPattern`. Same canonical opcode across gfx11/gfx12;
     // libdevice's asin lowering emits this as its sign-stitching
@@ -602,7 +602,7 @@ static const Entry kCanonTable[] = {
     // gfx1250-only packed-8 scaled FP8 conversion (VOP3, opcode 0x2c3,
     // VOP3Instructions.td:2384).  Same-target maps to native intrinsic
     // `int_amdgcn_cvt_scalef32_pk8_fp8_f32`; cross-target paths with FP8
-    // conversion support use the software emulation in handle_valu.cpp.
+    // conversion support use the software emulation in handle-valu.cpp.
     E(V_CVT_SCALEF32_PK8_FP8_F32_e64, V_CVT_SCALEF32_PK8_FP8_F32),
     E(V_BFM_B32_e64, V_BFM_B32),
 
@@ -658,7 +658,7 @@ static const Entry kCanonTable[] = {
     // packed-int surface the kerneldex corpus exercises today; siblings
     // V_PK_LSHRREV_B16 / V_PK_ASHRREV_I16 / V_PK_SUB_U16 / V_PK_MUL_LO_U16
     // / V_PK_MAX_{I,U}16 / V_PK_MIN_{I,U}16 share the same handler shape
-    // and are intentionally NOT pre-enumerated — the no-fallback policy
+    // and are intentionally NOT pre-enumerated -- the no-fallback policy
     // says we wait for a corpus producer rather than ship dead lift code.
     E(V_PK_ADD_U16, V_PK_ADD_U16),
     E(V_PK_LSHLREV_B16, V_PK_LSHLREV_B16),
@@ -667,12 +667,12 @@ static const Entry kCanonTable[] = {
     // 64-bit vector
     // ---------------------------------------------------------------------
     E(V_LSHLREV_B64_e64, V_LSHLREV_B64),
-    // V_LSHRREV_B64 / V_ASHRREV_I64 — gfx8+ 64-bit logical / arithmetic
+    // V_LSHRREV_B64 / V_ASHRREV_I64 -- gfx8+ 64-bit logical / arithmetic
     // right shift with reversed operands (`dst = src1 >> shamt`). Only
     // the plain `_e64` pseudo exists; per-ISA realtriples (gfx10 / gfx11
     // / gfx1250) all collapse back to it through the disassembler's
     // pseudo-alias step (TableGen treats the gfx1250 form as a `_e64`
-    // realtriple, not a `_t16_e64` half-precision variant — see
+    // realtriple, not a `_t16_e64` half-precision variant -- see
     // VOP3Instructions.td:2341 vs the b16 family at 2336-2340).
     E(V_LSHRREV_B64_e64, V_LSHRREV_B64),
     E(V_ASHRREV_I64_e64, V_ASHRREV_I64),
@@ -702,9 +702,9 @@ static const Entry kCanonTable[] = {
     // (`VOP3Only_Realtriple_gfx1250` at VOP3Instructions.td:2129 / 2130,
     // encodings 0x2fa / 0x2fb).  Unlike the older `V_MAD_U64_U32` /
     // `V_MAD_I64_I32` family, these pseudos don't have an `_e64` suffix
-    // variant with a carry/overflow sink, so one MCOpcode ↔ one CanonicalOp;
+    // variant with a carry/overflow sink, so one MCOpcode <-> one CanonicalOp;
     // see the `V_MAD_NC_*` block in `canonical-op.h` for the semantics
-    // description and `handle_valu.cpp`'s handler arm for how the
+    // description and `handle-valu.cpp`'s handler arm for how the
     // canonical `add(mul(sext/zext s0, sext/zext s1), s2_i64)` lowering
     // re-enters the backend's `SelectMad64_32` pattern matcher on both
     // gfx1250 and gfx942 targets.
@@ -831,7 +831,7 @@ static const Entry kCanonTable[] = {
     E(S_ATOMIC_SWAP_IMM, S_ATOMIC_SWAP),
     E(S_ATOMIC_SWAP_SGPR, S_ATOMIC_SWAP),
     E(S_ATOMIC_SWAP_SGPR_IMM, S_ATOMIC_SWAP),
-    // S_ATOMIC_DEC (scalar wrap-decrement) — the three addressing forms
+    // S_ATOMIC_DEC (scalar wrap-decrement) -- the three addressing forms
     // (IMM / SGPR / SGPR_IMM) share a CanonicalOp.  The `_RTN` variants the
     // disassembler emits for the GLC=1 returned-old-value form collapse
     // onto these non-RTN pseudos via the `_RTN` alias rule below; the
@@ -850,7 +850,7 @@ static const Entry kCanonTable[] = {
     E(DS_READ_B64_TR_B8, DS_READ_B64_TR_B8),
     // gfx1250 64-bit transposed LDS load (i8 element, 8 elements per
     // lane post-transpose). Distinct LLVM MC pseudo from the gfx950
-    // `DS_READ_B64_TR_B8` sibling — same semantics, different isel
+    // `DS_READ_B64_TR_B8` sibling -- same semantics, different isel
     // gate (isGFX1250Plus vs HasGFX950Insts). The handler folds both
     // paths into a shared hand-rolled emulation; canonicalising the
     // CanonicalOp on the gfx1250 spelling matches the disassembly the
@@ -862,13 +862,13 @@ static const Entry kCanonTable[] = {
     // (DSInstructions.td:1578); we canonicalise on the gfx11+
     // spelling, mirroring the s_set_pc_i64 / DS_LOAD_TR8_B64
     // precedent. The handler dispatches via the existing generic
-    // DS read range — see dsClassify in handle-ds.cpp for the
+    // DS read range -- see dsClassify in handle-ds.cpp for the
     // {dwords=3, loadBits=96} entry.
     E(DS_READ_B96, DS_READ_B96),
     E(DS_READ_B128, DS_READ_B128),
     E(DS_READ2_B32, DS_READ2_B32), E(DS_READ2_B64, DS_READ2_B64),
     // gfx11+ stride-64 two-address LDS loads (DSInstructions.td:1529,
-    // 1542 — `ds_load_2addr_stride64_b{32,64}`). Same two-offset MC
+    // 1542 -- `ds_load_2addr_stride64_b{32,64}`). Same two-offset MC
     // shape as the non-ST64 siblings; the canonicalization chain
     // collapses the _gfx9/_gfx11/_gfx12 reals onto the pseudo
     // forms here, mirroring the DS_READ2_B{32,64} entries above.
@@ -883,21 +883,21 @@ static const Entry kCanonTable[] = {
     E(DS_WRITE_B96, DS_WRITE_B96),
     E(DS_WRITE_B128, DS_WRITE_B128),
     E(DS_WRITE2_B32, DS_WRITE2_B32), E(DS_WRITE2_B64, DS_WRITE2_B64),
-    // gfx11+ stride-64 two-address LDS stores — mirror of the
+    // gfx11+ stride-64 two-address LDS stores -- mirror of the
     // DS_READ2ST64 read-side entries above.
     E(DS_WRITE2ST64_B32, DS_WRITE2ST64_B32),
     E(DS_WRITE2ST64_B64, DS_WRITE2ST64_B64),
     E(DS_WRITE_B16, DS_WRITE_B16), E(DS_WRITE_B8, DS_WRITE_B8),
     // gfx8+ HasD16LoadStore D16_HI store family (DSInstructions.td
     // §604-606). Stores bits [31:16] (B16_HI) or bits [23:16] (B8_HI)
-    // of the source VGPR to LDS — same VGPR/i32 source operand
+    // of the source VGPR to LDS -- same VGPR/i32 source operand
     // shape as their non-_HI siblings, so the canonical-table macro
     // routes both encoding forks (gfx10 m0-based vs gfx11+ no-m0)
     // through the same CanonicalOp.
     E(DS_WRITE_B16_D16_HI, DS_WRITE_B16_D16_HI),
     E(DS_WRITE_B8_D16_HI, DS_WRITE_B8_D16_HI),
     E(DS_BPERMUTE_B32, DS_BPERMUTE_B32),
-    // ds_swizzle_b32 — wave-width-specific cross-lane shuffle. The
+    // ds_swizzle_b32 -- wave-width-specific cross-lane shuffle. The
     // handler refuses with `unsupportedShape` until the P6 rewrite
     // lands (see the ds_swizzle_b32 row of hotswap/docs/wave-size-
     // translation.md §5.3); the wave-size classifier (Phase 1.4.5)
@@ -908,7 +908,7 @@ static const Entry kCanonTable[] = {
     // ---------------------------------------------------------------------
     // MUBUF direct-to-LDS loads (distinct semantics from VGPR-dest loads)
     // ---------------------------------------------------------------------
-    // LLVM only ships DWORD and DWORDX4 LDS pseudos — the DWORDX2_LDS CanonicalOp
+    // LLVM only ships DWORD and DWORDX4 LDS pseudos -- the DWORDX2_LDS CanonicalOp
     // stays unmapped until an LLVM pseudo exists for it.
     MUBUF4(BUFFER_LOAD_DWORD_LDS, BUFFER_LOAD_DWORD_LDS),
     MUBUF4(BUFFER_LOAD_DWORDX4_LDS, BUFFER_LOAD_DWORDX4_LDS),
@@ -999,7 +999,7 @@ static const Entry kCanonTable[] = {
     // refuse with `unsupportedOpcode` despite the underlying CanonicalOp
     // being present.
     //
-    // PK_ADD_BF16 / PK_ADD_F16 are intentionally omitted — they have
+    // PK_ADD_BF16 / PK_ADD_F16 are intentionally omitted -- they have
     // no VBUFFER Real form in BUFInstructions.td (the gfx12 buffer
     // packed-add fork uses a different mnemonic family); a stray
     // VBUF4 entry would expand to AMDGPU enum values that don't
@@ -1116,11 +1116,11 @@ static const Entry kCanonTable[] = {
     // for A and B). Lifts to the gfx1250-only intrinsic
     // amdgcn_wmma_f32_16x16x4_f32 in the same-target path; cross-
     // target (gfx942) refuses loudly because no K=4 f32 -> MFMA
-    // decomposition exists in `wmma_lowering.cpp` yet.
+    // decomposition exists in `wmma-lowering.cpp` yet.
     E(V_WMMA_F32_16X16X4_F32_w32_twoaddr, V_WMMA_F32_16x16x4_F32),
     E(V_WMMA_F32_16X16X4_F32_w32_threeaddr, V_WMMA_F32_16x16x4_F32),
     // 16x16x32 WMMA, BF16 inputs, F32 accumulator (gfx1250 RDNA4 VOP3P
-    // opcode 0x062). Same fragment shape as the F16 variant — the only
+    // opcode 0x062). Same fragment shape as the F16 variant -- the only
     // delta is the input element type, which routes to the bf16 MFMA
     // intrinsic on gfx942 (mfma_f32_16x16x16bf16_1k) and to
     // amdgcn_wmma_f32_16x16x32_bf16 when the target supports WMMA12.
@@ -1130,7 +1130,7 @@ static const Entry kCanonTable[] = {
     // 0x06a..0x06d). All four AB combinations share the per-lane
     // fragment shape (A,B: <8 x i32>, C/D: <8 x f32>) and route through
     // the gfx942 MFMA lowering with a per-variant intrinsic dispatch
-    // (see `runGroupPass` in wmma_lowering.cpp). Both `_twoaddr` and
+    // (see `runGroupPass` in wmma-lowering.cpp). Both `_twoaddr` and
     // `_threeaddr` MC pseudo variants represent the same semantic op,
     // mirroring the F16/BF16 mapping above.
     E(V_WMMA_F32_16X16X64_FP8_FP8_w32_twoaddr,   V_WMMA_F32_16x16x64_FP8_FP8),
@@ -1153,7 +1153,7 @@ static const Entry kCanonTable[] = {
     E(V_WMMA_I32_16X16X64_IU8_w32_twoaddr,   V_WMMA_I32_16x16x64_IU8),
     E(V_WMMA_I32_16X16X64_IU8_w32_threeaddr, V_WMMA_I32_16x16x64_IU8),
     // ---------------------------------------------------------------------
-    // Scaled WMMA F8F6F4 (gfx1250 RDNA4 — VOP3PX2 paired form, real opcode
+    // Scaled WMMA F8F6F4 (gfx1250 RDNA4 -- VOP3PX2 paired form, real opcode
     // 0x033 + 0x35 / 0x3a, FLATInstructions / VOP3PInstructions.td:1987).
     // The 9 mantissa-pair pseudos (`f4_f4`, `f4_f6`, …, `f8_f8`) all share
     // the same CanonicalOp because the per-format element distinction (BF8 vs
@@ -1161,15 +1161,15 @@ static const Entry kCanonTable[] = {
     // `matrix_b_fmt` named-immediate operands rather than the opcode
     // suffix. Each mantissa-pair has both a `_twoaddr` (src2 tied to
     // vdst) and `_threeaddr` (independent vdst) MC pseudo because the
-    // `WMMAInstGFX12` multiclass emits both — the canonicalization
+    // `WMMAInstGFX12` multiclass emits both -- the canonicalization
     // chain treats them as the same semantic op (matching the
     // F8F6F4-MFMA collapse rule above and the `_twoaddr / _threeaddr`
     // collapse rule used for the K=32 / K=64 WMMA family). The
     // companion `int_amdgcn_wmma_scale_f32_16x16x128_f8f6f4` intrinsic
     // is gfx1250-only (`isGFX125xOnly`); cross-target gfx942 lift is a
-    // loud refusal in `handle_valu_vop3p.cpp` because the K=128 +
+    // loud refusal in `handle-valu-vop3p.cpp` because the K=128 +
     // matrix-fmt + scale-exponent decomposition into MFMA is not
-    // modelled in `wmma_lowering.cpp`. The non-paired
+    // modelled in `wmma-lowering.cpp`. The non-paired
     // `V_WMMA_F32_16X16X128_F8F6F4` family (no SCALE prefix) is not
     // currently observed in the kerneldex corpus; it can be added
     // alongside this entry when a kernel surfaces it.
@@ -1193,7 +1193,7 @@ static const Entry kCanonTable[] = {
     E(V_WMMA_SCALE_F32_16X16X128_F8F6F4_f8_f8_w32_twoaddr,   V_WMMA_SCALE_F32_16x16x128_F8F6F4),
     E(V_WMMA_SCALE_F32_16X16X128_F8F6F4_f8_f8_w32_threeaddr, V_WMMA_SCALE_F32_16x16x128_F8F6F4),
     // ---------------------------------------------------------------------
-    // VIMAGE TENSOR (gfx1250 RDNA4 — VIMAGE 0xc4 / 0xc5).
+    // VIMAGE TENSOR (gfx1250 RDNA4 -- VIMAGE 0xc4 / 0xc5).
     // The disassembler's MC opcodes are the `_gfx1250` reals
     // (`TENSOR_LOAD_TO_LDS_d{2,4}_gfx1250`,
     // `TENSOR_STORE_FROM_LDS_d{2,4}_gfx1250`,
@@ -1212,7 +1212,7 @@ static const Entry kCanonTable[] = {
     E(TENSOR_STORE_FROM_LDS_d2, TENSOR_STORE_FROM_LDS),
     E(TENSOR_STORE_FROM_LDS_d4, TENSOR_STORE_FROM_LDS),
     // ---------------------------------------------------------------------
-    // FLAT async global → LDS (gfx1250 — VFLAT 0x60-0x62 reals).
+    // FLAT async global -> LDS (gfx1250 -- VFLAT 0x60-0x62 reals).
     // The disassembler's MC opcodes are the `_gfx1250` (or
     // `_SADDR_gfx1250`) reals declared by
     // `VFLAT_Real_AllAddr_gfx1250` (FLATInstructions.td:2003-2018)
@@ -1238,7 +1238,7 @@ static const Entry kCanonTable[] = {
     E(GLOBAL_LOAD_ASYNC_TO_LDS_B128_SADDR,GLOBAL_LOAD_ASYNC_TO_LDS_B128),
 
     // ---------------------------------------------------------------------
-    // FLAT VMEM prefetch (gfx1250 RDNA4 — VFLAT 0x05D, hint-class).
+    // FLAT VMEM prefetch (gfx1250 RDNA4 -- VFLAT 0x05D, hint-class).
     //
     // The disassembler returns the gfx1250 reals
     // `GLOBAL_PREFETCH_B8_gfx1250` (plain VGPR_64 vaddr) and
@@ -1252,7 +1252,7 @@ static const Entry kCanonTable[] = {
     // handler discriminates on `op.nSrcs()` (3 vs 4) the same way the
     // GLOBAL_LOAD_ASYNC_TO_LDS_B* family above does.
     //
-    // The matching `flat_prefetch_b8` (FLAT, not GLOBAL) is omitted —
+    // The matching `flat_prefetch_b8` (FLAT, not GLOBAL) is omitted --
     // no kernel in the current corpus surfaces it. If one does, add a
     // `FLAT_PREFETCH_B8{,_SADDR}` pair here (mapping to a separate
     // CanonicalOp, since the address space differs and the lift would use
@@ -1585,9 +1585,9 @@ unsigned canonicalize(unsigned Mc,
 // `std::nullopt` for anything else; caller is responsible for only passing
 // compare-family pseudos.
 //
-// Rationale: LLVM exposes `AMDGPU::getVCMPXOpFromVCMP` as a V_CMP → V_CMPX
+// Rationale: LLVM exposes `AMDGPU::getVCMPXOpFromVCMP` as a V_CMP -> V_CMPX
 // mapping, but no public helper that hands back a CmpInst::Predicate or
-// element width. Rather than hand-list 100 opcode→metadata pairs we parse
+// element width. Rather than hand-list 100 opcode->metadata pairs we parse
 // the pseudo name once at init time; the same token grammar is already
 // hard-coded in LLVM's TableGen for these instructions.
 //
@@ -1596,7 +1596,7 @@ unsigned canonicalize(unsigned Mc,
 // ±subnormal, ±0), and the result lane bit is set iff src0's IEEE class
 // matches any enabled bit in the mask. We collapse it onto the same
 // `V_CMP` / `V_CMPX` CanonicalOps and signal the special-case lift via
-// `VCmpMeta::isClass`; the dispatch in handle_valu_vcmp.cpp branches on
+// `VCmpMeta::isClass`; the dispatch in handle-valu-vcmp.cpp branches on
 // that flag and emits `llvm.amdgcn.class.f<bits>` instead of an FCmp.
 // This keeps the parser surface narrow (one extra grammar branch, no new
 // CanonicalOps) and matches the wave-mask write-back path used by the other
@@ -1698,21 +1698,21 @@ void OpcodeMap::build(const MCInstrInfo &MCII) {
   // mapped twice (once as SOP2-block `E(S_ADD_U64, S_ADD_U64)` and
   // once as gfx12-rename `E(S_ADD_U64, S_ADD_NC_U64)`) with the
   // second row silently losing the routing race and leaving every
-  // `s_add_u64` lift routed through the wrong CanonicalOp — see commit
+  // `s_add_u64` lift routed through the wrong CanonicalOp -- see commit
   // eaee0a0e88 for the repair.  The loop below now aborts loudly on
   // duplicate keys so a future add that re-introduces the collision
   // is caught at transpiler init time instead of quietly miscompiling
   // everything under the duplicated opcode.
   //
   // `report_fatal_error` is used (rather than `assert`) so the check
-  // is active in release builds too — the cost is a single
+  // is active in release builds too -- the cost is a single
   // `try_emplace` per table row at process start, which is
   // negligible for a ~800-entry table.
   //
   // "Same CanonicalOp twice" is also rejected.  In principle a redundant
   // row that maps the same MC opcode to the same CanonicalOp is just
   // noise the first-wins rule would swallow harmlessly, but we
-  // refuse it anyway so the `kCanonTable` stays honest — a
+  // refuse it anyway so the `kCanonTable` stays honest -- a
   // redundant row is always an editing mistake, never an
   // intentional design, and the abort makes the fix mechanical
   // (delete one of the two rows).
@@ -1729,7 +1729,7 @@ void OpcodeMap::build(const MCInstrInfo &MCII) {
          << "first = CanonicalOp::" << canonicalOpName(existing->second)
          << ", second = CanonicalOp::" << canonicalOpName(E.Sem);
       if (existing->second == E.Sem) {
-        Os << ".  (Both targets are the same — the row is redundant; "
+        Os << ".  (Both targets are the same -- the row is redundant; "
               "remove one.)";
       } else {
         Os << ".  `canonToSem.try_emplace` keeps the first insertion, "

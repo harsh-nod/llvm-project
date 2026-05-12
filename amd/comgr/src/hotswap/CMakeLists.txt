@@ -69,6 +69,11 @@ add_library(hotswap-transpiler OBJECT
   handle-mubuf.cpp
   mubuf-addr.cpp
   handle-ds.cpp
+  handle-valu.cpp
+  handle-valu-output-mods.cpp
+  handle-valu-small-ops.cpp
+  handle-valu-cross-lane.cpp
+  handle-valu-vcmp.cpp
 )
 
 if(NOT TARGET hotswap::transpiler)

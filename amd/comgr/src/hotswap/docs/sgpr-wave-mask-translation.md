@@ -31,7 +31,7 @@ that were never stored.
 
 ## 2. Where the information is lost
 
-In `handle_valu_vcmp.cpp`'s V_CMP → SGPR branch:
+In `handle-valu-vcmp.cpp`'s V_CMP → SGPR branch:
 
 ```cpp
 Type *sourceWidth = ctx.projection.sourceWaveMaskTy();      // i32 (wave32)
@@ -91,7 +91,7 @@ ballot round-trip is needed.
 DenseMap<int, Value*> lastSgprWaveMaskI1;
 ```
 
-**Writer side (handle_valu_vcmp.cpp).** After the existing narrow
+**Writer side (handle-valu-vcmp.cpp).** After the existing narrow
 ballot / `writeRegExecWidth` sequence for a V_CMP writing an SGPR
 destination, *also* record the per-lane `i1`:
 
@@ -104,7 +104,7 @@ The narrow store is preserved unchanged — scalar consumers of `sN`
 (e.g. `s_mov_b32 sM, sN`) still see the source-semantic 32-bit value.
 The shadow is strictly additive.
 
-**Consumer side (handle_valu_vop3p.cpp, V_CNDMASK_B32 SGPR arm).**
+**Consumer side (handle-valu-vop3p.cpp, V_CNDMASK_B32 SGPR arm).**
 Prefer the cached `i1`; fall back to the existing per-lane extract
 otherwise:
 

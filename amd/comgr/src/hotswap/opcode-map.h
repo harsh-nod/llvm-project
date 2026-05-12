@@ -23,7 +23,7 @@ namespace COMGR::hotswap {
 // The raiser collapses every V_CMP_* and V_CMPX_* MC opcode onto two CanonicalOps
 // (`V_CMP`, `V_CMPX`) to avoid enumerating ~100 near-identical cases in
 // handlers. The actual predicate / element type / width carried in the
-// pseudo name (`v_cmp_EQ_U32_e64` → EQ, unsigned 32-bit) is lifted here at
+// pseudo name (`v_cmp_EQ_U32_e64` -> EQ, unsigned 32-bit) is lifted here at
 // map-build time and looked up by MC opcode at dispatch time.
 struct VCmpMeta {
   // LLVM predicate to feed to `IRBuilder::CreateICmp` / `CreateFCmp`.
@@ -32,16 +32,16 @@ struct VCmpMeta {
   llvm::CmpInst::Predicate Pred;
   // Element width in bits: 16, 32, or 64.
   uint8_t Bits;
-  // False → integer compare (ICmp; `pred` is `ICMP_*`).
-  // True  → float compare   (FCmp; `pred` is `FCMP_*`).
+  // False -> integer compare (ICmp; `pred` is `ICMP_*`).
+  // True  -> float compare   (FCmp; `pred` is `FCMP_*`).
   bool IsFloat;
   // True for the V_CMP_CLASS_F* / V_CMPX_CLASS_F* family. These are
-  // NOT predicate compares — src0 is a float operand and src1 is an
+  // NOT predicate compares -- src0 is a float operand and src1 is an
   // i32 mask of FP classes; the result lane bit is set iff src0
   // matches any class enabled in the mask. Lifts to
   // `llvm.amdgcn.class.f<bits>(src0, src1)` rather than CreateFCmp;
   // `pred` is unused on class entries. See V_CMP_CLASS in the
-  // gfx9+ AMDGPU ISA manual and the dispatch in handle_valu_vcmp.cpp.
+  // gfx9+ AMDGPU ISA manual and the dispatch in handle-valu-vcmp.cpp.
   bool IsClass = false;
 };
 

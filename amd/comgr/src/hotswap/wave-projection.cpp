@@ -211,7 +211,7 @@ Value *ModuloReplicationProjection::extractLaneBitFromWaveMask(
   // is called from every consumer that reads a wave mask as a per-lane
   // predicate — the VCC consumer path via `readVCCAsWaveMask` AND the
   // SGPR-source `V_CNDMASK_B32_e64` consumer path in
-  // `handle_valu_vop3p.cpp`. Keeping the old `vcc_` prefix would make
+  // `handle-valu-vop3p.cpp`. Keeping the old `vcc_` prefix would make
   // raised-IR dumps for e.g. the corpus_asin_fp32 kernel print
   // `%vcc_lane_idx` for reads of `s6`, which misleads.
   Value *LaneIdxExt = B.CreateZExtOrTrunc(LaneIdx, TargetTy, "mask_lane_idx");
@@ -273,7 +273,7 @@ Value *WaveNativeProjection::emitInitialExec(IRBuilder<> &B) const {
   // `EXEC = -1` afterwards, so no inactive source lane ever
   // commits a side effect. Between `emitUnderExec` diamonds the
   // hardware EXEC is -1, which is exactly what the WMMA → MFMA
-  // cross-lane pipeline in `wmma_lowering.cpp` needs to produce
+  // cross-lane pipeline in `wmma-lowering.cpp` needs to produce
   // correct per-lane output on all 64 Wave64 lanes.
   //
   // This replaces the prior per-MFMA-output `@llvm.amdgcn.strict.wwm`
@@ -335,7 +335,7 @@ Value *WaveNativeProjection::ballotI1ToWidth(IRBuilder<> &B, Value *Pred,
     // truncation the wave-native projection accepts: source-ISA
     // instructions that name a single 32-bit SGPR destination (e.g.
     // `v_cmp_lt_u32_e64 s4, ...` on wave32) cannot hold a 64-bit
-    // mask. The `handle_valu_vcmp.cpp` V_CMPX branch asks for
+    // mask. The `handle-valu-vcmp.cpp` V_CMPX branch asks for
     // `resultTy = execStorageTy() = WaveMaskTy` and stays at full
     // width; only the V_CMP→SGPR branch asks for the narrower source
     // width and takes this trunc. Kernels that consume the truncated

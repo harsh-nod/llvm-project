@@ -39,10 +39,10 @@ class WaveProjection;
 // Storage is sized at `init()` time:
 //
 //   * SGPR bank: `MRI.getRegClass(AMDGPU::SGPR_32RegClassID).getNumRegs()`
-//     — the authoritative count from TableGen for the live subtarget (106
+//     -- the authoritative count from TableGen for the live subtarget (106
 //     on every AMDGPU subtarget today).
 //   * TTMP bank: `MRI.getRegClass(AMDGPU::TTMP_32RegClassID).getNumRegs()`
-//     — 16 on every AMDGPU subtarget.
+//     -- 16 on every AMDGPU subtarget.
 //   * VGPR / AGPR bank: `KVGPRCap` (below). NOT sourced from the register
 //     class because gfx1250 `S_SET_VGPR_MSB` extends the runtime-
 //     addressable VGPR index range beyond the TableGen class size (256):
@@ -58,7 +58,7 @@ class WaveProjection;
 //     maximum reachable index is `255 (8-bit base) + 3*256 = 1023`.
 //     A smaller cap (the previous 512) crashed legitimate gfx1250
 //     tensilelite kernels that issue `s_set_vgpr_msb 0x80` followed
-//     by `v_mov_b32 v72 /*v584*/` (vdst MSB=2 → effective index
+//     by `v_mov_b32 v72 /*v584*/` (vdst MSB=2 -> effective index
 //     `72 + 512 = 584`); see `failOOB` in reg-file.cpp.
 struct AllocaRegFile {
   // See class-level comment for rationale.
@@ -74,15 +74,15 @@ struct AllocaRegFile {
   llvm::AllocaInst *M0 = nullptr;
   llvm::AllocaInst *FlatScr[2] = {};
 
-  // Width of the EXEC alloca — tracks the *source* ISA wave width
+  // Width of the EXEC alloca -- tracks the *source* ISA wave width
   // (i32 on wave32 source, i64 on wave64 source). Distinct from the
   // target-hardware wave mask width owned by `WaveProjection`.
   llvm::Type *ExecTy = nullptr;
 
   // Non-owning pointer to the cross-wave projection policy. Used by
-  // VCC read/write paths inside the reg file (ballot for per-lane-i1 →
-  // wave-mask, and the inverse for scalar → per-lane stores). Left null
-  // outside the raiser — the reg file is used in contexts where no
+  // VCC read/write paths inside the reg file (ballot for per-lane-i1 ->
+  // wave-mask, and the inverse for scalar -> per-lane stores). Left null
+  // outside the raiser -- the reg file is used in contexts where no
   // projection exists (e.g. register-file-only unit tests or EXEC
   // initialisation at function entry) and any code path that would
   // need the projection (VCC wave-mask round-trip) is then unreachable.
@@ -94,17 +94,17 @@ struct AllocaRegFile {
   //
   // `unique_function` owns the callable (so the lambda's lifetime can
   // be decoupled from the stack frame that installs it) while still
-  // being move-only — a correctness nudge toward "installed exactly
+  // being move-only -- a correctness nudge toward "installed exactly
   // once, not copied around."
   llvm::unique_function<void()> OnExecWritten;
 
   // Invalidation hook fired on every per-SGPR store, at the low-level
   // `storeSGPR32` / `storeSGPR64` boundary. The owning RaiseContext
   // installs this so its `lastSgprWaveMaskI1` shadow map (see raise_
-  // context.h) stays in sync with every path that mutates an SGPR —
+  // context.h) stays in sync with every path that mutates an SGPR --
   // including paths that bypass `writeReg32 / writeReg64` to call
   // `storeSGPR32` directly (several handlers, e.g. handle-smem.cpp's
-  // multi-dword SMEM load splitting, handle_valu.cpp's SCC-flag SGPR
+  // multi-dword SMEM load splitting, handle-valu.cpp's SCC-flag SGPR
   // writes).
   //
   // `storeSGPR64` fires the hook twice, once per half (idx, idx+1), so

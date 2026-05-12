@@ -1,0 +1,51 @@
+//===- handle-valu-internal.h - Hotswap transpiler ------------------------===//
+//
+// Part of Comgr, under the Apache License v2.0 with LLVM Exceptions. See
+// amd/comgr/LICENSE.TXT in this repository for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef HOTSWAP_TRANSPILER_HANDLE_VALU_INTERNAL_H
+#define HOTSWAP_TRANSPILER_HANDLE_VALU_INTERNAL_H
+
+#include "raise-context.h"
+
+// Sub-handlers that together make up `handleVALU`. Each returns
+// `{handled=true}` when it recognised and lowered the CanonicalOp, or an
+// unhandled HandlerResult when the CanonicalOp is out of its scope (so the
+// top-level router can try the next sub-handler).
+//
+// Sub-handlers are private to the handle_valu.* translation units;
+// they are not exposed to the format dispatcher in raiser.cpp.
+
+namespace COMGR::hotswap {
+
+// Cross-lane primitives: V_READFIRSTLANE_B32, V_READLANE_B32,
+// V_WRITELANE_B32, V_MBCNT_{LO,HI}_U32_B32, V_PERMLANE{16,X16,64}_B32,
+// V_PERMLANE{16,32}_SWAP_B32. Isolated because the cross-wave
+// strategy (hotswap/docs/wave-size-translation.md §§5.3 and 7) keeps
+// iterating on exactly this surface.
+HandlerResult handleValuCrossLane(RaiseContext &Ctx, const DecodedInst &Di,
+                                    OpResolver &Op);
+
+// "Small ops": type conversions, F16 arith, 16-bit shifts / min /
+// max, byte pack, V_BFREV_B32, V_NOT_B32, F32 single-src
+// transcendentals. See `handle-valu-small-ops.cpp` for the exact list.
+HandlerResult handleValuSmallOps(RaiseContext &Ctx, const DecodedInst &Di,
+                                   OpResolver &Op);
+
+// Vector compares (V_CMP / V_CMPX collapsed onto two SemOps with
+// VCmpMeta side-table lookup) including cross-wave projection of the
+// ballot result back to source-EXEC width.
+HandlerResult handleValuVcmp(RaiseContext &Ctx, const DecodedInst &Di,
+                               OpResolver &Op);
+
+// VOP3P packed ops (V_PK_*_F32, V_PK_MOV_B32), WMMA (V_WMMA_F32_*),
+// v_fma_mix_f32, and v_cndmask_b32.
+HandlerResult handleValuVoP3P(RaiseContext &Ctx, const DecodedInst &Di,
+                                OpResolver &Op);
+
+} // namespace COMGR::hotswap
+
+#endif
