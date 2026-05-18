@@ -1147,41 +1147,56 @@ HandlerResult handleValuVoP3P(RaiseContext &Ctx, const DecodedInst &Di,
 
   // ---- v_fma_mixlo_bf16: BF16-result mixed-precision FMA (VOP3P) ----
   //
-  // LLVM's RDNA4 TableGen definition declares V_FMA_MIXLO_BF16 with
-  // VOP_BF16_BF16_BF16_BF16 and FPDPRounding=1. The generated selection
-  // patterns model it as:
+  // LLVM's TableGen definitions declare V_FMA_MIX{LO,HI}_{F16,BF16} with
+  // FPDPRounding=1. The generated selection patterns model them as:
   //
-  //   fptrunc_bf16(llvm.fma.f32(cvt_f32(src0_part),
-  //                             cvt_f32(src1_part),
-  //                             cvt_f32(src2_part)))
+  //   fptrunc_narrow(llvm.fma.f32(cvt_f32(src0_part),
+  //                               cvt_f32(src1_part),
+  //                               cvt_f32(src2_part)))
   //
-  // and the ISA family writes only the low 16 bits of vdst (the high
-  // half is the tied vdst_in input). The source `*_part` selection
-  // matches V_FMA_MIX_F32_BF16 below: op_sel_hi chooses narrow-bf16 vs
-  // full-f32, and op_sel chooses the high half when a register source is
-  // interpreted as narrow.
-  case CanonicalOp::V_FMA_MIXLO_BF16: {
+  // and the ISA family writes only one 16-bit half of vdst (the other half is
+  // the tied vdst_in input). The source `*_part` selection matches
+  // V_FMA_MIX_F32{,_BF16} below: op_sel_hi chooses narrow vs full-f32, and
+  // op_sel chooses the high half when a register source is interpreted as
+  // narrow. LO/HI differ only in destination half; F16/BF16 differ only in
+  // narrow type.
+  case CanonicalOp::V_FMA_MIXLO_F16:
+  case CanonicalOp::V_FMA_MIXHI_F16:
+  case CanonicalOp::V_FMA_MIXLO_BF16:
+  case CanonicalOp::V_FMA_MIXHI_BF16: {
+    StringRef InstrName = diagnosticMnemonic(Di);
     if (Op.nSrcs() < 3) {
       Hr.Failure = RaiseFailure::unsupportedShape(
           Di, "VOP3P",
-          "v_fma_mixlo_bf16 requires three explicit source operands");
+          (InstrName + " requires three explicit source operands").str());
       return Hr;
     }
 
+    bool IsBF16 = Sop == CanonicalOp::V_FMA_MIXLO_BF16 ||
+                  Sop == CanonicalOp::V_FMA_MIXHI_BF16;
+    bool WritesHigh = Sop == CanonicalOp::V_FMA_MIXHI_F16 ||
+                      Sop == CanonicalOp::V_FMA_MIXHI_BF16;
+    Type *NarrowTy = IsBF16 ? Type::getBFloatTy(Ctx.C) : Ctx.F16Ty;
+    const char *CvtName =
+        IsBF16 ? (WritesHigh ? "mixhi_cvt_bf16" : "mixlo_cvt_bf16")
+               : (WritesHigh ? "mixhi_cvt" : "mixlo_cvt");
+    const char *FMAName =
+        IsBF16 ? (WritesHigh ? "fma_mixhi_bf16" : "fma_mixlo_bf16")
+               : (WritesHigh ? "fma_mixhi_f16" : "fma_mixlo_f16");
+
     bool ClampResult = false;
-    int ClampIdx = AMDGPU::getNamedOperandIdx(Di.Inst.getOpcode(),
-                                              AMDGPU::OpName::clamp);
-    if (ClampIdx >= 0) {
-      if (!Di.isImm(static_cast<unsigned>(ClampIdx))) {
+    int ClampIndex = AMDGPU::getNamedOperandIdx(Di.Inst.getOpcode(),
+                                                AMDGPU::OpName::clamp);
+    if (ClampIndex >= 0) {
+      if (!Di.isImm(static_cast<unsigned>(ClampIndex))) {
         Hr.Failure = RaiseFailure::unsupportedShape(
             Di, "VOP3P",
-            "v_fma_mixlo_bf16 clamp operand is not an immediate");
+            (InstrName + " clamp operand is not an immediate").str());
         return Hr;
       }
-      ClampResult = Di.getImm(static_cast<unsigned>(ClampIdx)) != 0;
+      ClampResult = Di.getImm(static_cast<unsigned>(ClampIndex)) != 0;
     }
 
-    Type *Bf16Ty = Type::getBFloatTy(Ctx.C);
     Type *I16Ty = Type::getInt16Ty(Ctx.C);
 
     constexpr unsigned KnownMixMods =
@@ -1191,41 +1206,51 @@ HandlerResult handleValuVoP3P(RaiseContext &Ctx, const DecodedInst &Di,
     if (!readSourceMods(Di, Op, 3, KnownMixMods, Mods, Hr))
       return Hr;
 
-    Value *S0 = readMixF32Src(Ctx, Op, 0, Bf16Ty, Mods[0],
-                              "mixlo_cvt_bf16");
-    Value *S1 = readMixF32Src(Ctx, Op, 1, Bf16Ty, Mods[1],
-                              "mixlo_cvt_bf16");
-    Value *S2 = readMixF32Src(Ctx, Op, 2, Bf16Ty, Mods[2],
-                              "mixlo_cvt_bf16");
+    Value *S0 = readMixF32Src(Ctx, Op, 0, NarrowTy, Mods[0], CvtName);
+    Value *S1 = readMixF32Src(Ctx, Op, 1, NarrowTy, Mods[1], CvtName);
+    Value *S2 = readMixF32Src(Ctx, Op, 2, NarrowTy, Mods[2], CvtName);
     Function *FmaFn = Intrinsic::getOrInsertDeclaration(
         &Ctx.M, Intrinsic::fma, {Ctx.F32Ty});
-    Value *Fma = Ctx.B.CreateCall(FmaFn, {S0, S1, S2}, "fma_mixlo_bf16");
-    Value *Rounded = Ctx.B.CreateFPTrunc(Fma, Bf16Ty, "fma_mixlo_bf16_round");
+    Value *Fma = Ctx.B.CreateCall(FmaFn, {S0, S1, S2}, FMAName);
+    Value *Rounded =
+        Ctx.B.CreateFPTrunc(Fma, NarrowTy, (Twine(FMAName) + "_round").str());
     if (ClampResult) {
       // AMDGPUclamp clamps to [0, 1] and maps NaN to 0 (SIInstrInfo.td).
-      // V_FMA_MIXLO_BF16 applies it after the destination BF16 rounding.
+      // V_FMA_MIX{LO,HI} applies it after destination narrow-type rounding.
       Function *MaxFn = Intrinsic::getOrInsertDeclaration(
-          &Ctx.M, Intrinsic::maxnum, {Bf16Ty});
+          &Ctx.M, Intrinsic::maxnum, {NarrowTy});
       Function *MinFn = Intrinsic::getOrInsertDeclaration(
-          &Ctx.M, Intrinsic::minnum, {Bf16Ty});
+          &Ctx.M, Intrinsic::minnum, {NarrowTy});
       Rounded = Ctx.B.CreateCall(
           MinFn,
           {Ctx.B.CreateCall(MaxFn,
-                            {Rounded, ConstantFP::get(Bf16Ty, 0.0)},
-                            "fma_mixlo_bf16_clamp_lo"),
-           ConstantFP::get(Bf16Ty, 1.0)},
-          "fma_mixlo_bf16_clamp");
+                            {Rounded, ConstantFP::get(NarrowTy, 0.0)},
+                            (Twine(FMAName) + "_clamp_lo").str()),
+           ConstantFP::get(NarrowTy, 1.0)},
+          (Twine(FMAName) + "_clamp").str());
     }
-    Value *LoBits =
+    Value *NarrowBits =
         Ctx.B.CreateZExt(Ctx.B.CreateBitCast(Rounded, I16Ty), Ctx.I32Ty);
 
     ParsedReg Dest = Op.dst();
     Value *OldDest = Ctx.Regs.readReg32(Ctx.B, Dest);
-    Value *OldHi = Ctx.B.CreateAnd(
-        OldDest, ConstantInt::get(Ctx.I32Ty, 0xFFFF0000u),
-        "fma_mixlo_bf16_old_hi");
-    Ctx.writeReg32(Dest, Ctx.B.CreateOr(OldHi, LoBits,
-                                        "fma_mixlo_bf16_pack"));
+    if (WritesHigh) {
+      Value *OldLo = Ctx.B.CreateAnd(
+          OldDest, ConstantInt::get(Ctx.I32Ty, 0x0000FFFFu),
+          (Twine(FMAName) + "_old_lo").str());
+      Value *HiBits = Ctx.B.CreateShl(NarrowBits, 16,
+                                      (Twine(FMAName) + "_hi_bits").str());
+      Ctx.writeReg32(Dest,
+                     Ctx.B.CreateOr(OldLo, HiBits,
+                                    (Twine(FMAName) + "_pack").str()));
+    } else {
+      Value *OldHi = Ctx.B.CreateAnd(
+          OldDest, ConstantInt::get(Ctx.I32Ty, 0xFFFF0000u),
+          (Twine(FMAName) + "_old_hi").str());
+      Ctx.writeReg32(Dest,
+                     Ctx.B.CreateOr(OldHi, NarrowBits,
+                                    (Twine(FMAName) + "_pack").str()));
+    }
     Hr.Handled = true;
     return Hr;
   }

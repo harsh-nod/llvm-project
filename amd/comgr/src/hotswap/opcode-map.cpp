@@ -553,10 +553,16 @@ static const Entry kCanonTable[] = {
     // `canonicalize` (getMCOpcode-derived table), mirroring the
     // V_FMA_MIX_F32 entry above.
     E(V_FMA_MIX_F32_BF16, V_FMA_MIX_F32_BF16),
-    // gfx1250 BF16-result mixed FMA sibling. Same source-selection
-    // modifiers as V_FMA_MIX_F32_BF16, but the f32 FMA result is rounded
-    // to BF16 and written to the low half of the tied output register.
+    // F16-result mixed FMA siblings. Same source-selection modifiers as
+    // V_FMA_MIX_F32, but the f32 FMA result is rounded to F16 and written
+    // to one half of the tied output register.
+    E(V_FMA_MIXLO_F16, V_FMA_MIXLO_F16),
+    E(V_FMA_MIXHI_F16, V_FMA_MIXHI_F16),
+    // gfx1250 BF16-result mixed FMA siblings. Same source-selection modifiers
+    // as V_FMA_MIX_F32_BF16, but the f32 FMA result is rounded to BF16 and
+    // written to one half of the tied output register.
     E(V_FMA_MIXLO_BF16, V_FMA_MIXLO_BF16),
+    E(V_FMA_MIXHI_BF16, V_FMA_MIXHI_BF16),
     E(V_ADD_F16_e64, V_ADD_F16),
     E(V_MUL_F16_e64, V_MUL_F16),
     E(V_SUB_F16_e64, V_SUB_F16),
