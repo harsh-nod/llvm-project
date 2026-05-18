@@ -820,29 +820,57 @@ HandlerResult handleSOP2(RaiseContext &Ctx, const DecodedInst &Di,
     return Hr;
   }
   if (Sop == CanonicalOp::S_ANDN2_B64) {
+    Value *S0I1 = tryGetSrcWaveMaskI1(Ctx, Op, 0);
+    Value *S1I1 = tryGetSrcWaveMaskI1(Ctx, Op, 1);
     Hr.SccResult =
         Ctx.B.CreateAnd(Op.src64(0), Ctx.B.CreateNot(Op.src64(1)), "andn2_64");
     Ctx.Regs.writeReg64(Ctx.B, Op.dst(), Hr.SccResult);
+    if (S0I1 && S1I1) {
+      Value *AndN2I1 =
+          Ctx.B.CreateAnd(S0I1, Ctx.B.CreateNot(S1I1), "wave_mask_andn2_64");
+      recordDerivedWaveMaskI1(Ctx, Op.dst(), AndN2I1);
+    }
     Hr.Handled = true;
     return Hr;
   }
   if (Sop == CanonicalOp::S_ORN2_B64) {
+    Value *S0I1 = tryGetSrcWaveMaskI1(Ctx, Op, 0);
+    Value *S1I1 = tryGetSrcWaveMaskI1(Ctx, Op, 1);
     Hr.SccResult =
         Ctx.B.CreateOr(Op.src64(0), Ctx.B.CreateNot(Op.src64(1)), "orn2_64");
     Ctx.Regs.writeReg64(Ctx.B, Op.dst(), Hr.SccResult);
+    if (S0I1 && S1I1) {
+      Value *OrN2I1 =
+          Ctx.B.CreateOr(S0I1, Ctx.B.CreateNot(S1I1), "wave_mask_orn2_64");
+      recordDerivedWaveMaskI1(Ctx, Op.dst(), OrN2I1);
+    }
     Hr.Handled = true;
     return Hr;
   }
   if (Sop == CanonicalOp::S_ANDN2_B32) {
+    Value *S0I1 = tryGetSrcWaveMaskI1(Ctx, Op, 0);
+    Value *S1I1 = tryGetSrcWaveMaskI1(Ctx, Op, 1);
     Hr.SccResult =
         Ctx.B.CreateAnd(Op.src(0), Ctx.B.CreateNot(Op.src(1)), "andn2");
     Ctx.Regs.writeReg32(Ctx.B, Op.dst(), Hr.SccResult);
+    if (S0I1 && S1I1) {
+      Value *AndN2I1 =
+          Ctx.B.CreateAnd(S0I1, Ctx.B.CreateNot(S1I1), "wave_mask_andn2");
+      recordDerivedWaveMaskI1(Ctx, Op.dst(), AndN2I1);
+    }
     Hr.Handled = true;
     return Hr;
   }
   if (Sop == CanonicalOp::S_ORN2_B32) {
+    Value *S0I1 = tryGetSrcWaveMaskI1(Ctx, Op, 0);
+    Value *S1I1 = tryGetSrcWaveMaskI1(Ctx, Op, 1);
     Hr.SccResult = Ctx.B.CreateOr(Op.src(0), Ctx.B.CreateNot(Op.src(1)), "orn2");
     Ctx.Regs.writeReg32(Ctx.B, Op.dst(), Hr.SccResult);
+    if (S0I1 && S1I1) {
+      Value *OrN2I1 =
+          Ctx.B.CreateOr(S0I1, Ctx.B.CreateNot(S1I1), "wave_mask_orn2");
+      recordDerivedWaveMaskI1(Ctx, Op.dst(), OrN2I1);
+    }
     Hr.Handled = true;
     return Hr;
   }
@@ -852,44 +880,86 @@ HandlerResult handleSOP2(RaiseContext &Ctx, const DecodedInst &Di,
   // and identical sign-/zero-extension semantics as their non-negated
   // siblings (S_AND_B32 etc.), so we can reuse op.src/op.src64 directly.
   if (Sop == CanonicalOp::S_NAND_B32) {
+    Value *S0I1 = tryGetSrcWaveMaskI1(Ctx, Op, 0);
+    Value *S1I1 = tryGetSrcWaveMaskI1(Ctx, Op, 1);
     Hr.SccResult = Ctx.B.CreateNot(
         Ctx.B.CreateAnd(Op.src(0), Op.src(1), "and"), "nand");
     Ctx.Regs.writeReg32(Ctx.B, Op.dst(), Hr.SccResult);
+    if (S0I1 && S1I1) {
+      Value *NandI1 =
+          Ctx.B.CreateNot(Ctx.B.CreateAnd(S0I1, S1I1), "wave_mask_nand");
+      recordDerivedWaveMaskI1(Ctx, Op.dst(), NandI1);
+    }
     Hr.Handled = true;
     return Hr;
   }
   if (Sop == CanonicalOp::S_NAND_B64) {
+    Value *S0I1 = tryGetSrcWaveMaskI1(Ctx, Op, 0);
+    Value *S1I1 = tryGetSrcWaveMaskI1(Ctx, Op, 1);
     Hr.SccResult = Ctx.B.CreateNot(
         Ctx.B.CreateAnd(Op.src64(0), Op.src64(1), "and64"), "nand64");
     Ctx.Regs.writeReg64(Ctx.B, Op.dst(), Hr.SccResult);
+    if (S0I1 && S1I1) {
+      Value *NandI1 =
+          Ctx.B.CreateNot(Ctx.B.CreateAnd(S0I1, S1I1), "wave_mask_nand64");
+      recordDerivedWaveMaskI1(Ctx, Op.dst(), NandI1);
+    }
     Hr.Handled = true;
     return Hr;
   }
   if (Sop == CanonicalOp::S_NOR_B32) {
+    Value *S0I1 = tryGetSrcWaveMaskI1(Ctx, Op, 0);
+    Value *S1I1 = tryGetSrcWaveMaskI1(Ctx, Op, 1);
     Hr.SccResult = Ctx.B.CreateNot(
         Ctx.B.CreateOr(Op.src(0), Op.src(1), "or"), "nor");
     Ctx.Regs.writeReg32(Ctx.B, Op.dst(), Hr.SccResult);
+    if (S0I1 && S1I1) {
+      Value *NorI1 =
+          Ctx.B.CreateNot(Ctx.B.CreateOr(S0I1, S1I1), "wave_mask_nor");
+      recordDerivedWaveMaskI1(Ctx, Op.dst(), NorI1);
+    }
     Hr.Handled = true;
     return Hr;
   }
   if (Sop == CanonicalOp::S_NOR_B64) {
+    Value *S0I1 = tryGetSrcWaveMaskI1(Ctx, Op, 0);
+    Value *S1I1 = tryGetSrcWaveMaskI1(Ctx, Op, 1);
     Hr.SccResult = Ctx.B.CreateNot(
         Ctx.B.CreateOr(Op.src64(0), Op.src64(1), "or64"), "nor64");
     Ctx.Regs.writeReg64(Ctx.B, Op.dst(), Hr.SccResult);
+    if (S0I1 && S1I1) {
+      Value *NorI1 =
+          Ctx.B.CreateNot(Ctx.B.CreateOr(S0I1, S1I1), "wave_mask_nor64");
+      recordDerivedWaveMaskI1(Ctx, Op.dst(), NorI1);
+    }
     Hr.Handled = true;
     return Hr;
   }
   if (Sop == CanonicalOp::S_XNOR_B32) {
+    Value *S0I1 = tryGetSrcWaveMaskI1(Ctx, Op, 0);
+    Value *S1I1 = tryGetSrcWaveMaskI1(Ctx, Op, 1);
     Hr.SccResult = Ctx.B.CreateNot(
         Ctx.B.CreateXor(Op.src(0), Op.src(1), "xor"), "xnor");
     Ctx.Regs.writeReg32(Ctx.B, Op.dst(), Hr.SccResult);
+    if (S0I1 && S1I1) {
+      Value *XnorI1 =
+          Ctx.B.CreateNot(Ctx.B.CreateXor(S0I1, S1I1), "wave_mask_xnor");
+      recordDerivedWaveMaskI1(Ctx, Op.dst(), XnorI1);
+    }
     Hr.Handled = true;
     return Hr;
   }
   if (Sop == CanonicalOp::S_XNOR_B64) {
+    Value *S0I1 = tryGetSrcWaveMaskI1(Ctx, Op, 0);
+    Value *S1I1 = tryGetSrcWaveMaskI1(Ctx, Op, 1);
     Hr.SccResult = Ctx.B.CreateNot(
         Ctx.B.CreateXor(Op.src64(0), Op.src64(1), "xor64"), "xnor64");
     Ctx.Regs.writeReg64(Ctx.B, Op.dst(), Hr.SccResult);
+    if (S0I1 && S1I1) {
+      Value *XnorI1 =
+          Ctx.B.CreateNot(Ctx.B.CreateXor(S0I1, S1I1), "wave_mask_xnor64");
+      recordDerivedWaveMaskI1(Ctx, Op.dst(), XnorI1);
+    }
     Hr.Handled = true;
     return Hr;
   }
