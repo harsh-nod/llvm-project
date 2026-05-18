@@ -375,6 +375,25 @@ HandlerResult handleSOP2(RaiseContext &Ctx, const DecodedInst &Di,
     Hr.Handled = true;
     return Hr;
   }
+  if (Sop == CanonicalOp::S_FMAAK_F32 ||
+      Sop == CanonicalOp::S_FMAMK_F32) {
+    // Source order follows the MC operand order. For S_FMAAK this is
+    // (src0, src1, literal); for S_FMAMK it is (src0, literal, src1), exactly
+    // matching the manual's fma argument order.
+    Value *S0 = Ctx.B.CreateBitCast(Op.src(0), Ctx.F32Ty);
+    Value *S1 = Ctx.B.CreateBitCast(Op.src(1), Ctx.F32Ty);
+    Value *S2 = Ctx.B.CreateBitCast(Op.src(2), Ctx.F32Ty);
+    Function *Fma =
+        Intrinsic::getOrInsertDeclaration(&Ctx.M, Intrinsic::fma, {Ctx.F32Ty});
+    const char *Name =
+        (Sop == CanonicalOp::S_FMAAK_F32) ? "s_fmaak" : "s_fmamk";
+    Ctx.Regs.writeReg32(
+        Ctx.B, Op.dst(),
+        Ctx.B.CreateBitCast(Ctx.B.CreateCall(Fma, {S0, S1, S2}, Name),
+                            Ctx.I32Ty));
+    Hr.Handled = true;
+    return Hr;
+  }
   // gfx11+ scalar FP fused multiply-accumulate. Manual §4.5.25 marks this
   // OPF_DACCUM and defines `D0.f32 = fma(S0.f32, S1.f32, D0.f32)`, so the
   // third operand is the old destination value, not a hidden source slot.

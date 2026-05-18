@@ -303,6 +303,11 @@ enum class CanonicalOp : uint16_t {
   // sources; OPF_DACCUM ties the old destination value as the third operand:
   //   sdst.f32 = fma(ssrc0.f32, ssrc1.f32, old sdst.f32)
   S_FMAC_F32,
+  // Scalar literal fused multiply-add forms. OPF_IMPLIED_LITERAL supplies the
+  // third f32 operand from the instruction literal slot:
+  //   s_fmaak_f32: sdst.f32 = fma(ssrc0.f32, ssrc1.f32, literal.f32)
+  //   s_fmamk_f32: sdst.f32 = fma(ssrc0.f32, literal.f32, ssrc1.f32)
+  S_FMAAK_F32, S_FMAMK_F32,
   // Scalar IEEE-754-2019 maximumNumber/minimumNumber. LLVM's canonical pseudo
   // is `S_{MAX,MIN}_F32`; gfx12+ manuals name the real mnemonics
   // `s_{max,min}_num_f32` and keep `s_{max,min}_f32` as compatibility aliases.
