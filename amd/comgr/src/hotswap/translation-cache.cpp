@@ -253,10 +253,20 @@ KeyData buildKeyData(const TranslationCacheRequest &request,
   data.Timings.loadedImageIdentitySeconds =
       timingElapsed(CollectTimings, loadedImageIdentityStart);
   auto kernelNamesStart = timingStart(CollectTimings);
-  auto names = listKernelNames(request.SourceObject);
-  data.kernelNames.assign(names.begin(), names.end());
+  llvm::Expected<llvm::SmallVector<std::string>> NamesOrErr =
+      listKernelNames(request.SourceObject);
   data.Timings.kernelNamesSeconds =
       timingElapsed(CollectTimings, kernelNamesStart);
+  if (!NamesOrErr) {
+    data.error = "failed to list kernels for translation cache key: " +
+                 llvm::toString(NamesOrErr.takeError());
+    return data;
+  }
+  data.kernelNames.assign(NamesOrErr->begin(), NamesOrErr->end());
+  if (data.kernelNames.empty()) {
+    data.error = "source code object has no kernel metadata entries";
+    return data;
+  }
 
   auto materialBuildStart = timingStart(CollectTimings);
   std::string material;

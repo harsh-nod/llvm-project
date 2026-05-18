@@ -42,6 +42,28 @@ else()
   endif()
 endif()
 
+function(comgr_add_amdgpu_private_include_dirs target)
+  if(DEFINED LLVM_BUILD_MAIN_SRC_DIR AND LLVM_BUILD_MAIN_SRC_DIR)
+    set(_comgr_llvm_main_src_dir "${LLVM_BUILD_MAIN_SRC_DIR}")
+  elseif(DEFINED LLVM_MAIN_SRC_DIR AND LLVM_MAIN_SRC_DIR)
+    set(_comgr_llvm_main_src_dir "${LLVM_MAIN_SRC_DIR}")
+  else()
+    message(FATAL_ERROR
+      "Comgr test target ${target} requires LLVM source-tree paths for "
+      "AMDGPU target-private headers. Expected LLVM_MAIN_SRC_DIR or "
+      "LLVM_BUILD_MAIN_SRC_DIR to be set by the LLVM build.")
+  endif()
+
+  # Tests that pull in transpiler internals (wave-projection.h, opcode-map.h,
+  # ...) need AMDGPU target-private headers too: SIDefines.h, SIInstrInfo.h,
+  # AMDGPUBaseInfo.h live in the LLVM source tree, AMDGPUGen*.inc files in the
+  # LLVM build tree.
+  target_include_directories(${target} PRIVATE
+    "${_comgr_llvm_main_src_dir}/lib/Target/AMDGPU"
+    "${_comgr_llvm_main_src_dir}/lib/Target/AMDGPU/Utils"
+    "${LLVM_BINARY_DIR}/lib/Target/AMDGPU")
+endfunction()
+
 # Wire up a test target against the hotswap transpiler OBJECT lib + the
 # comgr-metadata.cpp helpers it calls (`metadata::walkElfMetadataIntoDoc`
 # and `metadata::getElfIsaNameFromBuffer`).
@@ -63,14 +85,8 @@ function(comgr_link_hotswap_transpiler target)
     ${CMAKE_CURRENT_SOURCE_DIR}/../test-shared/standalone-init.cpp)
   target_include_directories(${target} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../src
-    ${CMAKE_CURRENT_BINARY_DIR}/../include
-    # Tests that pull in transpiler internals (wave-projection.h,
-    # opcode-map.h, ...) need AMDGPU target-private headers too:
-    # SIDefines.h, SIInstrInfo.h, AMDGPUBaseInfo.h live in the LLVM
-    # source tree, AMDGPUGen*.inc files in the LLVM build tree.
-    "${LLVM_BUILD_MAIN_SRC_DIR}/lib/Target/AMDGPU"
-    "${LLVM_BUILD_MAIN_SRC_DIR}/lib/Target/AMDGPU/Utils"
-    "${LLVM_BINARY_DIR}/lib/Target/AMDGPU")
+    ${CMAKE_CURRENT_BINARY_DIR}/../include)
+  comgr_add_amdgpu_private_include_dirs(${target})
   if(NOT MSVC)
     target_compile_options(${target} PRIVATE -ffunction-sections -fdata-sections)
     target_link_options(${target} PRIVATE -Wl,--gc-sections)
@@ -233,13 +249,7 @@ target_link_libraries(OpcodeMapTests PRIVATE
 comgr_link_hotswap_transpiler(OpcodeMapTests)
 
 target_include_directories(OpcodeMapTests PRIVATE
-  ${COMGR_GTEST_INCLUDE_DIRS}
-  # AMDGPU target-private headers (MCTargetDesc/AMDGPUMCTargetDesc.h,
-  # SIDefines.h, AMDGPUGen*.inc) are not installed by `ninja install`;
-  # the test reaches into them directly to drive opcode-map lookups.
-  "${LLVM_BUILD_MAIN_SRC_DIR}/lib/Target/AMDGPU"
-  "${LLVM_BUILD_MAIN_SRC_DIR}/lib/Target/AMDGPU/Utils"
-  "${LLVM_BINARY_DIR}/lib/Target/AMDGPU")
+  ${COMGR_GTEST_INCLUDE_DIRS})
 
 comgr_configure_test_target(OpcodeMapTests)
 
@@ -269,12 +279,7 @@ target_link_libraries(WaveProjectionTests PRIVATE
 comgr_link_hotswap_transpiler(WaveProjectionTests)
 
 target_include_directories(WaveProjectionTests PRIVATE
-  ${COMGR_GTEST_INCLUDE_DIRS}
-  # WaveProjectionTest pulls in transpiler internals (wave-projection.h ->
-  # amdgpu-formats.h -> SIDefines.h) that need AMDGPU target-private paths.
-  "${LLVM_BUILD_MAIN_SRC_DIR}/lib/Target/AMDGPU"
-  "${LLVM_BUILD_MAIN_SRC_DIR}/lib/Target/AMDGPU/Utils"
-  "${LLVM_BINARY_DIR}/lib/Target/AMDGPU")
+  ${COMGR_GTEST_INCLUDE_DIRS})
 
 comgr_configure_test_target(WaveProjectionTests)
 

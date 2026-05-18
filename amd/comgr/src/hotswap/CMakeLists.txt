@@ -228,6 +228,8 @@ llvm_update_compile_flags(hotswap-transpiler)
 # These are PRIVATE because no public header (pipeline.hpp, transpiler.hpp)
 # exposes AMDGPU-private LLVM types, so consumers (e.g. ROCR) do not need
 # these paths to compile against us.
+get_filename_component(HOTSWAP_COMGR_BINARY_DIR
+  "${CMAKE_CURRENT_BINARY_DIR}/../.." ABSOLUTE)
 target_include_directories(hotswap-transpiler PRIVATE
   "${LLVM_BUILD_MAIN_SRC_DIR}/lib/Target/AMDGPU"
   "${LLVM_BUILD_MAIN_SRC_DIR}/lib/Target/AMDGPU/Utils"
@@ -235,10 +237,9 @@ target_include_directories(hotswap-transpiler PRIVATE
   # Hotswap calls into comgr-metadata helpers (`metadata::walkElfMetadataIntoDoc`,
   # `metadata::getElfIsaNameFromBuffer`), which transitively include
   # `comgr.h` -> `amd_comgr.h`. The latter is configured from
-  # `amd/comgr/include/amd_comgr.h.in` into the parent project's binary
-  # `include/` dir.
+  # `amd/comgr/include/amd_comgr.h.in` into Comgr's binary `include/` dir.
   "${CMAKE_CURRENT_SOURCE_DIR}/.."
-  "${CMAKE_BINARY_DIR}/include"
+  "${HOTSWAP_COMGR_BINARY_DIR}/include"
 )
 
 # Allow this static library to be linked into a shared library
