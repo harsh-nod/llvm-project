@@ -648,6 +648,14 @@ static const Entry kCanonTable[] = {
     E(V_PK_MUL_F32, V_PK_MUL_F32),
     E(V_PK_FMA_F32, V_PK_FMA_F32),
     E(V_PK_FMA_F16, V_PK_FMA_F16),
+    // gfx1250-only packed BF16 arithmetic. The `_gfx1250` real opcodes
+    // collapse to these bare pseudos via the MC->pseudo map, matching the
+    // existing packed BF16 TableGen family.
+    E(V_PK_ADD_BF16, V_PK_ADD_BF16),
+    E(V_PK_MUL_BF16, V_PK_MUL_BF16),
+    E(V_PK_MIN_NUM_BF16, V_PK_MIN_NUM_BF16),
+    E(V_PK_MAX_NUM_BF16, V_PK_MAX_NUM_BF16),
+    E(V_PK_FMA_BF16, V_PK_FMA_BF16),
     // LLVM has no `V_PK_MAX_F32`/`V_PK_MIN_F32` pseudo (only F16 variants);
     // leave the matching CanonicalOps unmapped until one appears.
     E(V_PK_MOV_B32, V_PK_MOV_B32),

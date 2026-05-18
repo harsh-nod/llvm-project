@@ -615,6 +615,18 @@ enum class CanonicalOp : uint16_t {
   // the fused operation. The VOP3P clamp bit clamps the packed f16 result to
   // [0, 1] after the fused operation.
   V_PK_FMA_F16,
+  // gfx1250 VOP3P packed BF16 arithmetic (VOP3PInstructions.td
+  // `V_PK_{ADD,MUL,MIN_NUM,MAX_NUM,FMA}_BF16`):
+  //   V_PK_ADD_BF16:     dst = src0_lane + src1_lane
+  //   V_PK_MUL_BF16:     dst = src0_lane * src1_lane
+  //   V_PK_MIN_NUM_BF16: dst = minimumNumber(src0_lane, src1_lane)
+  //   V_PK_MAX_NUM_BF16: dst = maximumNumber(src0_lane, src1_lane)
+  //   V_PK_FMA_BF16:     dst = fma(src0_lane, src1_lane, src2_lane)
+  // per `<2 x bfloat>` lane. Source lane selection and per-lane negation use
+  // the same packed `srcN_modifiers` contract as V_PK_FMA_F16.
+  V_PK_ADD_BF16, V_PK_MUL_BF16,
+  V_PK_MIN_NUM_BF16, V_PK_MAX_NUM_BF16,
+  V_PK_FMA_BF16,
 
   // VOP3P packed-pair `<2 x i16>` int ops (gfx9+, available on both
   // gfx942 and gfx1250 -- same MC encoding family). Operand profile is
