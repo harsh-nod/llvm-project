@@ -195,7 +195,8 @@ bool isIntrinsicVGPRSafePropagator(Intrinsic::ID Id) {
   //     `v_log_f32` (VOP1).  Softmax's exponentiation and the `pow` / `log`
   //     decomposition both route here.  Per-lane, all-VGPR.
   //   * `@llvm.floor.f32` / `@llvm.ceil.f32` / `@llvm.trunc.f32` /
-  //     `@llvm.rint.f32` / `@llvm.round.f32` / `@llvm.nearbyint.f32`
+  //     `@llvm.roundeven.f32` / `@llvm.rint.f32` / `@llvm.round.f32` /
+  //     `@llvm.nearbyint.f32`
   //     -> `v_floor_f32` / `v_ceil_f32` / `v_trunc_f32` /
   //     `v_rndne_f32` (VOP1).  Per-lane, all-VGPR.  Triton emits
   //     these from integer-float conversions and `tl.cdiv`-style
@@ -258,6 +259,7 @@ bool isIntrinsicVGPRSafePropagator(Intrinsic::ID Id) {
   case Intrinsic::floor:
   case Intrinsic::ceil:
   case Intrinsic::trunc:
+  case Intrinsic::roundeven:
   case Intrinsic::rint:
   case Intrinsic::round:
   case Intrinsic::nearbyint:

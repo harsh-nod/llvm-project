@@ -28,7 +28,7 @@ namespace COMGR::hotswap {
 // extract), F16 two-src arith (add/sub/mul/min/max/mac/fmac), packed
 // F16 fmac, 16-bit min/max and reverse-operand shifts, byte pack,
 // V_BFREV_B32 / V_NOT_B32, and F32 single-src transcendentals
-// (rcp/exp/log/ldexp/sqrt/rsq/floor/ceil/trunc/fract).
+// (rcp/exp/log/ldexp/sqrt/rsq/floor/ceil/trunc/rndne/fract).
 //
 // Grouped here because each case is 1-5 lines of IR emission and they
 // would bloat the arithmetic / 3-src sub-handlers if interleaved.
@@ -398,8 +398,10 @@ HandlerResult handleValuSmallOps(RaiseContext &Ctx, const DecodedInst &Di,
     return Hr;
   }
 
-  // ---- F32 single-src transcendentals / rounding ----
+  // ---- F32 scalar math / rounding ----
   case CanonicalOp::V_RCP_IFLAG_F32: {
+    if (!requireDefaultOutputModsIfPresent(Di, Hr))
+      return Hr;
     Value *S = Ctx.B.CreateBitCast(Op.srcF(0), Ctx.F32Ty);
     Value *R = Ctx.B.CreateFDiv(ConstantFP::get(Ctx.F32Ty, 1.0), S, "rcp");
     Ctx.writeReg32(Op.dst(), Ctx.B.CreateBitCast(R, Ctx.I32Ty));
@@ -411,6 +413,9 @@ HandlerResult handleValuSmallOps(RaiseContext &Ctx, const DecodedInst &Di,
     if (Di.CanonOp == CanonicalOp::V_S_RCP_F32 &&
         !requireDefaultPseudoScalarOutputMods(Di, Hr))
       return Hr;
+    if (Di.CanonOp == CanonicalOp::V_RCP_F32 &&
+        !requireDefaultOutputModsIfPresent(Di, Hr))
+      return Hr;
     Value *S = Ctx.B.CreateBitCast(Op.srcF(0), Ctx.F32Ty);
     Function *RcpFn = Intrinsic::getOrInsertDeclaration(
         &Ctx.M, Intrinsic::amdgcn_rcp, {Ctx.F32Ty});
@@ -421,6 +426,8 @@ HandlerResult handleValuSmallOps(RaiseContext &Ctx, const DecodedInst &Di,
     return Hr;
   }
   case CanonicalOp::V_EXP_F32: {
+    if (!requireDefaultOutputModsIfPresent(Di, Hr))
+      return Hr;
     Value *S = Ctx.B.CreateBitCast(Op.srcF(0), Ctx.F32Ty);
     Function *Exp2Fn = Intrinsic::getOrInsertDeclaration(
         &Ctx.M, Intrinsic::amdgcn_exp2, {Ctx.F32Ty});
@@ -447,6 +454,9 @@ HandlerResult handleValuSmallOps(RaiseContext &Ctx, const DecodedInst &Di,
     if (Di.CanonOp == CanonicalOp::V_S_LOG_F32 &&
         !requireDefaultPseudoScalarOutputMods(Di, Hr))
       return Hr;
+    if (Di.CanonOp == CanonicalOp::V_LOG_F32 &&
+        !requireDefaultOutputModsIfPresent(Di, Hr))
+      return Hr;
     Value *S = Ctx.B.CreateBitCast(Op.srcF(0), Ctx.F32Ty);
     Function *Log2Fn = Intrinsic::getOrInsertDeclaration(
         &Ctx.M, Intrinsic::amdgcn_log, {Ctx.F32Ty});
@@ -457,6 +467,8 @@ HandlerResult handleValuSmallOps(RaiseContext &Ctx, const DecodedInst &Di,
     return Hr;
   }
   case CanonicalOp::V_LDEXP_F32: {
+    if (!requireDefaultOutputModsIfPresent(Di, Hr))
+      return Hr;
     Value *S0 = Ctx.B.CreateBitCast(Op.srcF(0), Ctx.F32Ty);
     Value *S1 = Op.src(1);
     Function *LdexpFn = Intrinsic::getOrInsertDeclaration(
@@ -473,6 +485,9 @@ HandlerResult handleValuSmallOps(RaiseContext &Ctx, const DecodedInst &Di,
     if (Di.CanonOp == CanonicalOp::V_S_SQRT_F32 &&
         !requireDefaultPseudoScalarOutputMods(Di, Hr))
       return Hr;
+    if (Di.CanonOp == CanonicalOp::V_SQRT_F32 &&
+        !requireDefaultOutputModsIfPresent(Di, Hr))
+      return Hr;
     Value *S = Ctx.B.CreateBitCast(Op.srcF(0), Ctx.F32Ty);
     Function *SqrtFn = Intrinsic::getOrInsertDeclaration(
         &Ctx.M, Intrinsic::amdgcn_sqrt, {Ctx.F32Ty});
@@ -487,6 +502,9 @@ HandlerResult handleValuSmallOps(RaiseContext &Ctx, const DecodedInst &Di,
     if (Di.CanonOp == CanonicalOp::V_S_RSQ_F32 &&
         !requireDefaultPseudoScalarOutputMods(Di, Hr))
       return Hr;
+    if (Di.CanonOp == CanonicalOp::V_RSQ_F32 &&
+        !requireDefaultOutputModsIfPresent(Di, Hr))
+      return Hr;
     Value *S = Ctx.B.CreateBitCast(Op.srcF(0), Ctx.F32Ty);
     Function *RsqFn = Intrinsic::getOrInsertDeclaration(
         &Ctx.M, Intrinsic::amdgcn_rsq, {Ctx.F32Ty});
@@ -497,6 +515,8 @@ HandlerResult handleValuSmallOps(RaiseContext &Ctx, const DecodedInst &Di,
     return Hr;
   }
   case CanonicalOp::V_FLOOR_F32: {
+    if (!requireDefaultOutputModsIfPresent(Di, Hr))
+      return Hr;
     Value *S = Ctx.B.CreateBitCast(Op.srcF(0), Ctx.F32Ty);
     Function *FloorFn = Intrinsic::getOrInsertDeclaration(
         &Ctx.M, Intrinsic::floor, {Ctx.F32Ty});
@@ -507,6 +527,8 @@ HandlerResult handleValuSmallOps(RaiseContext &Ctx, const DecodedInst &Di,
     return Hr;
   }
   case CanonicalOp::V_CEIL_F32: {
+    if (!requireDefaultOutputModsIfPresent(Di, Hr))
+      return Hr;
     Value *S = Ctx.B.CreateBitCast(Op.srcF(0), Ctx.F32Ty);
     Function *CeilFn = Intrinsic::getOrInsertDeclaration(
         &Ctx.M, Intrinsic::ceil, {Ctx.F32Ty});
@@ -517,6 +539,8 @@ HandlerResult handleValuSmallOps(RaiseContext &Ctx, const DecodedInst &Di,
     return Hr;
   }
   case CanonicalOp::V_TRUNC_F32: {
+    if (!requireDefaultOutputModsIfPresent(Di, Hr))
+      return Hr;
     Value *S = Ctx.B.CreateBitCast(Op.srcF(0), Ctx.F32Ty);
     Function *TruncFn = Intrinsic::getOrInsertDeclaration(
         &Ctx.M, Intrinsic::trunc, {Ctx.F32Ty});
@@ -526,7 +550,22 @@ HandlerResult handleValuSmallOps(RaiseContext &Ctx, const DecodedInst &Di,
     Hr.Handled = true;
     return Hr;
   }
+  case CanonicalOp::V_RNDNE_F32: {
+    if (!requireDefaultOutputModsIfPresent(Di, Hr))
+      return Hr;
+    Value *S = Ctx.B.CreateBitCast(Op.srcF(0), Ctx.F32Ty);
+    Function *RoundEvenFn = Intrinsic::getOrInsertDeclaration(
+        &Ctx.M, Intrinsic::roundeven, {Ctx.F32Ty});
+    Ctx.writeReg32(
+        Op.dst(),
+        Ctx.B.CreateBitCast(Ctx.B.CreateCall(RoundEvenFn, {S}, "rndne"),
+                            Ctx.I32Ty));
+    Hr.Handled = true;
+    return Hr;
+  }
   case CanonicalOp::V_FRACT_F32: {
+    if (!requireDefaultOutputModsIfPresent(Di, Hr))
+      return Hr;
     Value *S = Ctx.B.CreateBitCast(Op.srcF(0), Ctx.F32Ty);
     Function *FloorFn = Intrinsic::getOrInsertDeclaration(
         &Ctx.M, Intrinsic::floor, {Ctx.F32Ty});
