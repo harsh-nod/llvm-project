@@ -8,10 +8,18 @@
 // Default (kerneldex-coverage) mode. For each kernel in the code object,
 // forks a child that runs raiseToIR so that a fatal error
 // (report_fatal_error / asan trap / ...) in one kernel doesn't poison
-// the whole file.  Emits one line per kernel on stdout:
+// the whole file.  Emits one or more lines per kernel on stdout:
 //
 //   OK   <kernel-name> (<lifted>/<total>)
-//   FAIL <kernel-name> -> <mnemonic> [<format>]
+//   FAIL <kernel-name> -> <mnemonic> [<format>] (<lifted>/<total>)
+//   ALSO <kernel-name> -> <mnemonic> [<format>]
+//   ALSO <kernel-name> -> __truncated__ [+N unique blockers not shown]
+//
+// The FAIL line carries the first blocker. Each additional unique
+// (mnemonic, format) pair is reported on its own ALSO line up to the
+// fixed shared-memory cap; the truncation line reports any excess.
+// The (<lifted>/<total>) count on the FAIL line reflects how many
+// instructions were successfully raised before and after all blockers.
 //
 // Kernels that crashed in the child (signal, non-zero exit, incomplete
 // shm) are reported as a FAIL with mnemonic ``__crash__`` and format
@@ -117,13 +125,30 @@ namespace {
 
 // Shared-memory block handed from each per-kernel child back to the parent.
 // Using a fixed-size POD struct keeps the IPC trivially safe across fork().
+
+// Maximum number of unique (mnemonic, format) failure pairs stored per
+// kernel. Kernels that hit more distinct blockers will have the excess counted
+// in numDroppedFailures and surfaced in the ALSO output as a truncation notice.
+// The lifted/total count is always accurate regardless of the cap.
+static constexpr int kMaxTrackedFailures = 32;
+
+struct FailureEntry {
+  char mnemonic[128];
+  char format[64];
+};
+
 struct KernelRaiseStats {
   bool done;
   bool success;
   int lifted;
   int total;
-  char FailMnemonic[128];
-  char FailFormat[64];
+  // All unique (mnemonic, format) pairs collected during the raise, up to
+  // kMaxTrackedFailures entries.
+  int numAllFailures;
+  // Count of unique blockers that exceeded kMaxTrackedFailures and were not
+  // stored.
+  int numDroppedFailures;
+  FailureEntry allFailures[kMaxTrackedFailures];
 };
 
 std::string autoDetectIsa(llvm::StringRef path) {
@@ -503,15 +528,55 @@ int main(int argc, char **argv) {
       shm->success = raised.Success;
       shm->lifted = raised.LiftedCount;
       shm->total = raised.TotalCount;
+      shm->numAllFailures = 0;
+      shm->numDroppedFailures = 0;
       if (!raised.Success) {
-        const char *mn = raised.Failure.Mnemonic.empty()
-                             ? "unknown"
-                             : raised.Failure.Mnemonic.c_str();
-        const char *fmt = raised.Failure.Format.empty()
-                              ? "unknown"
-                              : raised.Failure.Format.c_str();
-        std::strncpy(shm->FailMnemonic, mn, sizeof(shm->FailMnemonic) - 1);
-        std::strncpy(shm->FailFormat, fmt, sizeof(shm->FailFormat) - 1);
+        // Collect all unique (mnemonic, format) pairs from allFailures,
+        // preserving first-seen order and capping at kMaxTrackedFailures.
+        // Use a simple O(n^2) dedup — failure counts per kernel are small.
+        for (const auto &f : raised.AllFailures) {
+          const std::string fmn = f.Mnemonic.empty() ? "unknown" : f.Mnemonic;
+          const std::string ffmt = f.Format.empty() ? "unknown" : f.Format;
+          bool seen = false;
+          for (int k = 0; k < shm->numAllFailures; ++k) {
+            if (std::strncmp(shm->allFailures[k].mnemonic, fmn.c_str(),
+                             sizeof(FailureEntry::mnemonic)) == 0 &&
+                std::strncmp(shm->allFailures[k].format, ffmt.c_str(),
+                             sizeof(FailureEntry::format)) == 0) {
+              seen = true;
+              break;
+            }
+          }
+          if (!seen) {
+            if (shm->numAllFailures < kMaxTrackedFailures) {
+              auto &entry = shm->allFailures[shm->numAllFailures++];
+              std::strncpy(entry.mnemonic, fmn.c_str(),
+                           sizeof(entry.mnemonic) - 1);
+              entry.mnemonic[sizeof(entry.mnemonic) - 1] = '\0';
+              std::strncpy(entry.format, ffmt.c_str(),
+                           sizeof(entry.format) - 1);
+              entry.format[sizeof(entry.format) - 1] = '\0';
+            } else {
+              ++shm->numDroppedFailures;
+            }
+          }
+        }
+        // Failures that abort before or after Phase 5 set Result.Failure
+        // directly and return without pushing into AllFailures. Fall back to
+        // it so allFailures[0] is always valid when numAllFailures == 0.
+        if (shm->numAllFailures == 0) {
+          const char *mn = raised.Failure.Mnemonic.empty()
+                               ? "unknown"
+                               : raised.Failure.Mnemonic.c_str();
+          const char *fmt = raised.Failure.Format.empty()
+                                ? "unknown"
+                                : raised.Failure.Format.c_str();
+          auto &entry = shm->allFailures[shm->numAllFailures++];
+          std::strncpy(entry.mnemonic, mn, sizeof(entry.mnemonic) - 1);
+          entry.mnemonic[sizeof(entry.mnemonic) - 1] = '\0';
+          std::strncpy(entry.format, fmt, sizeof(entry.format) - 1);
+          entry.format[sizeof(entry.format) - 1] = '\0';
+        }
       }
       _exit(0);
     }
@@ -533,8 +598,22 @@ int main(int argc, char **argv) {
                    << shm->total << ")\n";
     } else {
       ++failKernels;
-      llvm::outs() << "FAIL " << kName << " -> " << shm->FailMnemonic
-                   << " [" << shm->FailFormat << "]\n";
+      // First (or only) blocker on the FAIL line.
+      llvm::outs() << "FAIL " << kName << " -> "
+                   << shm->allFailures[0].mnemonic << " ["
+                   << shm->allFailures[0].format << "] (" << shm->lifted
+                   << "/" << shm->total << ")\n";
+      // Additional unique blockers on ALSO lines.
+      for (int k = 1; k < shm->numAllFailures; ++k) {
+        llvm::outs() << "ALSO " << kName << " -> "
+                     << shm->allFailures[k].mnemonic << " ["
+                     << shm->allFailures[k].format << "]\n";
+      }
+      if (shm->numDroppedFailures > 0) {
+        llvm::outs() << "ALSO " << kName << " -> __truncated__ [+"
+                     << shm->numDroppedFailures
+                     << " unique blockers not shown]\n";
+      }
     }
 
     munmap(shm, sizeof(KernelRaiseStats));

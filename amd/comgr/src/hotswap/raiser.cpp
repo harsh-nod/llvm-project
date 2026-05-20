@@ -980,7 +980,7 @@ static RaiseResult raiseToIRImpl(llvm::ArrayRef<uint8_t> TextBytes,
     Regs.storeExec(SeedB, Projection.emitInitialExec(SeedB));
   };
 
-  // ==== Phase 5: Raise each instruction ====
+  // ==== Phase 5: Raise each instruction; collect all failures in allFailures. ====
 
   auto *F16Ty = Type::getHalfTy(C);
   auto *F64Ty = Type::getDoubleTy(C);
@@ -1193,9 +1193,11 @@ static RaiseResult raiseToIRImpl(llvm::ArrayRef<uint8_t> TextBytes,
     // *before* the `hr.Handled` check -- a handler that "succeeded"
     // by returning undef from a read is still an unraised kernel.
     if (Ctx.PendingFailure.hasFailed()) {
-      Result.Failure = std::move(Ctx.PendingFailure);
+      if (!Result.Failure.hasFailed())
+        Result.Failure = Ctx.PendingFailure;
+      Result.AllFailures.push_back(std::move(Ctx.PendingFailure));
       Ctx.PendingFailure = RaiseFailure{};
-      return Result;
+      continue;
     }
 
     if (Hr.Handled) {
@@ -1258,19 +1260,23 @@ static RaiseResult raiseToIRImpl(llvm::ArrayRef<uint8_t> TextBytes,
     }
 
     // The handler either recognised the instruction but refused the
-    // specific shape (hr.Failure.Reason != None), or no handler claimed
+    // specific shape (Hr.Failure.Reason != None), or no handler claimed
     // it at all -- promote to `UnsupportedOpcode` and bucket by format.
     if (Hr.Failure.hasFailed()) {
-      Result.Failure = std::move(Hr.Failure);
+      if (!Result.Failure.hasFailed())
+        Result.Failure = Hr.Failure;
+      Result.AllFailures.push_back(std::move(Hr.Failure));
     } else {
-      Result.Failure = RaiseFailure::unsupportedOpcode(
+      RaiseFailure f = RaiseFailure::unsupportedOpcode(
           Di, formatName(Di.TsFlags, Di.Inst.getOpcode()));
       errs() << "transpiler: Unsupported instruction: " << Di.Mnemonic
              << " (raw: " << Di.RawMnemonic << ")"
-             << " [format=" << Result.Failure.Format << "]"
+             << " [format=" << f.Format << "]"
              << " at offset 0x" << format_hex(Di.Offset, 1) << "\n";
+      if (!Result.Failure.hasFailed())
+        Result.Failure = f;
+      Result.AllFailures.push_back(std::move(f));
     }
-    return Result;
   }
 
   // Ensure all BBs have terminators. An empty kernel (no decoded
@@ -1290,6 +1296,11 @@ static RaiseResult raiseToIRImpl(llvm::ArrayRef<uint8_t> TextBytes,
   }
 
   Result.LiftedCount = RaisedCount;
+
+  // If any instructions failed to raise, skip Phases 6-7.
+  if (!Result.AllFailures.empty()) {
+    return Result;
+  }
 
   // ==== Phase 6: Promote allocas to SSA ====
   {

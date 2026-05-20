@@ -12,9 +12,11 @@
 #include "code-object-utils.h"
 #include "raise-failure.h"
 
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 
 #include <memory>
+#include <string>
 
 namespace llvm {
 class LLVMContext;
@@ -38,7 +40,10 @@ struct RaiseResult {
   int C5SuppressedCount = 0;
   std::string C5SuppressionReason;
   // Structured failure description. `Failure.Reason == None` iff `Success`.
+  // Holds the first failure encountered.
   RaiseFailure Failure;
+  // All failures collected during the per-instruction raising phase.
+  llvm::SmallVector<RaiseFailure> AllFailures;
   bool Success = false;
 
   bool UsesScratchPrivateSegment = false;
