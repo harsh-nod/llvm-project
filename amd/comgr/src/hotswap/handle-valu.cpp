@@ -622,6 +622,52 @@ HandlerResult handleVALU(RaiseContext &Ctx, const DecodedInst &Di,
     Hr.Handled = true;
     return Hr;
   }
+  // ---- v_mov_b16 ----
+  //
+  // gfx11+ true16 16-bit register move. The half selection lives in one of
+  // two places depending on encoding form:
+  //   * `_e32` (the form LLVM currently emits for true16 targets): the
+  //     MCInst's vdst / src0 slots reference the parent VGPR's `_LO16` or
+  //     `_HI16` subregister directly. The half is queried via
+  //     `AMDGPU::isHi16Reg`; there is no modifier operand.
+  //   * `_e64` (and its DPP variants): the register operands stay on the
+  //     parent VGPR_32 and the half is carried by `src0_modifiers` --
+  //     `OP_SEL_0` (bit 2) selects the src0 half and `DST_OP_SEL` (bit 3)
+  //     selects the dst half. Both signals coexist on the same _e64 MCInst
+  //     (LLVM mirrors the subreg into the register slot and the op_sel into
+  //     the modifier), so reading both and OR-ing is safe across forms.
+  // The other half of the dst dword must be preserved (RDNA3+ ISA), so the
+  // result goes through writeSelectedU16Half. Source neg/abs are not
+  // meaningful for a bit-pattern move and are refused loudly.
+  if (Sop == CanonicalOp::V_MOV_B16) {
+    if (Op.nSrcs() < 1) {
+      Hr.Failure = RaiseFailure::unsupportedShape(
+          Di, "VOP1", "v_mov_b16 missing src0 operand");
+      return Hr;
+    }
+    unsigned Src0Mods = Op.srcMod(0);
+    constexpr unsigned AllowedSrc0Mods =
+        SISrcMods::OP_SEL_0 | SISrcMods::DST_OP_SEL;
+    if ((Src0Mods & ~AllowedSrc0Mods) != 0) {
+      Hr.Failure = RaiseFailure::unsupportedShape(
+          Di, "VOP1",
+          "v_mov_b16 has unsupported src0 modifiers; only op_sel/dst_op_sel "
+          "are modeled");
+      return Hr;
+    }
+    const MCRegisterInfo &MRI = *Ctx.Mc.RegInfo;
+    bool DstHi = (Src0Mods & SISrcMods::DST_OP_SEL) != 0;
+    if (Di.isReg(0) && AMDGPU::isHi16Reg(Di.getReg(0), MRI))
+      DstHi = true;
+    unsigned Src0Idx = Di.SrcMap[0];
+    bool Src0Hi = (Src0Mods & SISrcMods::OP_SEL_0) != 0;
+    if (Di.isReg(Src0Idx) && AMDGPU::isHi16Reg(Di.getReg(Src0Idx), MRI))
+      Src0Hi = true;
+    Value *Half = extractU16Half(Ctx, Op.src(0), Src0Hi);
+    writeSelectedU16Half(Ctx, Op.dst(), Half, DstHi, "v_mov_b16_merge");
+    Hr.Handled = true;
+    return Hr;
+  }
   // ---- Cross-lane primitives (readlane/writelane/permlane/mbcnt/
   //      readfirstlane) -- extracted to handle-valu-cross-lane.cpp ----
   {

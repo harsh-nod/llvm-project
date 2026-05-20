@@ -353,6 +353,10 @@ static const Entry kCanonTable[] = {
     E(V_MOV_B32_e64, V_MOV_B32),
     E(V_MOV_B64_e64, V_MOV_B64),
     E(V_MOV_B64_PSEUDO, V_MOV_B64),
+    // V_MOV_B16 is gfx11+ true16 / fake16. The pseudo-alias pass strips the
+    // `_t16_` and `_fake16_` infixes before lookup so only the bare e64 form
+    // needs an entry here.
+    E(V_MOV_B16_e64, V_MOV_B16),
     E(V_SWAP_B32, V_SWAP_B32),
     E(V_NOP_e64, V_NOP),
     E(V_NOT_B32_e64, V_NOT_B32),
