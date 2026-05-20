@@ -11,6 +11,7 @@
 
 #include "canonical-op.h"
 
+#include "SIDefines.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/IR/Constants.h"
@@ -96,6 +97,43 @@ HandlerResult handleValuSmallOps(RaiseContext &Ctx, const DecodedInst &Di,
                                     Ctx.F16Ty);
     Value *Res = Ctx.B.CreateFPToUI(S, I16Ty, "cvt_u16_f16");
     Ctx.writeReg32(Op.dst(), Ctx.B.CreateZExt(Res, Ctx.I32Ty));
+    Hr.Handled = true;
+    return Hr;
+  }
+  // gfx11+ true16/fake16 u16 -> u32 zero-extend. The 16-bit source half
+  // selection lives in one of two places depending on the encoding form:
+  //   * `_e32` (fake16 today): the MCInst's src0 slot holds a `_LO16` /
+  //     `_HI16` subreg of the parent VGPR; there is no modifier operand.
+  //   * `_e64`: src0_modifiers carries the OP_SEL_0 bit; the register
+  //     operand is the base 32-bit VGPR.
+  // The destination is a full 32-bit VGPR receiving the zero-extended u16,
+  // so DST_OP_SEL does not apply and we refuse it. `Op.src(0)` returns the
+  // parent VGPR's i32 value regardless of which subreg the MCInst slot
+  // named, so the lift is `trunc(lshr_if_hi(src0, 16), i16)` zero-extended
+  // back to i32.
+  case CanonicalOp::V_CVT_U32_U16: {
+    if (!requireDefaultOutputModsIfPresent(Di, Hr))
+      return Hr;
+    unsigned Mods = Op.srcMod(0);
+    constexpr unsigned AllowedMods = SISrcMods::OP_SEL_0;
+    if ((Mods & ~AllowedMods) != 0) {
+      Hr.Failure = RaiseFailure::unsupportedShape(
+          Di, "VOP1",
+          "v_cvt_u32_u16 has unsupported source modifiers; only src0 "
+          "op_sel (half select) is modeled");
+      return Hr;
+    }
+    const MCRegisterInfo &MRI = *Ctx.Mc.RegInfo;
+    unsigned SrcSlot = Di.SrcMap[0];
+    bool Src0SubHi = Di.isReg(SrcSlot) &&
+                     AMDGPU::isHi16Reg(Di.getReg(SrcSlot), MRI);
+    bool Src0Hi = Src0SubHi || (Mods & SISrcMods::OP_SEL_0) != 0;
+    Value *Raw = Op.src(0);
+    if (Src0Hi)
+      Raw = Ctx.B.CreateLShr(Raw, 16, "cvt_u32_u16_hi");
+    Value *Half = Ctx.B.CreateTrunc(Raw, I16Ty);
+    Ctx.writeReg32(Op.dst(),
+                   Ctx.B.CreateZExt(Half, Ctx.I32Ty, "cvt_u32_u16"));
     Hr.Handled = true;
     return Hr;
   }

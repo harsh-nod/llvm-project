@@ -364,6 +364,12 @@ static const Entry kCanonTable[] = {
     E(V_CVT_F32_U32_e64, V_CVT_F32_U32),
     E(V_CVT_I32_F32_e64, V_CVT_I32_F32),
     E(V_CVT_U32_F32_e64, V_CVT_U32_F32),
+    // gfx11+ true16/fake16 v_cvt_u32_u16. Real subtarget opcodes
+    // (`_t16_e64`, `_fake16_e64`, `_t16_e32`, `_fake16_e32`, plus their
+    // _dpp/_dpp8/_sdwa variants) canonicalize onto these base pseudos via
+    // the suffix-stripping pass in `OpcodeMap::canonicalize`.
+    E(V_CVT_U32_U16_e32, V_CVT_U32_U16),
+    E(V_CVT_U32_U16_e64, V_CVT_U32_U16),
     E(V_CVT_F16_F32_e64, V_CVT_F16_F32),
     E(V_CVT_F32_F16_e64, V_CVT_F32_F16),
     E(V_CVT_F32_BF16_e64, V_CVT_F32_BF16),
