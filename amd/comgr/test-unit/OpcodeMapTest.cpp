@@ -189,6 +189,19 @@ TEST(OpcodeMap, Gfx1250PkFmaF16RealOpcodeMapsToSemOp) {
             COMGR::hotswap::CanonicalOp::V_PK_FMA_F16);
 }
 
+TEST(OpcodeMap, Gfx1250PkAddF16RealOpcodeMapsToSemOp) {
+  ensureAMDGPURegistered();
+
+  COMGR::hotswap::MCState State;
+  llvm::cantFail(COMGR::hotswap::initMCState(State, "gfx1250"));
+
+  COMGR::hotswap::OpcodeMap Map;
+  Map.build(*State.InstrInfo);
+
+  EXPECT_EQ(Map.lookup(llvm::AMDGPU::V_PK_ADD_F16_gfx12),
+            COMGR::hotswap::CanonicalOp::V_PK_ADD_F16);
+}
+
 TEST(OpcodeMap, Gfx1250PkAddBF16RealOpcodeMapsToSemOp) {
   ensureAMDGPURegistered();
 

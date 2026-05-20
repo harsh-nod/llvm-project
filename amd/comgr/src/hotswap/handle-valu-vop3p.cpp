@@ -255,8 +255,8 @@ HandlerResult handleValuVoP3P(RaiseContext &Ctx, const DecodedInst &Di,
   StringRef Mn(Di.Mnemonic);
 
   switch (Sop) {
-  // ---- VOP3P packed ops (2x fp32 in 2 dwords) ----
-  // Handle op_sel_hi, neg_lo, neg_hi modifiers.
+  // ---- VOP3P packed ops ----
+  // Handle op_sel/op_sel_hi and per-lane negation modifiers.
   case CanonicalOp::V_PK_MOV_B32: {
     Ctx.writeReg64(Op.dst(), Op.src64(0));
     Hr.Handled = true;
@@ -319,6 +319,7 @@ HandlerResult handleValuVoP3P(RaiseContext &Ctx, const DecodedInst &Di,
     Hr.Handled = true;
     return Hr;
   }
+  case CanonicalOp::V_PK_ADD_F16:
   case CanonicalOp::V_PK_MUL_F16: {
     constexpr unsigned KnownPkF16Mods =
         SISrcMods::NEG | SISrcMods::NEG_HI | SISrcMods::OP_SEL_0 |
@@ -331,13 +332,15 @@ HandlerResult handleValuVoP3P(RaiseContext &Ctx, const DecodedInst &Di,
                                               AMDGPU::OpName::clamp);
     if (ClampIdx < 0 || !Di.isImm(static_cast<unsigned>(ClampIdx))) {
       Hr.Failure = RaiseFailure::unsupportedShape(
-          Di, "VOP3P", "v_pk_mul_f16 missing immediate clamp operand");
+          Di, "VOP3P",
+          (diagnosticMnemonic(Di) + " missing immediate clamp operand").str());
       return Hr;
     }
     int64_t ClampImm = Di.getImm(static_cast<unsigned>(ClampIdx));
     if (ClampImm != 0 && ClampImm != 1) {
       Hr.Failure = RaiseFailure::unsupportedShape(
-          Di, "VOP3P", "v_pk_mul_f16 clamp operand is not 0 or 1");
+          Di, "VOP3P",
+          (diagnosticMnemonic(Di) + " clamp operand is not 0 or 1").str());
       return Hr;
     }
 
@@ -347,7 +350,10 @@ HandlerResult handleValuVoP3P(RaiseContext &Ctx, const DecodedInst &Di,
     Opts.Name = "pk_f16_src";
     Value *S0 = readPacked2Src(Ctx, Op, 0, Ctx.F16Ty, Mods[0], Opts);
     Value *S1 = readPacked2Src(Ctx, Op, 1, Ctx.F16Ty, Mods[1], Opts);
-    Value *Res = Ctx.B.CreateFMul(S0, S1, "pk_mul_f16");
+    const bool IsAdd = Sop == CanonicalOp::V_PK_ADD_F16;
+    const char *Name = IsAdd ? "pk_add_f16" : "pk_mul_f16";
+    Value *Res = IsAdd ? Ctx.B.CreateFAdd(S0, S1, Name)
+                       : Ctx.B.CreateFMul(S0, S1, Name);
 
     if (ClampImm != 0) {
       Function *MaxFn = Intrinsic::getOrInsertDeclaration(
@@ -358,12 +364,12 @@ HandlerResult handleValuVoP3P(RaiseContext &Ctx, const DecodedInst &Di,
           ElementCount::getFixed(2), ConstantFP::get(Ctx.F16Ty, 0.0));
       Value *One = ConstantVector::getSplat(
           ElementCount::getFixed(2), ConstantFP::get(Ctx.F16Ty, 1.0));
-      Res = Ctx.B.CreateCall(MaxFn, {Res, Zero}, "pk_mul_f16_clamp_lo");
-      Res = Ctx.B.CreateCall(MinFn, {Res, One}, "pk_mul_f16_clamp");
+      Res = Ctx.B.CreateCall(MaxFn, {Res, Zero}, Twine(Name) + "_clamp_lo");
+      Res = Ctx.B.CreateCall(MinFn, {Res, One}, Twine(Name) + "_clamp");
     }
 
     Ctx.writeReg32(Op.dst(),
-                   Ctx.B.CreateBitCast(Res, Ctx.I32Ty, "pk_mul_f16_pack"));
+                   Ctx.B.CreateBitCast(Res, Ctx.I32Ty, Twine(Name) + "_pack"));
     Hr.Handled = true;
     return Hr;
   }

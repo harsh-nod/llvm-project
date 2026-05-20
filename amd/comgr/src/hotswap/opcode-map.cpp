@@ -687,6 +687,7 @@ static const Entry kCanonTable[] = {
     E(V_PK_MUL_F32, V_PK_MUL_F32),
     E(V_PK_FMA_F32, V_PK_FMA_F32),
     E(V_PK_FMA_F16, V_PK_FMA_F16),
+    E(V_PK_ADD_F16, V_PK_ADD_F16),
     E(V_PK_MUL_F16, V_PK_MUL_F16),
     // gfx1250-only packed BF16 arithmetic. The `_gfx1250` real opcodes
     // collapse to these bare pseudos via the MC->pseudo map, matching the

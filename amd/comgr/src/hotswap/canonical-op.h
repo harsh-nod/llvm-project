@@ -649,6 +649,14 @@ enum class CanonicalOp : uint16_t {
   // the fused operation. The VOP3P clamp bit clamps the packed f16 result to
   // [0, 1] after the fused operation.
   V_PK_FMA_F16,
+  // VOP3P packed f16 add (VOP3PInstructions.td
+  // `V_PK_ADD_F16`, profile VOP_V2F16_V2F16_V2F16):
+  //   dst = src0_lane + src1_lane per `<2 x half>` lane.
+  // Source lane selection (OP_SEL_0 / OP_SEL_1) and per-lane negation
+  // (NEG / NEG_HI) follow the same packed `srcN_modifiers` contract as
+  // V_PK_FMA_F16. The VOP3P clamp bit clamps the packed f16 result to
+  // [0, 1] after the add.
+  V_PK_ADD_F16,
   // VOP3P packed f16 multiply (VOP3PInstructions.td
   // `V_PK_MUL_F16`, profile VOP_V2F16_V2F16_V2F16):
   //   dst = src0_lane * src1_lane per `<2 x half>` lane.
