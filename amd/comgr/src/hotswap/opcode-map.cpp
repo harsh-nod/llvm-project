@@ -647,6 +647,7 @@ static const Entry kCanonTable[] = {
     // form is collapsed to e64 by getVOPe64 before lookup, so a
     // single e64 entry covers both encodings.
     E(V_RCP_F64_e64, V_RCP_F64),
+    E(V_LDEXP_F64_e64, V_LDEXP_F64),
 
     // ---------------------------------------------------------------------
     // More VOP3 32-bit int min/max and lane perms

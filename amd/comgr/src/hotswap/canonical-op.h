@@ -615,6 +615,12 @@ enum class CanonicalOp : uint16_t {
   // sequence on gfx942 unless `arcp`/fast-math flags are set, which
   // would be a silent semantics change versus the source op.
   V_RCP_F64,
+  // VOP3 FP64 ldexp: F64 src0 * 2^(I32 src1). Lifted to the generic
+  // `llvm.ldexp.f64.i32` intrinsic; the AMDGPU backend lowers this back
+  // to v_ldexp_f64 on targets that have the op natively. No e32 form
+  // exists -- the pseudo is VOP3-only -- so output modifiers are
+  // required to be present in the MC operand table and must be default.
+  V_LDEXP_F64,
 
   V_MAX_U32, V_MIN_U32, V_MAX_I32, V_MIN_I32,
   V_PERMLANE16_B32, V_PERMLANEX16_B32, V_PERMLANE64_B32,

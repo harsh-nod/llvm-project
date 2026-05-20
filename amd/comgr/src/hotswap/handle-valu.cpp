@@ -1187,6 +1187,28 @@ HandlerResult handleVALU(RaiseContext &Ctx, const DecodedInst &Di,
     Hr.Handled = true;
     return Hr;
   }
+  // v_ldexp_f64: VOP3-only F64 ldexp. src0 is F64 (with abs/neg
+  // modifiers), src1 is the I32 exponent (no modifiers). Lift to the
+  // generic `llvm.ldexp.f64.i32` intrinsic; the AMDGPU backend isels it
+  // back to v_ldexp_f64 on targets that have the op.
+  if (Sop == CanonicalOp::V_LDEXP_F64) {
+    if (!requireDefaultVOP3FpValuOutputMods(Di, Hr, "v_ldexp_f64"))
+      return Hr;
+    auto *F64Ty = Type::getDoubleTy(Ctx.C);
+    Value *S0 = Ctx.B.CreateBitCast(Op.src64(0), F64Ty);
+    unsigned Src0Mods = Op.srcMod(0);
+    if (Src0Mods & SISrcMods::ABS)
+      S0 = Ctx.B.CreateUnaryIntrinsic(Intrinsic::fabs, S0, nullptr, "abs");
+    if (Src0Mods & SISrcMods::NEG)
+      S0 = Ctx.B.CreateFNeg(S0, "neg");
+    Value *S1 = Op.src(1);
+    Function *LdexpFn = Intrinsic::getOrInsertDeclaration(
+        &Ctx.M, Intrinsic::ldexp, {F64Ty, Ctx.I32Ty});
+    Value *R = Ctx.B.CreateCall(LdexpFn, {S0, S1}, "vldexp_f64");
+    Ctx.writeReg64(Op.dst(), Ctx.B.CreateBitCast(R, Ctx.I64Ty));
+    Hr.Handled = true;
+    return Hr;
+  }
   if (Sop == CanonicalOp::V_FMA_F64 || Sop == CanonicalOp::V_FMAC_F64) {
     auto *F64Ty = Type::getDoubleTy(Ctx.C);
     Value *S0, *S1, *S2;
