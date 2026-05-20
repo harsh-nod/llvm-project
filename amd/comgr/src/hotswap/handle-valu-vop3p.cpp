@@ -319,6 +319,54 @@ HandlerResult handleValuVoP3P(RaiseContext &Ctx, const DecodedInst &Di,
     Hr.Handled = true;
     return Hr;
   }
+  case CanonicalOp::V_PK_MUL_F16: {
+    constexpr unsigned KnownPkF16Mods =
+        SISrcMods::NEG | SISrcMods::NEG_HI | SISrcMods::OP_SEL_0 |
+        SISrcMods::OP_SEL_1;
+    unsigned Mods[3] = {};
+    if (!readPackedSrcMods(Di, Op, 2, KnownPkF16Mods, Mods, Hr))
+      return Hr;
+
+    int ClampIdx = AMDGPU::getNamedOperandIdx(Di.Inst.getOpcode(),
+                                              AMDGPU::OpName::clamp);
+    if (ClampIdx < 0 || !Di.isImm(static_cast<unsigned>(ClampIdx))) {
+      Hr.Failure = RaiseFailure::unsupportedShape(
+          Di, "VOP3P", "v_pk_mul_f16 missing immediate clamp operand");
+      return Hr;
+    }
+    int64_t ClampImm = Di.getImm(static_cast<unsigned>(ClampIdx));
+    if (ClampImm != 0 && ClampImm != 1) {
+      Hr.Failure = RaiseFailure::unsupportedShape(
+          Di, "VOP3P", "v_pk_mul_f16 clamp operand is not 0 or 1");
+      return Hr;
+    }
+
+    auto *V2f16 = FixedVectorType::get(Ctx.F16Ty, 2);
+    PackedSrcOptions Opts;
+    Opts.ApplyFloatNeg = true;
+    Opts.Name = "pk_f16_src";
+    Value *S0 = readPacked2Src(Ctx, Op, 0, Ctx.F16Ty, Mods[0], Opts);
+    Value *S1 = readPacked2Src(Ctx, Op, 1, Ctx.F16Ty, Mods[1], Opts);
+    Value *Res = Ctx.B.CreateFMul(S0, S1, "pk_mul_f16");
+
+    if (ClampImm != 0) {
+      Function *MaxFn = Intrinsic::getOrInsertDeclaration(
+          &Ctx.M, Intrinsic::maxnum, {V2f16});
+      Function *MinFn = Intrinsic::getOrInsertDeclaration(
+          &Ctx.M, Intrinsic::minnum, {V2f16});
+      Value *Zero = ConstantVector::getSplat(
+          ElementCount::getFixed(2), ConstantFP::get(Ctx.F16Ty, 0.0));
+      Value *One = ConstantVector::getSplat(
+          ElementCount::getFixed(2), ConstantFP::get(Ctx.F16Ty, 1.0));
+      Res = Ctx.B.CreateCall(MaxFn, {Res, Zero}, "pk_mul_f16_clamp_lo");
+      Res = Ctx.B.CreateCall(MinFn, {Res, One}, "pk_mul_f16_clamp");
+    }
+
+    Ctx.writeReg32(Op.dst(),
+                   Ctx.B.CreateBitCast(Res, Ctx.I32Ty, "pk_mul_f16_pack"));
+    Hr.Handled = true;
+    return Hr;
+  }
   case CanonicalOp::V_PK_ADD_BF16:
   case CanonicalOp::V_PK_MUL_BF16:
   case CanonicalOp::V_PK_MIN_NUM_BF16:
