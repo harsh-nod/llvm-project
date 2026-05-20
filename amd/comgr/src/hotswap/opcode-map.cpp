@@ -622,6 +622,12 @@ static const Entry kCanonTable[] = {
     E(V_MUL_F64_e64, V_MUL_F64),
     E(V_FMA_F64_e64, V_FMA_F64),
     E(V_FMAC_F64_e64, V_FMAC_F64),
+    // VOP2-only mandatory-literal FMA forms. The pseudos have no e32/e64
+    // split (analogous to V_FMAMK_F32 / V_FMAAK_F32 above); subtarget reals
+    // (V_FMAMK_F64_gfx1250 / V_FMAAK_F64_gfx1250) collapse back via
+    // OpcodeMap::canonicalize.
+    E(V_FMAMK_F64, V_FMAMK_F64),
+    E(V_FMAAK_F64, V_FMAAK_F64),
     E(V_MAX_NUM_F64_e64, V_MAX_NUM_F64),
     E(V_MIN_NUM_F64_e64, V_MIN_NUM_F64),
     // V_RCP_F64 has no DPP (`VOP1_Real_..._NO_DPP_...`); the e32

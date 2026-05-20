@@ -1203,6 +1203,36 @@ HandlerResult handleVALU(RaiseContext &Ctx, const DecodedInst &Di,
     Hr.Handled = true;
     return Hr;
   }
+  // v_fmamk_f64 vd, src0, K, src1: vd = fma(src0, K, src1)
+  // v_fmaak_f64 vd, src0, src1, K: vd = fma(src0, src1, K)
+  // F64 mirror of V_FMAMK_F32 / V_FMAAK_F32. The 64-bit K immediate is the
+  // KImmFP64 operand: the disassembler materialises it as an i64 Imm when the
+  // upper 32 bits are non-zero, or as an MCExpr (`lit64(...)`) when the upper
+  // 32 bits are zero. `readOp64` (via `src64`) handles both forms.
+  // Per `decode.cpp` MADMK exception, V_FMAMK_F64's `(src0, K, src1)` layout
+  // is recognised by the generic IsMadmk detector (imm strictly between src0
+  // and src1) so the strict srcN-position drift check skips k=1 without
+  // needing a per-opcode allowlist.
+  if (Sop == CanonicalOp::V_FMAMK_F64) {
+    auto *F64Ty = Type::getDoubleTy(Ctx.C);
+    Value *S0 = Ctx.B.CreateBitCast(Op.src64(0), F64Ty);
+    Value *K  = Ctx.B.CreateBitCast(Op.src64(1), F64Ty);
+    Value *S2 = Ctx.B.CreateBitCast(Op.src64(2), F64Ty);
+    Function *Fma = Intrinsic::getOrInsertDeclaration(&Ctx.M, Intrinsic::fma, {F64Ty});
+    Ctx.writeReg64(Op.dst(), Ctx.B.CreateBitCast(Ctx.B.CreateCall(Fma, {S0, K, S2}, "vfmamk_f64"), Ctx.I64Ty));
+    Hr.Handled = true;
+    return Hr;
+  }
+  if (Sop == CanonicalOp::V_FMAAK_F64) {
+    auto *F64Ty = Type::getDoubleTy(Ctx.C);
+    Value *S0 = Ctx.B.CreateBitCast(Op.src64(0), F64Ty);
+    Value *S1 = Ctx.B.CreateBitCast(Op.src64(1), F64Ty);
+    Value *K  = Ctx.B.CreateBitCast(Op.src64(2), F64Ty);
+    Function *Fma = Intrinsic::getOrInsertDeclaration(&Ctx.M, Intrinsic::fma, {F64Ty});
+    Ctx.writeReg64(Op.dst(), Ctx.B.CreateBitCast(Ctx.B.CreateCall(Fma, {S0, S1, K}, "vfmaak_f64"), Ctx.I64Ty));
+    Hr.Handled = true;
+    return Hr;
+  }
   if (Sop == CanonicalOp::V_CVT_F64_U32) {
     auto *F64Ty = Type::getDoubleTy(Ctx.C);
     Ctx.writeReg64(Op.dst(), Ctx.B.CreateBitCast(Ctx.B.CreateUIToFP(Op.src(0), F64Ty, "cvt_f64_u32"), Ctx.I64Ty));

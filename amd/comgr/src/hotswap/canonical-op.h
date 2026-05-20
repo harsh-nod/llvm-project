@@ -579,6 +579,11 @@ enum class CanonicalOp : uint16_t {
 
   // -- VOP2/VOP3 FP64 --
   V_ADD_F64, V_MUL_F64, V_FMA_F64, V_FMAC_F64,
+  // gfx1250/gfx13 mandatory-literal FMA forms (VOP2-only, no e64). 64-bit K
+  // immediate carried in the encoding; operand layout mirrors the F32 forms:
+  //   v_fmamk_f64 vd, src0, K, src1 -> vd = fma(src0, K, src1)
+  //   v_fmaak_f64 vd, src0, src1, K -> vd = fma(src0, src1, K)
+  V_FMAMK_F64, V_FMAAK_F64,
   // gfx12+ IEEE-754 maximumNumber/minimumNumber f64. LLVM names the pseudos
   // `V_{MAX,MIN}_NUM_F64`; assembler mnemonics are `v_{max,min}_f64` on
   // gfx12/gfx1250. Semantics prefer a numeric operand over NaN, matching

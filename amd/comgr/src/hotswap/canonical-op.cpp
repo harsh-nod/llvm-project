@@ -161,6 +161,7 @@ const char *canonicalOpName(CanonicalOp Op) {
     S(V_BFM_B32)
     // VOP2/VOP3 FP64
     S(V_ADD_F64) S(V_MUL_F64) S(V_FMA_F64) S(V_FMAC_F64)
+    S(V_FMAMK_F64) S(V_FMAAK_F64)
     S(V_MAX_NUM_F64) S(V_MIN_NUM_F64)
     S(V_RCP_F64)
     S(V_MAX_U32) S(V_MIN_U32) S(V_MAX_I32) S(V_MIN_I32)
