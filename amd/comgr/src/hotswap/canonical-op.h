@@ -99,6 +99,14 @@ enum class CanonicalOp : uint16_t {
   // -- SOP1 --
   S_MOV_B32, S_MOV_B64, S_NOT_B32, S_NOT_B64,
   S_BREV_B32, S_FF1_I32_B32, S_FF1_I32_B64,
+  // s_bcnt1_i32_b{32,64}: scalar population count
+  // (SOPInstructions.td:269-274). Both lower to llvm.ctpop on the
+  // appropriately sized source; the B64 form truncates the ctpop result
+  // to i32 for the destination SGPR. Both write SCC = (D.u != 0),
+  // derived automatically by the raiser from Hr.SccResult
+  // (raiser.cpp:1202) since SOPInstructions.td wraps the defs in
+  // `let Defs = [SCC]`.
+  S_BCNT1_I32_B32, S_BCNT1_I32_B64,
   // s_ff0_i32_b{32,64}: find first 0 bit (lowest position), returning
   // -1 when the source is all-ones. SOPInstructions.td:278-279 (no
   // LLVM ISel pattern is provided, so the instruction is only emitted

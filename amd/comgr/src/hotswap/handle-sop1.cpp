@@ -496,6 +496,23 @@ HandlerResult handleSOP1(RaiseContext &Ctx, const DecodedInst &Di,
     Hr.Handled = true;
     return Hr;
   }
+  if (Sop == CanonicalOp::S_BCNT1_I32_B32) {
+    Function *Ctpop = Intrinsic::getOrInsertDeclaration(
+        &Ctx.M, Intrinsic::ctpop, {Ctx.I32Ty});
+    Hr.SccResult = Ctx.B.CreateCall(Ctpop, {Op.src(0)}, "bcnt1");
+    Ctx.Regs.writeReg32(Ctx.B, Op.dst(), Hr.SccResult);
+    Hr.Handled = true;
+    return Hr;
+  }
+  if (Sop == CanonicalOp::S_BCNT1_I32_B64) {
+    Function *Ctpop64 = Intrinsic::getOrInsertDeclaration(
+        &Ctx.M, Intrinsic::ctpop, {Ctx.I64Ty});
+    Value *R = Ctx.B.CreateCall(Ctpop64, {Op.src64(0)}, "bcnt1_64");
+    Hr.SccResult = Ctx.B.CreateTrunc(R, Ctx.I32Ty);
+    Ctx.Regs.writeReg32(Ctx.B, Op.dst(), Hr.SccResult);
+    Hr.Handled = true;
+    return Hr;
+  }
   if (Sop == CanonicalOp::S_FF1_I32_B64) {
     Function *Cttz64 = Intrinsic::getOrInsertDeclaration(
         &Ctx.M, Intrinsic::cttz, {Ctx.I64Ty});
