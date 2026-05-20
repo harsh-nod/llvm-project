@@ -542,6 +542,13 @@ enum class CanonicalOp : uint16_t {
   // semantics are fused-multiply-add (no rounding of the intermediate
   // product), matching the F32 FMAMK/FMAAK convention.
   V_MADMK_F16, V_MADAK_F16,
+  // VOP3 F16 fused multiply-add: dst = fma(src0, src1, src2). The gfx9+
+  // pseudos (V_FMA_F16_gfx9_e64 and its t16/fake16 siblings) expose
+  // per-source op_sel for half selection within the 32-bit VGPR, plus the
+  // usual VOP3 neg/abs source modifiers and a destination op_sel for
+  // half-write placement. Lowered to llvm.fma.f16; semantics match
+  // VOP3Instructions.td:453,2312,2601 (any_fma SDNode).
+  V_FMA_F16,
   V_MAX_F16, V_MIN_F16,
   // F16 ternary clamp `.NUM` pair. Like the IEEE f16 forms below, these
   // preserve the unselected destination half and honor source/dst op_sel.

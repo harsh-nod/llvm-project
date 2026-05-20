@@ -571,6 +571,17 @@ static const Entry kCanonTable[] = {
     E(V_MADMK_F16, V_MADMK_F16),
     E(V_MADAK_F16, V_MADAK_F16),
     E(V_FMAC_F16_e64, V_FMAC_F16),
+    // VOP3 F16 explicit-source fused multiply-add. LLVM emits two parallel
+    // pseudos because gfx9 introduced op_sel on the original gfx8 V_FMA_F16:
+    //   V_FMA_F16_e64        -- gfx8 ("vi") form (no op_sel)
+    //   V_FMA_F16_gfx9_e64   -- gfx9+ op_sel form (also the base for t16/
+    //                            fake16 collapse below)
+    // Both map to the same llvm.fma.f16 lowering; the gfx9 op_sel handling
+    // lives in the handler. The `_t16_` / `_fake16_` 16-bit encoding
+    // variants on top of the gfx9 form are folded onto V_FMA_F16_gfx9_e64
+    // by the sameSemanticShape stripping pass in `buildPseudoAliasMap`.
+    E(V_FMA_F16_e64, V_FMA_F16),
+    E(V_FMA_F16_gfx9_e64, V_FMA_F16),
     E(V_MAX_F16_e64, V_MAX_F16),
     E(V_MIN_F16_e64, V_MIN_F16),
     E(V_MINMAX_F16_e64, V_MINMAX_NUM_F16),

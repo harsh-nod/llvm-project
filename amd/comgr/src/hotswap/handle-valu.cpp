@@ -1416,6 +1416,35 @@ HandlerResult handleVALU(RaiseContext &Ctx, const DecodedInst &Di,
     return Hr;
   }
 
+  // v_fma_f16 dst, src0, src1, src2: dst = fma(src0, src1, src2).
+  // VOP3 explicit-source F16 fused multiply-add. The gfx9+ pseudo
+  // (V_FMA_F16_gfx9_e64 and its t16/fake16 collapses) carries per-source
+  // op_sel (low/high half of the 32-bit VGPR), the usual VOP3 neg/abs
+  // source modifiers, and a destination op_sel for half-write placement.
+  // Lowers to llvm.fma.f16 to keep the fused-multiply-add semantics.
+  if (Sop == CanonicalOp::V_FMA_F16) {
+    StringRef OpName = "v_fma_f16";
+    bool DstHigh = false;
+    if (!requireDefaultVOP3FpValuOutputMods(Di, Hr, OpName) ||
+        !readVOP3F16DstHigh(Di, Hr, OpName, DstHigh))
+      return Hr;
+
+    SmallVector<Value *, 3> Srcs;
+    for (unsigned I = 0; I < 3; ++I) {
+      Value *Src = readOpSelF16(Ctx, Di, Op, Hr, I, OpName);
+      if (!Src)
+        return Hr;
+      Srcs.push_back(Src);
+    }
+
+    Function *Fma = Intrinsic::getOrInsertDeclaration(&Ctx.M, Intrinsic::fma,
+                                                     {Ctx.F16Ty});
+    Value *R = Ctx.B.CreateCall(Fma, {Srcs[0], Srcs[1], Srcs[2]}, "fma_f16");
+    writeOpSelF16(Ctx, Op, R, DstHigh);
+    Hr.Handled = true;
+    return Hr;
+  }
+
   // ---- Division helpers (VOP3) ----
   if (Sop == CanonicalOp::V_DIV_SCALE_F32) {
     // `v_div_scale_f32 dst, vcc, src0, src1, src2` scales one operand
