@@ -324,6 +324,13 @@ enum class CanonicalOp : uint16_t {
   // matching LLVM's `maximumnum` / `minimumnum` intrinsic contract without
   // fast-math flags.
   S_MAX_NUM_F32, S_MIN_NUM_F32,
+  // Scalar IEEE-754-2019 NaN-propagating maximum on f16 (gfx12+). Sources and
+  // destination are 32-bit SGPRs whose low 16 bits hold the f16 operand; the
+  // high half is ignored on read and zeroed on write. Lowers to
+  // `llvm.maximum.f16`: if either input is NaN, result is NaN (qNaN preferred
+  // over sNaN); `maximum(+0, -0) = +0`. The NUM (non-propagating) sibling is
+  // `S_MAX_NUM_F32`-style and must not be conflated with this opcode.
+  S_MAXIMUM_F16,
   S_BFE_U32, S_BFE_I32, S_BFM_B32, S_BFM_B64,
   S_CSELECT_B32, S_CSELECT_B64,
   S_MIN_I32, S_MIN_U32, S_MAX_I32, S_MAX_U32,

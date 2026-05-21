@@ -85,6 +85,7 @@ const char *canonicalOpName(CanonicalOp Op) {
     S(S_FMAC_F32)
     S(S_FMAAK_F32) S(S_FMAMK_F32)
     S(S_MAX_NUM_F32) S(S_MIN_NUM_F32)
+    S(S_MAXIMUM_F16)
     S(S_BFE_U32) S(S_BFE_I32) S(S_BFM_B32) S(S_BFM_B64)
     S(S_CSELECT_B32) S(S_CSELECT_B64)
     S(S_MIN_I32) S(S_MIN_U32) S(S_MAX_I32) S(S_MAX_U32)

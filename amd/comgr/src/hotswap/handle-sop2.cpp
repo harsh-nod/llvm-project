@@ -436,6 +436,30 @@ HandlerResult handleSOP2(RaiseContext &Ctx, const DecodedInst &Di,
     Hr.Handled = true;
     return Hr;
   }
+  // gfx12+ scalar IEEE-754-2019 NaN-propagating f16 maximum
+  // (SOPInstructions.td:1009, real opcode 0x052 in gfx12/gfx13). Sources and
+  // destination are 32-bit SGPRs whose low 16 bits carry the f16 operand;
+  // the high 16 bits are ignored on read and zeroed on write. SOP2 has no
+  // source or output modifiers, so this is a straight low-half f16 lift with
+  // no DPP/SDWA/op_sel handling. Lowers to `llvm.maximum.f16`: NaN-
+  // propagating with qNaN preferred over sNaN, and `maximum(+0, -0) = +0`.
+  // The non-propagating NUM sibling routes through the `S_MAX_NUM_F32`-style
+  // family above and must not be conflated.
+  if (Sop == CanonicalOp::S_MAXIMUM_F16) {
+    Type *I16Ty = Type::getInt16Ty(Ctx.C);
+    Value *S0Lo = Ctx.B.CreateTrunc(Op.src(0), I16Ty);
+    Value *S1Lo = Ctx.B.CreateTrunc(Op.src(1), I16Ty);
+    Value *S0 = Ctx.B.CreateBitCast(S0Lo, Ctx.F16Ty);
+    Value *S1 = Ctx.B.CreateBitCast(S1Lo, Ctx.F16Ty);
+    Function *Fn = Intrinsic::getOrInsertDeclaration(
+        &Ctx.M, Intrinsic::maximum, {Ctx.F16Ty});
+    Value *R = Ctx.B.CreateCall(Fn, {S0, S1}, "smaximum_f16");
+    Value *RBits = Ctx.B.CreateBitCast(R, I16Ty);
+    Value *R32 = Ctx.B.CreateZExt(RBits, Ctx.I32Ty);
+    Ctx.Regs.writeReg32(Ctx.B, Op.dst(), R32);
+    Hr.Handled = true;
+    return Hr;
+  }
   // GFX12 scalar 64-bit ops
   if (Sop == CanonicalOp::S_MUL_U64) {
     Ctx.Regs.writeReg64(Ctx.B, Op.dst(),
