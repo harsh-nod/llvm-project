@@ -460,6 +460,24 @@ HandlerResult handleSOP2(RaiseContext &Ctx, const DecodedInst &Di,
     Hr.Handled = true;
     return Hr;
   }
+  // gfx12+ scalar IEEE-754-2019 maximum. SOPInstructions.td 1007 defines
+  // this as the NaN-propagating sibling of the NUM family handled just
+  // above: if either input is NaN the result is NaN, and signed zeros are
+  // ordered (+0 > -0). Maps to LLVM's `llvm.maximum.f32`; the NUM
+  // (`maximumnum`) intrinsic is the wrong contract here. SOP2 has no
+  // source/output modifiers, so we just reinterpret the i32 SGPRs as f32.
+  if (Sop == CanonicalOp::S_MAXIMUM_F32) {
+    Value *S0 = Ctx.B.CreateBitCast(Op.src(0), Ctx.F32Ty);
+    Value *S1 = Ctx.B.CreateBitCast(Op.src(1), Ctx.F32Ty);
+    Function *Fn = Intrinsic::getOrInsertDeclaration(
+        &Ctx.M, Intrinsic::maximum, {Ctx.F32Ty});
+    Ctx.Regs.writeReg32(
+        Ctx.B, Op.dst(),
+        Ctx.B.CreateBitCast(Ctx.B.CreateCall(Fn, {S0, S1}, "s_fmaximum"),
+                            Ctx.I32Ty));
+    Hr.Handled = true;
+    return Hr;
+  }
   // GFX12 scalar 64-bit ops
   if (Sop == CanonicalOp::S_MUL_U64) {
     Ctx.Regs.writeReg64(Ctx.B, Op.dst(),

@@ -331,6 +331,12 @@ enum class CanonicalOp : uint16_t {
   // over sNaN); `maximum(+0, -0) = +0`. The NUM (non-propagating) sibling is
   // `S_MAX_NUM_F32`-style and must not be conflated with this opcode.
   S_MAXIMUM_F16,
+  // Scalar IEEE-754-2019 maximum. gfx12+ only (SOPInstructions.td
+  // ~1007). NaN-propagating: if either input is NaN, the result is NaN.
+  // Signed zeros are ordered (+0 > -0). This is the separate opcode
+  // family that maps to LLVM's `maximum` intrinsic, distinct from the
+  // `S_MAX_NUM_F32` NUM family.
+  S_MAXIMUM_F32,
   S_BFE_U32, S_BFE_I32, S_BFM_B32, S_BFM_B64,
   S_CSELECT_B32, S_CSELECT_B64,
   S_MIN_I32, S_MIN_U32, S_MAX_I32, S_MAX_U32,

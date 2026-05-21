@@ -322,6 +322,9 @@ static const Entry kCanonTable[] = {
     // operand. Routes to the NaN-propagating `llvm.maximum.f16`; the NUM
     // (non-propagating) sibling lives under `S_MAX_NUM_F32`-style ops.
     E(S_MAXIMUM_F16, S_MAXIMUM_F16),
+    // gfx12+ scalar IEEE-2019 NaN-propagating maximum. Distinct opcode
+    // from the NUM family above; lowers to `llvm.maximum.f32`.
+    E(S_MAXIMUM_F32, S_MAXIMUM_F32),
     E(S_BFE_U32, S_BFE_U32), E(S_BFE_I32, S_BFE_I32),
     E(S_BFM_B32, S_BFM_B32), E(S_BFM_B64, S_BFM_B64),
     E(S_CSELECT_B32, S_CSELECT_B32), E(S_CSELECT_B64, S_CSELECT_B64),
