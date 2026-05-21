@@ -710,16 +710,16 @@ static const Entry kCanonTable[] = {
     // leave the matching CanonicalOps unmapped until one appears.
     E(V_PK_MOV_B32, V_PK_MOV_B32),
     // Packed `<2 x i16>` int family. LLVM emits the bare TableGen pseudo
-    // (`V_PK_ADD_U16` / `V_PK_LSHLREV_B16`); the gfx10/gfx11/gfx12/vi
-    // realtriples (`_gfx10`, `_vi`, etc.) all canonicalize back to it
-    // through the pseudo-alias step. Two opcodes is the entire VOP3P
-    // packed-int surface the kerneldex corpus exercises today; siblings
-    // V_PK_LSHRREV_B16 / V_PK_ASHRREV_I16 / V_PK_SUB_U16 / V_PK_MUL_LO_U16
+    // (`V_PK_ADD_U16` / `V_PK_LSHLREV_B16` / `V_PK_MUL_LO_U16`); the
+    // gfx10/gfx11/gfx12/vi realtriples (`_gfx10`, `_vi`, etc.) all
+    // canonicalize back to it through the pseudo-alias step. Siblings
+    // V_PK_LSHRREV_B16 / V_PK_ASHRREV_I16 / V_PK_SUB_U16
     // / V_PK_MAX_{I,U}16 / V_PK_MIN_{I,U}16 share the same handler shape
     // and are intentionally NOT pre-enumerated -- the no-fallback policy
     // says we wait for a corpus producer rather than ship dead lift code.
     E(V_PK_ADD_U16, V_PK_ADD_U16),
     E(V_PK_LSHLREV_B16, V_PK_LSHLREV_B16),
+    E(V_PK_MUL_LO_U16, V_PK_MUL_LO_U16),
 
     // ---------------------------------------------------------------------
     // 64-bit vector
