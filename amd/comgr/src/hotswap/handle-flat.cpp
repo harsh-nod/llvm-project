@@ -71,6 +71,22 @@ Value *emitD16HiHalfTruncI16(RaiseContext &Ctx, Value *Src32) {
                             "d16hi_trunc");
 }
 
+// Byte-store sibling of `emitD16HiHalfTruncI16`. Both `_D16_HI` store
+// forms (b16 / b8) drop the low 16 bits of the source VGPR via `lshr
+// 16`; the byte form additionally truncates to i8, surfacing bits
+// [23:16] (the low byte of the high 16-bit half). Used by
+// `GLOBAL_STORE_BYTE_D16_HI` -- the byte-store counterpart to the
+// existing `GLOBAL_STORE_SHORT_D16_HI` path. Value-name breadcrumbs
+// (`d16hi_shift` / `d16hi_trunc`) match the b16 helper so the lit
+// family stays uniform.
+Value *emitD16HiHalfTruncI8(RaiseContext &Ctx, Value *Src32) {
+  Value *Shifted = Ctx.B.CreateLShr(Src32,
+                                     ConstantInt::get(Ctx.I32Ty, 16),
+                                     "d16hi_shift");
+  return Ctx.B.CreateTrunc(Shifted, Type::getInt8Ty(Ctx.C),
+                            "d16hi_trunc");
+}
+
 int64_t firstScratchImm(const DecodedInst &Di, OpResolver &Op,
                         unsigned ImmStart) {
   for (unsigned K = ImmStart; K < Op.nSrcs(); ++K) {
@@ -454,7 +470,8 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
     return Hr;
   }
 
-  if (Sop == CanonicalOp::GLOBAL_STORE_BYTE || Sop == CanonicalOp::GLOBAL_STORE_SHORT ||
+  if (Sop == CanonicalOp::GLOBAL_STORE_BYTE || Sop == CanonicalOp::GLOBAL_STORE_BYTE_D16_HI ||
+      Sop == CanonicalOp::GLOBAL_STORE_SHORT ||
       Sop == CanonicalOp::GLOBAL_STORE_SHORT_D16_HI || Sop == CanonicalOp::GLOBAL_STORE_DWORD ||
       Sop == CanonicalOp::GLOBAL_STORE_DWORDX2 || Sop == CanonicalOp::GLOBAL_STORE_DWORDX3 ||
       Sop == CanonicalOp::GLOBAL_STORE_DWORDX4) {
@@ -486,9 +503,11 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
       StoreBits = 16;
       StoreDwords = 0;
       StoreHiHalf = (Sop == CanonicalOp::GLOBAL_STORE_SHORT_D16_HI);
-    } else if (Sop == CanonicalOp::GLOBAL_STORE_BYTE) {
+    } else if (Sop == CanonicalOp::GLOBAL_STORE_BYTE ||
+               Sop == CanonicalOp::GLOBAL_STORE_BYTE_D16_HI) {
       StoreBits = 8;
       StoreDwords = 0;
+      StoreHiHalf = (Sop == CanonicalOp::GLOBAL_STORE_BYTE_D16_HI);
     }
 
     // scale_offset on stores scales the per-lane vaddr by the access
@@ -505,13 +524,18 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
 
     if (StoreDwords == 0) {
       Value *Src32 = Ctx.Regs.readReg32(Ctx.B, StData);
-      // `_D16_HI` variant routes through the shared half-register
-      // helper that emits `lshr 16 + trunc to i16`; the non-
+      // `_D16_HI` variants route through the shared half-register
+      // helpers that emit `lshr 16 + trunc to iN` (N = 16 for the
+      // short form, 8 for the byte form -- the b8 form surfaces
+      // bits [23:16], the low byte of the high half).  The non-
       // `_D16_HI` short / byte path takes a plain trunc to `memTy`.
-      Value *Val = StoreHiHalf
-                      ? emitD16HiHalfTruncI16(Ctx, Src32)
-                      : Ctx.B.CreateTrunc(
-                            Src32, Type::getIntNTy(Ctx.C, StoreBits));
+      Value *Val;
+      if (StoreHiHalf) {
+        Val = (StoreBits == 8) ? emitD16HiHalfTruncI8(Ctx, Src32)
+                                : emitD16HiHalfTruncI16(Ctx, Src32);
+      } else {
+        Val = Ctx.B.CreateTrunc(Src32, Type::getIntNTy(Ctx.C, StoreBits));
+      }
       Ctx.emitUnderExec([&] { Ctx.B.CreateStore(Val, Addr); });
     } else if (StoreDwords == 1) {
       Value *Val = Ctx.Regs.readReg32(Ctx.B, StData);
