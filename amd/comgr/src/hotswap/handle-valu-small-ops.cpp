@@ -576,6 +576,19 @@ HandlerResult handleValuSmallOps(RaiseContext &Ctx, const DecodedInst &Di,
     Hr.Handled = true;
     return Hr;
   }
+  case CanonicalOp::V_CEIL_F64: {
+    if (!requireDefaultOutputModsIfPresent(Di, Hr))
+      return Hr;
+    Value *S = Ctx.B.CreateBitCast(Op.src64(0), Ctx.F64Ty);
+    S = Op.applyMods(0, S);
+    Function *CeilFn = Intrinsic::getOrInsertDeclaration(
+        &Ctx.M, Intrinsic::ceil, {Ctx.F64Ty});
+    Ctx.writeReg64(Op.dst(),
+                   Ctx.B.CreateBitCast(
+                       Ctx.B.CreateCall(CeilFn, {S}, "ceil"), Ctx.I64Ty));
+    Hr.Handled = true;
+    return Hr;
+  }
   case CanonicalOp::V_TRUNC_F32: {
     if (!requireDefaultOutputModsIfPresent(Di, Hr))
       return Hr;
