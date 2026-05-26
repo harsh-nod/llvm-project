@@ -56,6 +56,12 @@ ArrayRef<CanonicalOpAttrSpec> getHandlerSOP2Attrs() {
       {CanonicalOp::S_ASHR_I64, {/*routesExecThroughStoreExec=*/true}},
       {CanonicalOp::S_BFM_B32, {/*routesExecThroughStoreExec=*/true}},
       {CanonicalOp::S_BFM_B64, {/*routesExecThroughStoreExec=*/true}},
+      // s_bfe_i64 writes its i64 sign-extracted result through
+      // writeReg64(), so an explicit-EXEC destination (e.g.
+      // `s_bfe_i64 exec, s[0:1], 0x10000`) routes through
+      // storeExec like the other 64-bit SOP2 EXEC writers above.
+      // The SPE gate requires the attr to be declared here.
+      {CanonicalOp::S_BFE_I64, {/*routesExecThroughStoreExec=*/true}},
       {CanonicalOp::S_CSELECT_B32, {/*routesExecThroughStoreExec=*/true}},
       {CanonicalOp::S_CSELECT_B64, {/*routesExecThroughStoreExec=*/true}},
   };
@@ -773,6 +779,50 @@ HandlerResult handleSOP2(RaiseContext &Ctx, const DecodedInst &Di,
     // matching the ISA's "SCC = D != 0" for s_bfe_*.
     Hr.SccResult = Result;
     Ctx.Regs.writeReg32(Ctx.B, Op.dst(), Result);
+    Hr.Handled = true;
+    return Hr;
+  }
+  // s_bfe_i64: signed scalar Bit Field Extract, 64-bit.
+  //   shift  = ctrl[5:0]
+  //   length = ctrl[22:16]
+  //   if length == 0: D = 0
+  //   elif shift + length < 64:
+  //       D = sign_ext((src << (64 - shift - length)) >> (64 - length))
+  //   else:
+  //       D = (int64)src >> shift   (length saturates to full width)
+  // 64-bit analogue of S_BFE_I32. Src0 is a 64-bit SGPR pair; src1 is a
+  // 32-bit control word in the same SOP2_64_32 shape as S_LSHL_B64. The
+  // shift amounts are masked to 6 bits to keep the unselected select arm
+  // poison-free (same justification as the I32 handler, just for i64).
+  if (Sop == CanonicalOp::S_BFE_I64) {
+    Value *Src = Op.src64(0);
+    Value *Ctrl = Op.src(1);
+    Value *Shift32 = Ctx.B.CreateAnd(Ctrl, ConstantInt::get(Ctx.I32Ty, 0x3F));
+    Value *Length32 = Ctx.B.CreateAnd(Ctx.B.CreateLShr(Ctrl, 16),
+                                      ConstantInt::get(Ctx.I32Ty, 0x7F));
+    Value *Shift = Ctx.B.CreateZExt(Shift32, Ctx.I64Ty);
+    Value *Length = Ctx.B.CreateZExt(Length32, Ctx.I64Ty);
+    Value *C63 = ConstantInt::get(Ctx.I64Ty, 0x3F);
+    Value *C64 = ConstantInt::get(Ctx.I64Ty, 64);
+    Value *Sum = Ctx.B.CreateAdd(Shift, Length);
+    Value *IsShortEnough = Ctx.B.CreateICmpULT(Sum, C64);
+    Value *ShlAmt = Ctx.B.CreateAnd(Ctx.B.CreateSub(C64, Sum), C63);
+    Value *ShiftedLeft = Ctx.B.CreateShl(Src, ShlAmt);
+    Value *ShrAmt = Ctx.B.CreateAnd(Ctx.B.CreateSub(C64, Length), C63);
+    Value *Sx = Ctx.B.CreateAShr(ShiftedLeft, ShrAmt, "sbfe_i64");
+    // Fall-through branch (length saturates): arithmetic right shift by
+    // `shift` gives "sign-extended src[63:shift]" in a single op.
+    Value *Fallthrough = Ctx.B.CreateAShr(Src, Shift, "sbfe_i64_sat");
+    Value *Computed = Ctx.B.CreateSelect(IsShortEnough, Sx, Fallthrough);
+    Value *IsZero = Ctx.B.CreateICmpEQ(Length,
+                                       ConstantInt::get(Ctx.I64Ty, 0));
+    Value *Result = Ctx.B.CreateSelect(IsZero,
+                                       ConstantInt::get(Ctx.I64Ty, 0),
+                                       Computed);
+    // sccResult is i64; downstream code derives SCC as (sccResult != 0),
+    // matching the ISA's "SCC = D != 0" for s_bfe_*.
+    Hr.SccResult = Result;
+    Ctx.Regs.writeReg64(Ctx.B, Op.dst(), Result);
     Hr.Handled = true;
     return Hr;
   }

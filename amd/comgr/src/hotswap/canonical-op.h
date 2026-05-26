@@ -337,7 +337,7 @@ enum class CanonicalOp : uint16_t {
   // family that maps to LLVM's `maximum` intrinsic, distinct from the
   // `S_MAX_NUM_F32` NUM family.
   S_MAXIMUM_F32,
-  S_BFE_U32, S_BFE_I32, S_BFM_B32, S_BFM_B64,
+  S_BFE_U32, S_BFE_I32, S_BFE_I64, S_BFM_B32, S_BFM_B64,
   S_CSELECT_B32, S_CSELECT_B64,
   S_MIN_I32, S_MIN_U32, S_MAX_I32, S_MAX_U32,
   S_PACK_LL_B32_B16, S_PACK_LH_B32_B16,

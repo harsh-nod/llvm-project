@@ -326,6 +326,7 @@ static const Entry kCanonTable[] = {
     // from the NUM family above; lowers to `llvm.maximum.f32`.
     E(S_MAXIMUM_F32, S_MAXIMUM_F32),
     E(S_BFE_U32, S_BFE_U32), E(S_BFE_I32, S_BFE_I32),
+    E(S_BFE_I64, S_BFE_I64),
     E(S_BFM_B32, S_BFM_B32), E(S_BFM_B64, S_BFM_B64),
     E(S_CSELECT_B32, S_CSELECT_B32), E(S_CSELECT_B64, S_CSELECT_B64),
     E(S_MIN_I32, S_MIN_I32), E(S_MIN_U32, S_MIN_U32),
