@@ -315,6 +315,7 @@ target_link_libraries(hotswap-transpiler
     LLVMScalarOpts
     LLVMSupport
     LLVMSymbolize
+    LLVMTargetParser
     LLVMTextAPI
     LLVMTransformUtils
     LLVMVectorize
