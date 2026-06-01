@@ -1301,6 +1301,12 @@ enum class CanonicalOp : uint16_t {
   // performance-tuning regression downstream.
   GLOBAL_PREFETCH_B8,
 
+  // -- gfx1250 VMEM flat prefetch (FLAT, hint-class) --
+  //
+  // Same operand layout and lift contract as GLOBAL_PREFETCH_B8
+  // above.
+  FLAT_PREFETCH_B8,
+
   // -- AGPR --
   V_ACCVGPR_READ_B32, V_ACCVGPR_WRITE_B32,
 

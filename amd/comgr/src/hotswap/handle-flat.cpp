@@ -874,7 +874,8 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
   }
 
   // ---------------------------------------------------------------------
-  // gfx1250 FLAT VMEM prefetch (VFLAT 0x05D -- global_prefetch_b8).
+  // gfx1250 FLAT VMEM prefetch (VFLAT 0x05D -- flat_prefetch_b8 /
+  // global_prefetch_b8).
   //
   // Operand layout from `FLAT_Prefetch_Pseudo` (FLATInstructions.td
   // :525-553) -- note `has_vdst = 0`, so there is no dst slot:
@@ -882,27 +883,37 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
   //   plain (3 srcs): vaddr:VGPR_64,            offset, cpol
   //   SADDR (4 srcs): saddr:SReg_64, vaddr:VGPR_32, offset, cpol
   //
-  // Lifts to `int_amdgcn_global_prefetch(globalPtr, cpol)`
-  // (IntrinsicsAMDGPU.td:3211); the FLAT `flat_offset` is folded
-  // onto the pointer via a non-inbounds GEP before the call (the
-  // intrinsic itself takes no offset operand). The call sits
-  // OUTSIDE `emitUnderExec` because the intrinsic carries the EXEC
-  // mask implicitly through `IntrInaccessibleMemOrArgMemOnly` -- a
-  // hint with no observable side effect on inactive lanes, so an
-  // extra `if-spe-active` guard would gratuitously inflate IR for
-  // what hardware executes as a single broadcast hint.
+  // Lifts to `int_amdgcn_{flat,global}_prefetch(ptr, cpol)`; the
+  // FLAT `flat_offset` is folded onto the pointer via a non-inbounds
+  // GEP before the call (the intrinsic itself takes no offset
+  // operand). The call sits OUTSIDE `emitUnderExec` because the
+  // intrinsic carries the EXEC mask implicitly through
+  // `IntrInaccessibleMemOrArgMemOnly` -- a hint with no observable
+  // side effect on inactive lanes, so an extra `if-spe-active` guard
+  // would gratuitously inflate IR for what hardware executes as a
+  // single broadcast hint.
   //
   // gfx942 has no VMEM-prefetch encoding (the intrinsic is gated by
   // `HasVmemPrefInsts`, only set on gfx1250+), so a cross-target
-  // lift is refused loudly. See the CanonicalOp's docstring in
+  // lift is refused loudly. See the CanonicalOp docstrings in
   // `canonical-op.h` for the design rationale.
-  if (Sop == CanonicalOp::GLOBAL_PREFETCH_B8) {
+  if (Sop == CanonicalOp::GLOBAL_PREFETCH_B8 ||
+      Sop == CanonicalOp::FLAT_PREFETCH_B8) {
+    const bool IsFlatPrefetch = (Sop == CanonicalOp::FLAT_PREFETCH_B8);
+    Type *PrefetchPtrTy = IsFlatPrefetch
+                              ? PointerType::get(Ctx.C, AMDGPUAS::FLAT_ADDRESS)
+                              : Ctx.PtrGlobalTy;
+    Intrinsic::ID PrefetchIntrinsic = IsFlatPrefetch
+                                          ? Intrinsic::amdgcn_flat_prefetch
+                                          : Intrinsic::amdgcn_global_prefetch;
+
     if (!Ctx.TargetIsa.HasTensorOps) {
       llvm::errs()
           << "transpiler: FLAT: " << Di.Mnemonic
           << " has no equivalent on the compilation target "
           << "(gfx1250 VMEM-prefetch unit; LLVM intrinsic "
-          << "amdgcn.global.prefetch is gated by HasVmemPrefInsts, "
+          << Intrinsic::getName(PrefetchIntrinsic)
+          << " is gated by HasVmemPrefInsts, "
           << "only set on gfx1250+). The closest sibling "
           << "amdgcn.s.prefetch.data requires a uniform SGPR "
           << "pointer which we cannot prove for the divergent "
@@ -926,12 +937,13 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
     } else if (Op.nSrcs() != 3) {
       Hr.Failure = RaiseFailure::unsupportedShape(
           Di, "FLAT",
-          "global_prefetch_b8: expected 3 srcs (plain) or 4 srcs "
-          "(SADDR) per FLAT_Prefetch_Pseudo");
+          Twine(Di.Mnemonic)
+              + ": expected 3 srcs (plain) or 4 srcs (SADDR) per "
+                "FLAT_Prefetch_Pseudo");
       return Hr;
     }
 
-    Value *GlobalAddr = nullptr;
+    Value *PrefetchAddr = nullptr;
     unsigned ImmStart = 0;
     if (IsSaddr) {
       ParsedReg SaddrPr = Op.srcReg(0);
@@ -940,24 +952,24 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
           VaddrPr.RegKind != ParsedReg::VGPR) {
         Hr.Failure = RaiseFailure::unsupportedShape(
             Di, "FLAT",
-            "global_prefetch_b8 SADDR: expected (SGPR_64, VGPR_32) "
-            "for (saddr, vaddr)");
+            Twine(Di.Mnemonic)
+                + " SADDR: expected (SGPR_64, VGPR_32) for (saddr, vaddr)");
         return Hr;
       }
       Value *Saddr = Ctx.Regs.readReg64(Ctx.B, SaddrPr);
       Value *Voff = Ctx.B.CreateZExt(
           Ctx.Regs.readReg32(Ctx.B, VaddrPr), Ctx.I64Ty, "voff_zext");
-      GlobalAddr = Ctx.B.CreateAdd(Saddr, Voff, "saddr_vaddr");
+      PrefetchAddr = Ctx.B.CreateAdd(Saddr, Voff, "saddr_vaddr");
       ImmStart = 2;
     } else {
       ParsedReg VaddrPr = Op.srcReg(0);
       if (VaddrPr.RegKind != ParsedReg::VGPR) {
         Hr.Failure = RaiseFailure::unsupportedShape(
             Di, "FLAT",
-            "global_prefetch_b8 plain: expected VGPR_64 for vaddr");
+            Twine(Di.Mnemonic) + " plain: expected VGPR_64 for vaddr");
         return Hr;
       }
-      GlobalAddr = Ctx.Regs.readReg64(Ctx.B, VaddrPr);
+      PrefetchAddr = Ctx.Regs.readReg64(Ctx.B, VaddrPr);
       ImmStart = 1;
     }
 
@@ -975,18 +987,18 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
       }
     }
 
-    Value *GlobalPtr = GlobalAddr;
-    if (GlobalPtr->getType() != Ctx.PtrGlobalTy)
-      GlobalPtr = Ctx.B.CreateIntToPtr(GlobalPtr, Ctx.PtrGlobalTy);
+    Value *PrefetchPtr = PrefetchAddr;
+    if (PrefetchPtr->getType() != PrefetchPtrTy)
+      PrefetchPtr = Ctx.B.CreateIntToPtr(PrefetchPtr, PrefetchPtrTy);
     if (FlatOffset != 0)
-      GlobalPtr = Ctx.B.CreateGEP(Ctx.I8Ty, GlobalPtr,
-                                   Ctx.B.getInt64(FlatOffset),
-                                   "prefetch_addr");
+      PrefetchPtr = Ctx.B.CreateGEP(Ctx.I8Ty, PrefetchPtr,
+                                     Ctx.B.getInt64(FlatOffset),
+                                     "prefetch_addr");
 
-    Function *Fn = Intrinsic::getOrInsertDeclaration(
-        &Ctx.M, Intrinsic::amdgcn_global_prefetch);
+    Function *Fn =
+        Intrinsic::getOrInsertDeclaration(&Ctx.M, PrefetchIntrinsic);
     Value *CpolArg = ConstantInt::get(Ctx.I32Ty, CpolImm);
-    Ctx.B.CreateCall(Fn, {GlobalPtr, CpolArg});
+    Ctx.B.CreateCall(Fn, {PrefetchPtr, CpolArg});
 
     Hr.Handled = true;
     return Hr;

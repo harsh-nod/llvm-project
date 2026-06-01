@@ -305,6 +305,7 @@ bool isIntrinsicVGPRSafeSink(Intrinsic::ID Id) {
   case Intrinsic::amdgcn_global_load_async_to_lds_b128:
   case Intrinsic::amdgcn_tensor_load_to_lds:
   case Intrinsic::amdgcn_global_prefetch:
+  case Intrinsic::amdgcn_flat_prefetch:
   case Intrinsic::amdgcn_s_barrier:
     return true;
   // Ballot: `ballot(i1 pred)` is a proper cross-lane REDUCTION that

@@ -1313,14 +1313,13 @@ static const Entry kCanonTable[] = {
     // handler discriminates on `op.nSrcs()` (3 vs 4) the same way the
     // GLOBAL_LOAD_ASYNC_TO_LDS_B* family above does.
     //
-    // The matching `flat_prefetch_b8` (FLAT, not GLOBAL) is omitted --
-    // no kernel in the current corpus surfaces it. If one does, add a
-    // `FLAT_PREFETCH_B8{,_SADDR}` pair here (mapping to a separate
-    // CanonicalOp, since the address space differs and the lift would use
-    // `int_amdgcn_flat_prefetch`).
+    // `FLAT_PREFETCH_B8{,_SADDR}_gfx1250` (plain VGPR_64 / SADDR) lift
+    // to `int_amdgcn_flat_prefetch`.
     // ---------------------------------------------------------------------
     E(GLOBAL_PREFETCH_B8,       GLOBAL_PREFETCH_B8),
     E(GLOBAL_PREFETCH_B8_SADDR, GLOBAL_PREFETCH_B8),
+    E(FLAT_PREFETCH_B8,         FLAT_PREFETCH_B8),
+    E(FLAT_PREFETCH_B8_SADDR,   FLAT_PREFETCH_B8),
 };
 
 #undef SMEM3
