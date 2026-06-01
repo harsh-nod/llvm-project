@@ -69,6 +69,12 @@ struct ISAProfile {
   // than deriving it from a string at each use site.
   bool HasGfx125UserSgprCountField = false;
 
+  // Addressable (physical) LDS capacity of this target, in bytes
+  // (IsaInfo::getAddressableLocalMemorySize). The async-to-LDS lowering uses it
+  // as the out-of-range bound separating a real LDS destination from the gfx12
+  // INT_MAX drop sentinel (see handle-flat.cpp).
+  unsigned LdsByteCapacity = 65536;
+
   bool isWave32() const { return WaveSize == 32; }
 
   static ISAProfile fromSubtarget(const llvm::MCSubtargetInfo &STI) {
@@ -87,6 +93,8 @@ struct ISAProfile {
     P.HasFP8ConversionInsts =
         STI.hasFeature(llvm::AMDGPU::FeatureFP8ConversionInsts);
     P.HasGfx125UserSgprCountField = llvm::AMDGPU::isGFX1250Plus(STI);
+    P.LdsByteCapacity =
+        llvm::AMDGPU::IsaInfo::getAddressableLocalMemorySize(&STI);
     return P;
   }
 

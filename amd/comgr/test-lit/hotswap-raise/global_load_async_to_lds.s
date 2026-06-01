@@ -101,6 +101,16 @@
 ; both the load and store so the backend's memop-alignment-derived
 ; codegen picks the right dword / dwordx2 / dwordx4 opcode.
 
+; LDS-destination drop gate.  gfx12 `global_load_async_to_lds` drops any lane
+; whose LDS-destination offset is outside the LDS aperture; Triton uses an
+; INT_MAX (0x7fffffff) LDS-dest sentinel to predicate masked GEMM-tile rows
+; (whose global tile address is intentionally OOB and whose LDS slot is
+; pre-initialised to the `other` value).  The synchronous emulation MUST
+; replicate the drop -- otherwise the masked lane's OOB global address is
+; dereferenced and faults whenever it is unmapped.  Each width below therefore
+; gates the emulated load+store on the LDS destination being within the 64 KiB
+; LDS capacity (`icmp ult i32 %lds_off, 65536` + a `br` into the do-block).
+;
 ; ----- b32 ----- (first load in the HIP kernel)
 
 ; IR: %lds_ptr{{[0-9]*}} = inttoptr i32 {{.*}} to ptr addrspace(3)
@@ -108,6 +118,8 @@
 ; IR: %scaled_voff{{[0-9]*}} = mul i64 %voff_zext{{[0-9]*}}, 4
 ; IR: %saddr_vaddr{{[0-9]*}} = add i64 {{.*}}, %scaled_voff{{[0-9]*}}
 ; IR: %{{[0-9]+}} = inttoptr i64 %saddr_vaddr{{[0-9]*}} to ptr addrspace(1)
+; IR: %async_lds_inb{{[0-9]*}} = icmp ult i32 {{.*}}, 65536
+; IR: br i1 %async_lds_inb{{[0-9]*}}
 ; IR: %async_gload{{[0-9]*}} = load i32, ptr addrspace(1) %{{[0-9]+}}, align 4
 ; IR: store i32 %async_gload{{[0-9]*}}, ptr addrspace(3) %lds_ptr{{[0-9]*}}, align 4
 

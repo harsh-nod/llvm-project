@@ -862,11 +862,39 @@ HandlerResult handleFLAT(RaiseContext &Ctx, const DecodedInst &Di,
     // `ds_store_b{8,32,64,128}` opcodes from that alignment.
     Align AccessAlign(AccessBytes);
 
+    // gfx12 `global_load_async_to_lds` drops a lane whose LDS-destination
+    // offset is out of range: its LDS write does not happen (gfx12 programming
+    // manual, "Async LDS Load/Store" -- out of range is past the LDS allocated
+    // to the workgroup, and unconditionally past the physical LDS size).
+    // Triton predicates the masked (padding / K-edge) rows of a GEMM tile load
+    // this way, parking their LDS destination at the INT_MAX sentinel; those
+    // rows' global tile addresses are intentionally out of bounds and their
+    // LDS slots already hold the `other` value.
+    //
+    // The synchronous emulation must skip such a lane entirely: its loaded
+    // value is unused (the LDS write is dropped), and a real load of the masked
+    // lane's OOB global address faults when that address is unmapped. That
+    // fault is allocation-dependent -- benign when a loose allocator leaves the
+    // page mapped, fatal under a packed runtime heap -- so it surfaces in a
+    // full runtime but not in isolated single-kernel replay. Gate on the
+    // target's physical LDS capacity: a conservative, allocation-independent
+    // out-of-range bound that keeps every real destination and rejects the
+    // sentinel (far past it).
+    Value *LdsInBounds = Ctx.B.CreateICmpULT(
+        LdsOff, ConstantInt::get(Ctx.I32Ty, Ctx.TargetIsa.LdsByteCapacity),
+        "async_lds_inb");
     Ctx.emitUnderExec([&] {
+      BasicBlock *PredBb = Ctx.B.GetInsertBlock();
+      Function *Fn = PredBb->getParent();
+      BasicBlock *DoBb = BasicBlock::Create(Ctx.C, "async_lds_do", Fn);
+      BasicBlock *ContBb = BasicBlock::Create(Ctx.C, "async_lds_cont", Fn);
+      Ctx.B.CreateCondBr(LdsInBounds, DoBb, ContBb);
+      Ctx.B.SetInsertPoint(DoBb);
       Value *Loaded = Ctx.B.CreateAlignedLoad(AccessTy, EmuGlobalPtr,
-                                               AccessAlign,
-                                               "async_gload");
+                                              AccessAlign, "async_gload");
       Ctx.B.CreateAlignedStore(Loaded, EmuLdsPtr, AccessAlign);
+      Ctx.B.CreateBr(ContBb);
+      Ctx.B.SetInsertPoint(ContBb);
     });
 
     Hr.Handled = true;
