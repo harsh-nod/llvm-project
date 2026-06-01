@@ -529,9 +529,12 @@ static const Entry kCanonTable[] = {
     E(V_SUB_NC_U16_e64, V_SUB_NC_U16),
     E(V_ADD_I16_e64, V_ADD_NC_I16),
     E(V_SUB_I16_e64, V_SUB_NC_I16),
-    // gfx1250 add-then-min VOP3. The real subtarget opcodes canonicalize
+    // gfx1250 add-then-min/max VOP3. The real subtarget opcodes canonicalize
     // through this pseudo via AMDGPU::getMCOpcode-derived tables.
     E(V_ADD_MIN_U32_e64, V_ADD_MIN_U32),
+    E(V_ADD_MAX_U32_e64, V_ADD_MAX_U32),
+    E(V_ADD_MIN_I32_e64, V_ADD_MIN_I32),
+    E(V_ADD_MAX_I32_e64, V_ADD_MAX_I32),
     E(V_BFE_U32_e64, V_BFE_U32),
     E(V_BFE_I32_e64, V_BFE_I32),
     // gfx6+ VOP3 bit-field insert. Ternary, e64-only (no VOP1/VOP2

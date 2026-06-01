@@ -469,11 +469,11 @@ enum class CanonicalOp : uint16_t {
   // dst op_sel is set so the preserved half survives the
   // read-modify-write.
   V_ADD_NC_U16, V_SUB_NC_U16, V_ADD_NC_I16, V_SUB_NC_I16,
-  // gfx1250 VOP3 add-then-min: umin(uaddsat(src0, src1), src2).
-  // The hardware opcode also carries a VOP3 clamp bit, which is semantically
-  // redundant for this unsigned operation because the result is already in the
-  // U32 representable range.
+  // gfx1250 VOP3 add-then-min/max: (s/u)(min/max)((s/u)addsat(src0, src1), src2).
   V_ADD_MIN_U32,
+  V_ADD_MAX_U32,
+  V_ADD_MIN_I32,
+  V_ADD_MAX_I32,
   V_BFE_U32, V_BFE_I32, V_BFI_B32, V_PERM_B32,
   V_MBCNT_LO_U32_B32, V_MBCNT_HI_U32_B32,
   V_READLANE_B32, V_WRITELANE_B32,

@@ -1913,35 +1913,38 @@ HandlerResult handleVALU(RaiseContext &Ctx, const DecodedInst &Di,
     Hr.Handled = true;
     return Hr;
   }
-  // gfx1250 v_add_min_u32: dst = umin(uaddsat(src0, src1), src2).
+  // gfx1250 v_add_min/max_s/u32: dst = (s/u)(min/max)((s/u)addsat(src0, src1), src2).
   //
-  // LLVM also exposes llvm.amdgcn.add.min.u32 with an immediate clamp bit, but
+  // LLVM also exposes llvm.amdgcn.add.(min/max).(i/u)32 with an immediate clamp bit, but
   // that target intrinsic cannot be selected for non-gfx1250 targets such as
   // gfx942. Use the generic LLVM form instead: the AMDGPU backend has an
-  // explicit selection pattern for it
-  // (`ThreeOp_i32_Pats<uaddsat, umin, V_ADD_MIN_U32_e64>`), and it remains
+  // explicit selection pattern for it and it remains
   // target-independent when the destination ISA lacks this opcode.
   //
   // Clamp handling: LLVM's AMDGPU modifier docs define integer clamp as
-  // clamping to the operation type's representable range. For the U32 add-min
-  // operation, `uadd.sat.i32` already produces a value in [0, UINT32_MAX], and
+  // clamping to the operation type's representable range. The `(s/u)add.sat.i32`
+  // already produces a value in the reperesentable range, and
   // the unsigned min with src2 stays in that same range. The clamp bit is
   // therefore semantically redundant for this CanonicalOp, but we still require the
   // generated immediate operand to be present so an unexpected operand-table
   // shape refuses loudly instead of being guessed.
-  if (Sop == CanonicalOp::V_ADD_MIN_U32) {
-    std::optional<bool> Clamp = readVOP3Clamp(Di, Hr, "v_add_min_u32");
+  if (Sop == CanonicalOp::V_ADD_MIN_U32 || Sop == CanonicalOp::V_ADD_MAX_U32 ||
+      Sop == CanonicalOp::V_ADD_MIN_I32 || Sop == CanonicalOp::V_ADD_MAX_I32) {
+    std::optional<bool> Clamp = readVOP3Clamp(Di, Hr, Di.Mnemonic);
     if (!Clamp)
       return Hr;
-    Function *UaddSatFn = Intrinsic::getOrInsertDeclaration(
-        &Ctx.M, Intrinsic::uadd_sat, {Ctx.I32Ty});
-    Function *UminFn =
-        Intrinsic::getOrInsertDeclaration(&Ctx.M, Intrinsic::umin,
-                                          {Ctx.I32Ty});
-    Value *Sum = Ctx.B.CreateCall(UaddSatFn, {Op.src(0), Op.src(1)},
-                                  "vadd_min_sum");
-    Ctx.writeReg32(Op.dst(),
-                   Ctx.B.CreateCall(UminFn, {Sum, Op.src(2)}, "vadd_min"));
+
+    bool IsSinged = Sop == CanonicalOp::V_ADD_MIN_I32 || Sop == CanonicalOp::V_ADD_MAX_I32;
+    bool IsMax =  Sop == CanonicalOp::V_ADD_MAX_U32 || Sop == CanonicalOp::V_ADD_MAX_I32;
+
+    const Intrinsic::ID AddSatId = IsSinged ? Intrinsic::sadd_sat : Intrinsic::uadd_sat;
+    const Intrinsic::ID MinId = IsSinged ? Intrinsic::smin : Intrinsic::umin;
+    const Intrinsic::ID MaxId = IsSinged ? Intrinsic::smax : Intrinsic::umax;
+    const Intrinsic::ID MinMaxId = IsMax ? MaxId : MinId;
+
+    Value *Sum = Ctx.B.CreateIntrinsic(AddSatId, {Ctx.I32Ty}, {Op.src(0), Op.src(1)}, {}, Di.Mnemonic + "_sum");
+    Value *Result = Ctx.B.CreateIntrinsic(MinMaxId, {Ctx.I32Ty}, {Sum, Op.src(2)}, {}, Di.Mnemonic);
+    Ctx.writeReg32(Op.dst(), Result);
     Hr.Handled = true;
     return Hr;
   }
