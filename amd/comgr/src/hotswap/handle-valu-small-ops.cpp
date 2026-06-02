@@ -213,8 +213,8 @@ HandlerResult handleValuSmallOps(RaiseContext &Ctx, const DecodedInst &Di,
   case CanonicalOp::V_ADD_F16:
   case CanonicalOp::V_SUB_F16:
   case CanonicalOp::V_SUBREV_F16:
-  case CanonicalOp::V_MAX_F16:
-  case CanonicalOp::V_MIN_F16: {
+  case CanonicalOp::V_MAX_NUM_F16:
+  case CanonicalOp::V_MIN_NUM_F16: {
     Value *A = Ctx.B.CreateBitCast(Ctx.B.CreateTrunc(Op.srcF(0), I16Ty),
                                     Ctx.F16Ty);
     Value *B = Ctx.B.CreateBitCast(Ctx.B.CreateTrunc(Op.srcF(1), I16Ty),
@@ -225,15 +225,15 @@ HandlerResult handleValuSmallOps(RaiseContext &Ctx, const DecodedInst &Di,
     case CanonicalOp::V_ADD_F16:    Res = Ctx.B.CreateFAdd(A, B, "add_f16"); break;
     case CanonicalOp::V_SUB_F16:    Res = Ctx.B.CreateFSub(A, B, "sub_f16"); break;
     case CanonicalOp::V_SUBREV_F16: Res = Ctx.B.CreateFSub(B, A, "subrev_f16"); break;
-    case CanonicalOp::V_MAX_F16: {
+    case CanonicalOp::V_MAX_NUM_F16: {
       Function *Fn = Intrinsic::getOrInsertDeclaration(
-          &Ctx.M, Intrinsic::maxnum, {Ctx.F16Ty});
+          &Ctx.M, Intrinsic::maximumnum, {Ctx.F16Ty});
       Res = Ctx.B.CreateCall(Fn, {A, B}, "max_f16");
       break;
     }
-    case CanonicalOp::V_MIN_F16: {
+    case CanonicalOp::V_MIN_NUM_F16: {
       Function *Fn = Intrinsic::getOrInsertDeclaration(
-          &Ctx.M, Intrinsic::minnum, {Ctx.F16Ty});
+          &Ctx.M, Intrinsic::minimumnum, {Ctx.F16Ty});
       Res = Ctx.B.CreateCall(Fn, {A, B}, "min_f16");
       break;
     }

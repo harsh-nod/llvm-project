@@ -355,8 +355,8 @@ bool lowerVopdHalf(RaiseContext &Ctx, const DecodedInst &Di,
     } else if (Half.CanonOp == CanonicalOp::V_MAX_NUM_F64 ||
                Half.CanonOp == CanonicalOp::V_MIN_NUM_F64) {
       Intrinsic::ID Id = Half.CanonOp == CanonicalOp::V_MAX_NUM_F64
-                             ? Intrinsic::maxnum
-                             : Intrinsic::minnum;
+                             ? Intrinsic::maximumnum
+                             : Intrinsic::minimumnum;
       Function *Fn = Intrinsic::getOrInsertDeclaration(&Ctx.M, Id, {F64Ty});
       const char *Name = Half.CanonOp == CanonicalOp::V_MAX_NUM_F64
                              ? "vopd_fmaxnum_f64"
@@ -438,18 +438,19 @@ bool lowerVopdHalf(RaiseContext &Ctx, const DecodedInst &Di,
     if (Half.CanonOp == CanonicalOp::V_MIN_U32) Name = "vopd_umin";
     return Queue(Ctx.B.CreateCall(Fn, {S0, S1}, Name));
   }
-  case CanonicalOp::V_MAX_F32:
-  case CanonicalOp::V_MIN_F32: {
+  case CanonicalOp::V_MAX_NUM_F32:
+  case CanonicalOp::V_MIN_NUM_F32: {
     if (!requireVopdSources(Half, 2, Di, Hr)) return false;
     Value *S0 = Ctx.B.CreateBitCast(readVopdSource(Ctx, Half.Src[0], 0),
                                     Ctx.F32Ty);
     Value *S1 = Ctx.B.CreateBitCast(readVopdSource(Ctx, Half.Src[1], 1),
                                     Ctx.F32Ty);
     Intrinsic::ID Id =
-        Half.CanonOp == CanonicalOp::V_MAX_F32 ? Intrinsic::maxnum : Intrinsic::minnum;
+        Half.CanonOp == CanonicalOp::V_MAX_NUM_F32 ? Intrinsic::maximumnum
+                                                     : Intrinsic::minimumnum;
     Function *Fn = Intrinsic::getOrInsertDeclaration(&Ctx.M, Id, {Ctx.F32Ty});
     const char *Name =
-        Half.CanonOp == CanonicalOp::V_MAX_F32 ? "vopd_fmax" : "vopd_fmin";
+        Half.CanonOp == CanonicalOp::V_MAX_NUM_F32 ? "vopd_fmax" : "vopd_fmin";
     return Queue(Ctx.B.CreateBitCast(
         Ctx.B.CreateCall(Fn, {S0, S1}, Name), Ctx.I32Ty));
   }

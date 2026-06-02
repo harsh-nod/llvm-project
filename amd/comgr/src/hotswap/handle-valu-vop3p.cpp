@@ -437,8 +437,8 @@ HandlerResult handleValuVoP3P(RaiseContext &Ctx, const DecodedInst &Di,
       Res = Ctx.B.CreateFMul(S0, S1, "pk_mul_bf16");
     } else {
       Intrinsic::ID Id = (Sop == CanonicalOp::V_PK_MIN_NUM_BF16)
-                             ? Intrinsic::minnum
-                             : Intrinsic::maxnum;
+                             ? Intrinsic::minimumnum
+                             : Intrinsic::maximumnum;
       Function *Fn = Intrinsic::getOrInsertDeclaration(&Ctx.M, Id, {V2BF16});
       Res = Ctx.B.CreateCall(Fn, {S0, S1},
                              Sop == CanonicalOp::V_PK_MIN_NUM_BF16
@@ -448,9 +448,9 @@ HandlerResult handleValuVoP3P(RaiseContext &Ctx, const DecodedInst &Di,
 
     if (ClampImm != 0) {
       Function *MaxFn = Intrinsic::getOrInsertDeclaration(
-          &Ctx.M, Intrinsic::maxnum, {V2BF16});
+          &Ctx.M, Intrinsic::maximumnum, {V2BF16});
       Function *MinFn = Intrinsic::getOrInsertDeclaration(
-          &Ctx.M, Intrinsic::minnum, {V2BF16});
+          &Ctx.M, Intrinsic::minimumnum, {V2BF16});
       Value *Zero = ConstantVector::getSplat(
           ElementCount::getFixed(2), ConstantFP::get(Bf16Ty, 0.0));
       Value *One = ConstantVector::getSplat(

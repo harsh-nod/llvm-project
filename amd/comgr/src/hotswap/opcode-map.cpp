@@ -445,8 +445,8 @@ static const Entry kCanonTable[] = {
     E(V_FMA_F32_e64, V_FMA_F32),
     E(V_FMAMK_F32, V_FMAMK_F32),
     E(V_FMAAK_F32, V_FMAAK_F32),
-    E(V_MAX_F32_e64, V_MAX_F32),
-    E(V_MIN_F32_e64, V_MIN_F32),
+    E(V_MAX_F32_e64, V_MAX_NUM_F32),
+    E(V_MIN_F32_e64, V_MIN_NUM_F32),
     // gfx11+ IEEE-754 2019 maximum/minimum. These differ from V_MAX_NUM_F32 /
     // V_MIN_NUM_F32 in their NaN semantics: maximum/minimum propagate NaN,
     // while maxnum/minnum return the non-NaN operand.
@@ -551,9 +551,9 @@ static const Entry kCanonTable[] = {
     E(V_MBCNT_HI_U32_B32_e64, V_MBCNT_HI_U32_B32),
     E(V_READLANE_B32, V_READLANE_B32),
     E(V_WRITELANE_B32, V_WRITELANE_B32),
-    E(V_MED3_F32_e64, V_MED3_F32),
-    E(V_MAX3_F32_e64, V_MAX3_F32),
-    E(V_MIN3_F32_e64, V_MIN3_F32),
+    E(V_MED3_F32_e64, V_MED3_NUM_F32),
+    E(V_MAX3_F32_e64, V_MAX3_NUM_F32),
+    E(V_MIN3_F32_e64, V_MIN3_NUM_F32),
     // gfx11 V_MINMAX_F32 (opcode 0x25f) and the gfx12-renamed
     // V_MINMAX_NUM_F32 (opcode 0x268) share the same minnum-of-
     // maxnum semantics; both LLVM pseudos canonicalize onto
@@ -566,8 +566,6 @@ static const Entry kCanonTable[] = {
     E(V_MAX3_U32_e64, V_MAX3_U32),
     E(V_MIN3_U32_e64, V_MIN3_U32),
     E(V_MED3_I32_e64, V_MED3_I32),
-    // LLVM does not yet expose a `V_MAX3_MAXIMUM_F32` pseudo; leave the
-    // `V_MAX3_NUM_F32` CanonicalOp unmapped until it does.
     E(V_BITOP3_B32_e64, V_BITOP3_B32),
     E(V_BITOP3_B16_e64, V_BITOP3_B16),
     E(V_FMA_MIX_F32, V_FMA_MIX_F32),
@@ -608,8 +606,8 @@ static const Entry kCanonTable[] = {
     // by the sameSemanticShape stripping pass in `buildPseudoAliasMap`.
     E(V_FMA_F16_e64, V_FMA_F16),
     E(V_FMA_F16_gfx9_e64, V_FMA_F16),
-    E(V_MAX_F16_e64, V_MAX_F16),
-    E(V_MIN_F16_e64, V_MIN_F16),
+    E(V_MAX_F16_e64, V_MAX_NUM_F16),
+    E(V_MIN_F16_e64, V_MIN_NUM_F16),
     E(V_MINMAX_F16_e64, V_MINMAX_NUM_F16),
     E(V_MAXMIN_F16_e64, V_MAXMIN_NUM_F16),
     E(V_MAXIMUM_F16_e64, V_MAXIMUM_F16),

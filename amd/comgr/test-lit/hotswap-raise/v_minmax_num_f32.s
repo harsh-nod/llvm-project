@@ -2,21 +2,17 @@
 ; RUN:   && raise_cli %t.hsaco --target-isa=gfx942 --emit-ir=v_minmax_num_f32_kernel 2>/dev/null | %FileCheck %s
 ;
 ; Lift test for v_minmax_num_f32. Pins:
-;   * Inner `@llvm.minnum.f32` (named `vminmax_inner`).
-;   * Outer `@llvm.maxnum.f32` (named `vminmax_num`).
-; Same layered-intrinsic pattern as V_MAX3_F32 / V_MIN3_F32 /
-; V_MED3_F32 in the same handler file. The handler lives in
-; transpiler/handle_valu.cpp under
-; `if (sop == SemOp::V_MINMAX_NUM_F32) { ... }`; the SemOp
-; lives in transpiler/semop.hpp under VOP3.
+;   * Inner `@llvm.minimumnum.f32` (named `vminmax_inner`).
+;   * Outer `@llvm.maximumnum.f32` (named `vminmax_num`).
+; Same layered-intrinsic pattern as V_MAX3_NUM_F32 / V_MIN3_NUM_F32 /
+; V_MED3_NUM_F32 in handle-valu.cpp under CanonicalOp::V_MINMAX_NUM_F32.
 
 ; CHECK-LABEL: define amdgpu_kernel void @v_minmax_num_f32_kernel(
 
-; The inner minnum and the outer maxnum, both named. LLVM's AMDGPU
-; selection pattern for V_MINMAX_F32 is maxnum(minnum(src0, src1), src2),
-; which is the common clamp-to-[src2, src1] shape.
-; CHECK: %vminmax_inner{{[0-9]*}} = call float @llvm.minnum.f32(float %{{[^,]+}}, float %{{[^)]+}})
-; CHECK: %vminmax_num{{[0-9]*}} = call float @llvm.maxnum.f32(float %vminmax_inner{{[0-9]*}}, float %{{[^)]+}})
+; The inner minimumnum and the outer maximumnum, both named. Hardware
+; semantic is maximumnum(minimumnum(src0, src1), src2).
+; CHECK: %vminmax_inner{{[0-9]*}} = call float @llvm.minimumnum.f32(float %{{[^,]+}}, float %{{[^)]+}})
+; CHECK: %vminmax_num{{[0-9]*}} = call float @llvm.maximumnum.f32(float %vminmax_inner{{[0-9]*}}, float %{{[^)]+}})
 
 ; Negative checks: must NOT lift via the IEEE-2019
 ; NaN-propagating @llvm.maximum / @llvm.minimum (those are

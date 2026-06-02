@@ -236,6 +236,8 @@ bool isIntrinsicVGPRSafePropagator(Intrinsic::ID Id) {
   case Intrinsic::sqrt:
   case Intrinsic::maxnum:
   case Intrinsic::minnum:
+  case Intrinsic::maximumnum:
+  case Intrinsic::minimumnum:
   // IEEE-754 2019 NaN-propagating max/min.  Same per-lane VGPR-only
   // operand shape as maxnum/minnum (the only semantic delta is NaN
   // propagation, which is handled inside the VALU expansion on every
