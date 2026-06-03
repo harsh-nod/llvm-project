@@ -150,7 +150,7 @@ HandlerResult handleSOPC(RaiseContext &Ctx, const DecodedInst &Di,
   else if (Sop == CanonicalOp::S_CMP_LG_I32)
     Cmp = Ctx.B.CreateICmpNE(Src0, Src1, "scmp");
   // GFX12 scalar FP compares (ordered and unordered variants)
-  else if (Sop >= CanonicalOp::S_CMP_EQ_F32 && Sop <= CanonicalOp::S_CMP_NLG_F32) {
+  else if (Sop >= CanonicalOp::S_CMP_EQ_F32 && Sop <= CanonicalOp::S_CMP_U_F32) {
     Value *F0 = Ctx.B.CreateBitCast(Src0, Ctx.F32Ty);
     Value *F1 = Ctx.B.CreateBitCast(Src1, Ctx.F32Ty);
     if (Sop == CanonicalOp::S_CMP_EQ_F32)
@@ -177,7 +177,11 @@ HandlerResult handleSOPC(RaiseContext &Ctx, const DecodedInst &Di,
       Cmp = Ctx.B.CreateFCmpULT(F0, F1, "scmpf");
     else if (Sop == CanonicalOp::S_CMP_NLG_F32)
       Cmp = Ctx.B.CreateFCmpUEQ(F0, F1, "scmpf");
-  } else if (Sop >= CanonicalOp::S_CMP_EQ_F16 && Sop <= CanonicalOp::S_CMP_NLG_F16) {
+    else if (Sop == CanonicalOp::S_CMP_O_F32)
+      Cmp = Ctx.B.CreateFCmpORD(F0, F1, "scmpf");
+    else if (Sop == CanonicalOp::S_CMP_U_F32)
+      Cmp = Ctx.B.CreateFCmpUNO(F0, F1, "scmpf");
+  } else if (Sop >= CanonicalOp::S_CMP_EQ_F16 && Sop <= CanonicalOp::S_CMP_U_F16) {
     Type *F16Ty = Type::getHalfTy(Ctx.C);
     Value *F0 = Ctx.B.CreateBitCast(
         Ctx.B.CreateTrunc(Src0, Type::getInt16Ty(Ctx.C)), F16Ty);
@@ -207,6 +211,10 @@ HandlerResult handleSOPC(RaiseContext &Ctx, const DecodedInst &Di,
       Cmp = Ctx.B.CreateFCmpULT(F0, F1, "scmpf16");
     else if (Sop == CanonicalOp::S_CMP_NLG_F16)
       Cmp = Ctx.B.CreateFCmpUEQ(F0, F1, "scmpf16");
+    else if (Sop == CanonicalOp::S_CMP_O_F16)
+      Cmp = Ctx.B.CreateFCmpORD(F0, F1, "scmpf16");
+    else if (Sop == CanonicalOp::S_CMP_U_F16)
+      Cmp = Ctx.B.CreateFCmpUNO(F0, F1, "scmpf16");
   }
   if (Cmp) {
     Ctx.Regs.storeSCC(Ctx.B, Cmp);

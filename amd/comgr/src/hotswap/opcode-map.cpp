@@ -167,6 +167,7 @@ static const Entry kCanonTable[] = {
     E(S_CMP_NGT_F32, S_CMP_NGT_F32), E(S_CMP_NGE_F32, S_CMP_NGE_F32),
     E(S_CMP_NLT_F32, S_CMP_NLT_F32), E(S_CMP_NLE_F32, S_CMP_NLE_F32),
     E(S_CMP_NLG_F32, S_CMP_NLG_F32),
+    E(S_CMP_O_F32, S_CMP_O_F32), E(S_CMP_U_F32, S_CMP_U_F32),
     E(S_CMP_EQ_F16, S_CMP_EQ_F16), E(S_CMP_LG_F16, S_CMP_LG_F16),
     E(S_CMP_GT_F16, S_CMP_GT_F16), E(S_CMP_GE_F16, S_CMP_GE_F16),
     E(S_CMP_LT_F16, S_CMP_LT_F16), E(S_CMP_LE_F16, S_CMP_LE_F16),
@@ -174,6 +175,7 @@ static const Entry kCanonTable[] = {
     E(S_CMP_NGT_F16, S_CMP_NGT_F16), E(S_CMP_NGE_F16, S_CMP_NGE_F16),
     E(S_CMP_NLT_F16, S_CMP_NLT_F16), E(S_CMP_NLE_F16, S_CMP_NLE_F16),
     E(S_CMP_NLG_F16, S_CMP_NLG_F16),
+    E(S_CMP_O_F16, S_CMP_O_F16), E(S_CMP_U_F16, S_CMP_U_F16),
 
     // ---------------------------------------------------------------------
     // SOPK
