@@ -435,6 +435,7 @@ enum class CanonicalOp : uint16_t {
   //                via the dedicated llvm.amdgcn.sffbh intrinsic which
   //                selects directly back to v_ffbh_i32_e32.
   V_FFBH_U32, V_FFBL_B32, V_FFBH_I32,
+  V_PRNG_B32,
 
   // -- VOP2 / VOP3 --
   V_ADD_F32, V_SUB_F32, V_SUBREV_F32, V_MUL_F32,

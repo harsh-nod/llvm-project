@@ -436,6 +436,29 @@ HandlerResult handleValuSmallOps(RaiseContext &Ctx, const DecodedInst &Di,
     return Hr;
   }
 
+  // out = (in << 1) ^ (in[31] ? 197 : 0). Use the intrinsic where it
+  // selects (HasPrngInst); expand in IR for targets without a pattern.
+  case CanonicalOp::V_PRNG_B32: {
+    Value *Src = Op.src(0);
+    Value *Res;
+    if (Ctx.TargetIsa.HasPrngInst) {
+      Function *PrngFn = Intrinsic::getOrInsertDeclaration(
+          &Ctx.M, Intrinsic::amdgcn_prng_b32);
+      Res = Ctx.B.CreateCall(PrngFn, {Src}, "prng_b32");
+    } else {
+      Value *Shl = Ctx.B.CreateShl(Src, ConstantInt::get(Ctx.I32Ty, 1),
+                                   "prng_shl");
+      Value *Neg = Ctx.B.CreateICmpSLT(Src, ConstantInt::get(Ctx.I32Ty, 0),
+                                       "prng_neg");
+      Value *Tap = Ctx.B.CreateSelect(Neg, ConstantInt::get(Ctx.I32Ty, 197),
+                                      ConstantInt::get(Ctx.I32Ty, 0), "prng_tap");
+      Res = Ctx.B.CreateXor(Shl, Tap, "prng_b32");
+    }
+    Ctx.writeReg32(Op.dst(), Res);
+    Hr.Handled = true;
+    return Hr;
+  }
+
   // ---- F32 scalar math / rounding ----
   case CanonicalOp::V_RCP_IFLAG_F32: {
     if (!requireDefaultOutputModsIfPresent(Di, Hr))

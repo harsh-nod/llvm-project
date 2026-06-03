@@ -64,6 +64,9 @@ struct ISAProfile {
   // expose this feature, so use it instead of the broader `HasMfma` whenever
   // a cross-target expansion depends specifically on FP8 conversion support.
   bool HasFP8ConversionInsts = false;
+  // v_prng_b32 (FeaturePrngInst). Targets without it have no selection
+  // pattern for llvm.amdgcn.prng.b32, so lifts must expand it in IR.
+  bool HasPrngInst = false;
   // gfx125 widens compute_pgm_rsrc2.USER_SGPR_COUNT from the older 5-bit
   // GFX6-GFX120 field to a 6-bit field. Keep this as an ABI property rather
   // than deriving it from a string at each use site.
@@ -95,6 +98,7 @@ struct ISAProfile {
     P.HasGfx950Insts = STI.hasFeature(llvm::AMDGPU::FeatureGFX950Insts);
     P.HasFP8ConversionInsts =
         STI.hasFeature(llvm::AMDGPU::FeatureFP8ConversionInsts);
+    P.HasPrngInst = STI.hasFeature(llvm::AMDGPU::FeaturePrngInst);
     P.HasGfx125UserSgprCountField = llvm::AMDGPU::isGFX1250Plus(STI);
     P.LdsByteCapacity =
         llvm::AMDGPU::IsaInfo::getAddressableLocalMemorySize(&STI);
