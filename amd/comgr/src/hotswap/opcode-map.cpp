@@ -130,6 +130,10 @@ static const Entry kCanonTable[] = {
     E(S_BARRIER_SIGNAL_IMM, S_BARRIER_SIGNAL),
     E(S_BARRIER_SIGNAL_M0, S_BARRIER_SIGNAL),
 
+    // s_sendmsg / s_sendmsghalt.
+    E(S_SENDMSG, S_SENDMSG),
+    E(S_SENDMSGHALT, S_SENDMSGHALT),
+
     // ---------------------------------------------------------------------
     // SMEM scalar loads
     // ---------------------------------------------------------------------

@@ -68,6 +68,9 @@ struct ISAProfile {
   // GFX6-GFX120 field to a 6-bit field. Keep this as an ABI property rather
   // than deriving it from a string at each use site.
   bool HasGfx125UserSgprCountField = false;
+  // True iff the target supports the gfx11+ s_sendmsg(MSG_DEALLOC_VGPRS)
+  // encoding; gfx942 and earlier reserve ID=3.
+  bool SupportsDeallocVgprs = false;
 
   // Addressable (physical) LDS capacity of this target, in bytes
   // (IsaInfo::getAddressableLocalMemorySize). The async-to-LDS lowering uses it
@@ -95,6 +98,7 @@ struct ISAProfile {
     P.HasGfx125UserSgprCountField = llvm::AMDGPU::isGFX1250Plus(STI);
     P.LdsByteCapacity =
         llvm::AMDGPU::IsaInfo::getAddressableLocalMemorySize(&STI);
+    P.SupportsDeallocVgprs = llvm::AMDGPU::isGFX11Plus(STI);
     return P;
   }
 

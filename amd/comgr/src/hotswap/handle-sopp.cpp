@@ -8,6 +8,8 @@
 
 #include "handlers.h"
 
+#include "SIDefines.h"
+#include "llvm/ADT/Twine.h"
 #include "llvm/IR/IntrinsicsAMDGPU.h"
 
 using namespace llvm;
@@ -150,6 +152,44 @@ HandlerResult handleSOPP(RaiseContext &Ctx, const DecodedInst &Di,
   // wait-counter branch above unless the async/tensor counter semantics have a
   // target-independent wait-all lowering too.
   if (Sop == CanonicalOp::S_WAIT_ASYNCCNT || Sop == CanonicalOp::S_WAIT_TENSORCNT) {
+    Hr.Handled = true;
+    return Hr;
+  }
+
+  // s_sendmsg / s_sendmsghalt. Only INTERRUPT and DEALLOC_VGPRS are lifted;
+  // every other ID refuses because the same SIMM16 aliases different messages
+  // across generations and a blind pass-through would misencode on cross-target
+  // lifts.
+  if (Sop == CanonicalOp::S_SENDMSG || Sop == CanonicalOp::S_SENDMSGHALT) {
+    int64_t Imm = Di.getImm(0);
+    unsigned Simm16 = static_cast<unsigned>(Imm & 0xFFFF);
+    bool IsInterrupt = Simm16 == AMDGPU::SendMsg::ID_INTERRUPT;
+    bool IsDealloc = Simm16 == AMDGPU::SendMsg::ID_DEALLOC_VGPRS_GFX11Plus;
+
+    if (!IsInterrupt && !IsDealloc) {
+      Hr.Failure = RaiseFailure::unsupportedShape(
+          Di, "SOPP",
+          Twine("unsupported s_sendmsg SIMM16=0x") + Twine::utohexstr(Simm16) +
+              "; only MSG_INTERRUPT (1) and MSG_DEALLOC_VGPRS (3) are lifted");
+      return Hr;
+    }
+
+    // DEALLOC_VGPRS is a gfx11+ early-free hint; drop it where unsupported
+    // (gfx942 frees implicitly at s_endpgm). INTERRUPT is portable everywhere.
+    if (IsDealloc && !Ctx.TargetIsa.SupportsDeallocVgprs) {
+      Hr.Handled = true;
+      return Hr;
+    }
+
+    Intrinsic::ID IID = (Sop == CanonicalOp::S_SENDMSG)
+                            ? Intrinsic::amdgcn_s_sendmsg
+                            : Intrinsic::amdgcn_s_sendmsghalt;
+    Function *Fn = Intrinsic::getOrInsertDeclaration(&Ctx.M, IID);
+    ParsedReg M0Reg;
+    M0Reg.RegKind = ParsedReg::M0;
+    M0Reg.BaseIdx = 0;
+    Value *M0Val = Ctx.Regs.readReg32(Ctx.B, M0Reg);
+    Ctx.B.CreateCall(Fn, {Ctx.B.getInt32(Simm16), M0Val});
     Hr.Handled = true;
     return Hr;
   }

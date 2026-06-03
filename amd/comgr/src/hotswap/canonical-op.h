@@ -61,6 +61,9 @@ enum class CanonicalOp : uint16_t {
   // single s_barrier. Handlers model signal as a no-op and wait as a full
   // LLVM `amdgcn.s.barrier` call.
   S_BARRIER, S_BARRIER_WAIT, S_BARRIER_SIGNAL,
+  // s_sendmsg / s_sendmsghalt. Only INTERRUPT and DEALLOC_VGPRS message
+  // IDs are lifted; see handle-sopp.cpp for the dispatch and policy.
+  S_SENDMSG, S_SENDMSGHALT,
 
   // -- SMEM --
   S_LOAD_B32, S_LOAD_B64, S_LOAD_B96, S_LOAD_B128, S_LOAD_B256, S_LOAD_B512,
