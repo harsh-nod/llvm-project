@@ -107,6 +107,7 @@
 // main() needs the complete types.
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
@@ -122,6 +123,8 @@
 #include <unistd.h>
 
 namespace {
+
+namespace cl = llvm::cl;
 
 // Shared-memory block handed from each per-kernel child back to the parent.
 // Using a fixed-size POD struct keeps the IPC trivially safe across fork().
@@ -169,126 +172,79 @@ std::string autoDetectIsa(llvm::StringRef path) {
   return {};
 }
 
-int usage() {
-  llvm::errs()
-      << "usage:\n"
-         "  raise_cli <code-object.co|.hsaco> [--isa=<arch>] "
-         "[--target-isa=<arch>] [--disable-writelane-rewrite] "
-         "[--disable-wave-native]\n"
-         "  raise_cli <code-object.co|.hsaco> --emit-ir[=<kernel>] "
-         "[--isa=<arch>] [--target-isa=<arch>] "
-         "[--disable-writelane-rewrite] [--disable-wave-native]\n"
-         "  raise_cli <code-object.co|.hsaco> --write-hsaco=<path> "
-         "[--kernel=<name>] [--isa=<arch>] [--target-isa=<arch>] "
-         "[--disable-writelane-rewrite] [--disable-wave-native]\n"
-         "\n"
-         "Default mode: emits per-kernel OK/FAIL lines on stdout in the "
-         "format\n"
-         "  kerneldex coverage expects. Exits 0 iff every kernel raises.\n"
-         "--emit-ir mode: dumps raised LLVM IR for a single kernel on "
-         "stdout.\n"
-         "  No fork; stderr left alone for FileCheck.\n"
-         "--write-hsaco mode: runs the full pipeline (raise + llc + lld)\n"
-         "  for a single kernel and writes the produced HSACO to <path>.\n"
-         "  Intended for post-rewrite disassembly triage (see\n"
-         "  hotswap/docs/wave-size-translation.md \u00a75.6.3).\n"
-         "--target-isa: overrides the target ISA (default: same as --isa).\n"
-         "--enable-writelane-rewrite / --disable-writelane-rewrite: controls\n"
-         "  the cross-widen-divergent writelane/readlane rewrite (default "
-         "on;\n"
-         "  see wave-size-translation.md \u00a75.6.3). The `--enable-` form "
-         "is\n"
-         "  kept for backward compatibility (existing REWRITE lit RUN "
-         "lines);\n"
-         "  `--disable-` pins the pre-rewrite REFUSE / UNCHANGED path for "
-         "the\n"
-         "  sibling RUN lines. Later-wins on the command line.\n"
-         "--enable-wave-native / --disable-wave-native: select between\n"
-         "  WaveNativeProjection (post-graduation default) and\n"
-         "  ModuloReplicationProjection for wave32 source \u2192 wave64\n"
-         "  target cross-widening. The `--enable-` form is kept for\n"
-         "  backward compatibility; `--disable-` pins the MODREP path\n"
-         "  for lit fixtures and for kernels outside WaveNative's\n"
-         "  class coverage (see wave-size-translation.md \u00a7\u00a72.2 / "
-         "5.6.1\n"
-         "  and modrep-predicate-chain.md \u00a76 for the graduation\n"
-         "  rationale). Later-wins on the command line.\n"
-         "ISA is inferred from the filename when --isa is not given.\n";
-  return 2;
+cl::opt<std::string> CoPathOpt(cl::Positional, cl::Required,
+                               cl::desc("<code-object.co|.hsaco>"));
+
+cl::opt<std::string> IsaOpt("isa", cl::value_desc("arch"),
+                            cl::desc("Source ISA; inferred from the filename "
+                                     "or ELF e_flags when not given."));
+
+cl::opt<std::string>
+    TargetIsaOpt("target-isa", cl::value_desc("arch"),
+                 cl::desc("Target ISA the raiser lowers for "
+                          "(default: same as --isa)."));
+
+cl::opt<std::string>
+    EmitIrOpt("emit-ir", cl::ValueOptional, cl::value_desc("kernel"),
+              cl::desc("Dump raised LLVM IR for a single kernel on stdout "
+                       "(no fork; stderr left alone for FileCheck)."));
+
+cl::opt<std::string>
+    WriteHsacoOpt("write-hsaco", cl::value_desc("path"),
+                  cl::desc("Run the full pipeline (raise + llc + lld) for a "
+                           "single kernel and write the HSACO to <path>."));
+
+cl::opt<std::string> KernelOpt("kernel", cl::value_desc("name"),
+                               cl::desc("Kernel selected by --write-hsaco."));
+
+cl::opt<bool> EnableWritelaneRewriteOpt(
+    "enable-writelane-rewrite",
+    cl::desc("Enable the cross-widen-divergent writelane/readlane rewrite "
+             "(default on; later-wins with --disable-writelane-rewrite)."));
+cl::opt<bool> DisableWritelaneRewriteOpt(
+    "disable-writelane-rewrite",
+    cl::desc("Pin the pre-rewrite REFUSE / UNCHANGED path."));
+
+cl::opt<bool> EnableWaveNativeOpt(
+    "enable-wave-native",
+    cl::desc("Select WaveNativeProjection for wave32->wave64 cross-widening "
+             "(default on; later-wins with --disable-wave-native)."));
+cl::opt<bool> DisableWaveNativeOpt(
+    "disable-wave-native",
+    cl::desc("Pin ModuloReplicationProjection."));
+
+// Resolve an --enable-/--disable- toggle pair, later occurrence wins.
+bool resolveToggle(bool Default, const cl::opt<bool> &Enable,
+                   const cl::opt<bool> &Disable) {
+  unsigned EnablePos = Enable.getNumOccurrences() ? Enable.getPosition() : 0;
+  unsigned DisablePos = Disable.getNumOccurrences() ? Disable.getPosition() : 0;
+  if (!EnablePos && !DisablePos)
+    return Default;
+  return EnablePos >= DisablePos;
 }
 
 } // namespace
 
 int main(int argc, char **argv) {
-  std::string coPath;
-  std::string isa;
-  std::string targetIsa;
-  bool emitIr = false;
-  // Default on as of the Triton-corpus graduation (see this file's
-  // top-of-file comment and raiser.hpp for the rationale).  The
-  // `--disable-writelane-rewrite` flag (parsed below) forces the
-  // pre-rewrite path for the lit fixtures that pin the
-  // REFUSE / UNCHANGED sibling contracts.
-  bool EnableWritelaneRewrite = true;
-  bool EnableWaveNative = true;
-  std::string emitIrKernel;
-  std::string writeHsacoPath;
-  std::string writeHsacoKernel;
-  for (int i = 1; i < argc; ++i) {
-    std::string a = argv[i];
-    if (a.rfind("--isa=", 0) == 0) {
-      isa = a.substr(6);
-    } else if (a == "--isa") {
-      if (i + 1 >= argc)
-        return usage();
-      isa = argv[++i];
-    } else if (a.rfind("--target-isa=", 0) == 0) {
-      targetIsa = a.substr(13);
-    } else if (a == "--target-isa") {
-      if (i + 1 >= argc)
-        return usage();
-      targetIsa = argv[++i];
-    } else if (a == "--emit-ir") {
-      emitIr = true;
-    } else if (a.rfind("--emit-ir=", 0) == 0) {
-      emitIr = true;
-      emitIrKernel = a.substr(10);
-    } else if (a.rfind("--write-hsaco=", 0) == 0) {
-      writeHsacoPath = a.substr(14);
-    } else if (a.rfind("--kernel=", 0) == 0) {
-      writeHsacoKernel = a.substr(9);
-    } else if (a == "--enable-writelane-rewrite") {
-      EnableWritelaneRewrite = true;
-    } else if (a == "--disable-writelane-rewrite") {
-      // Later-wins on the command line: the last occurrence of an
-      // --enable- / --disable- pair decides the effective value.  This
-      // matches the behaviour every lit fixture's REFUSE / REWRITE RUN
-      // lines implicitly rely on (one flag per RUN line).
-      EnableWritelaneRewrite = false;
-    } else if (a == "--enable-wave-native") {
-      EnableWaveNative = true;
-    } else if (a == "--disable-wave-native") {
-      // Later-wins on the command line, symmetric with
-      // --enable-/--disable-writelane-rewrite. Post-graduation the
-      // default is on; --disable-wave-native is the opt-out path for
-      // lit fixtures that pin MODREP-specific IR shapes (the
-      // `cross_wave_warn` warn-only contract, the narrow-O1 C5
-      // refusal siblings) and for producer flows that want MODREP's
-      // "independent halves" throughput on pointwise kernels. See
-      // this file's top-of-file comment.
-      EnableWaveNative = false;
-    } else if (!a.empty() && a[0] == '-') {
-      llvm::errs() << "raise_cli: unknown flag: " << a << "\n";
-      return usage();
-    } else if (coPath.empty()) {
-      coPath = a;
-    } else {
-      llvm::errs() << "raise_cli: unexpected positional arg: " << a << "\n";
-      return usage();
-    }
-  }
-  if (coPath.empty())
-    return usage();
+  llvm::cl::ParseCommandLineOptions(
+      argc, argv,
+      "Per-kernel raiser CLI. Default mode emits per-kernel OK/FAIL lines on "
+      "stdout; --emit-ir and --write-hsaco select the single-kernel modes.\n");
+
+  std::string coPath = CoPathOpt;
+  std::string isa = IsaOpt;
+  std::string targetIsa = TargetIsaOpt;
+  bool emitIr = EmitIrOpt.getNumOccurrences() > 0;
+  std::string emitIrKernel = EmitIrOpt;
+  std::string writeHsacoPath = WriteHsacoOpt;
+  std::string writeHsacoKernel = KernelOpt;
+  // Both toggles default on (Triton-corpus / WaveNative graduations; see this
+  // file's top-of-file comment and raiser.hpp). The --disable- forms pin the
+  // pre-rewrite / MODREP paths for the lit fixtures.
+  bool EnableWritelaneRewrite = resolveToggle(
+      true, EnableWritelaneRewriteOpt, DisableWritelaneRewriteOpt);
+  bool EnableWaveNative =
+      resolveToggle(true, EnableWaveNativeOpt, DisableWaveNativeOpt);
 
   // Read the file up-front so we can fall back to the ELF e_flags
   // ISA when the filename heuristic fails (kerneldex corpora often
