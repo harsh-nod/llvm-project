@@ -1422,8 +1422,9 @@ HandlerResult handleVALU(RaiseContext &Ctx, const DecodedInst &Di,
     if (S0->getType() != Ctx.F32Ty) S0 = Ctx.B.CreateBitCast(S0, Ctx.F32Ty);
     if (S1->getType() != Ctx.F32Ty) S1 = Ctx.B.CreateBitCast(S1, Ctx.F32Ty);
     if (Dv->getType() != Ctx.F32Ty) Dv = Ctx.B.CreateBitCast(Dv, Ctx.F32Ty);
-    Function *Fmuladd = Intrinsic::getOrInsertDeclaration(&Ctx.M, Intrinsic::fmuladd, {Ctx.F32Ty});
-    Ctx.writeReg32(DstReg, Ctx.B.CreateBitCast(Ctx.B.CreateCall(Fmuladd, {S0, S1, Dv}, "fmac"), Ctx.I32Ty));
+    // llvm.fma (not llvm.fmuladd) -- v_fmac_f32 is hardware-guaranteed fused; fmuladd may be split by middle-end passes.
+    Function *Fma = Intrinsic::getOrInsertDeclaration(&Ctx.M, Intrinsic::fma, {Ctx.F32Ty});
+    Ctx.writeReg32(DstReg, Ctx.B.CreateBitCast(Ctx.B.CreateCall(Fma, {S0, S1, Dv}, "fmac"), Ctx.I32Ty));
     Hr.Handled = true;
     return Hr;
   }

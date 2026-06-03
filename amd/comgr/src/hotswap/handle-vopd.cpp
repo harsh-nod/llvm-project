@@ -307,11 +307,12 @@ bool lowerVopdHalf(RaiseContext &Ctx, const DecodedInst &Di,
                                     Ctx.F32Ty);
     Value *Acc = Ctx.B.CreateBitCast(Ctx.Regs.readReg32(Ctx.B, Dst),
                                      Ctx.F32Ty);
-    Function *Fmuladd =
-        Intrinsic::getOrInsertDeclaration(&Ctx.M, Intrinsic::fmuladd,
+    // llvm.fma (not llvm.fmuladd) -- v_dual_fmac_f32 is hardware-guaranteed fused; fmuladd may be split by middle-end passes.
+    Function *Fma =
+        Intrinsic::getOrInsertDeclaration(&Ctx.M, Intrinsic::fma,
                                           {Ctx.F32Ty});
     return Queue(Ctx.B.CreateBitCast(
-        Ctx.B.CreateCall(Fmuladd, {S0, S1, Acc}, "vopd_fmac"), Ctx.I32Ty));
+        Ctx.B.CreateCall(Fma, {S0, S1, Acc}, "vopd_fmac"), Ctx.I32Ty));
   }
   case CanonicalOp::V_FMA_F32: {
     if (!requireVopdSources(Half, 3, Di, Hr)) return false;
