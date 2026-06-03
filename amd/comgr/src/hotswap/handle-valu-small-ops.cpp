@@ -634,6 +634,19 @@ HandlerResult handleValuSmallOps(RaiseContext &Ctx, const DecodedInst &Di,
     Hr.Handled = true;
     return Hr;
   }
+  case CanonicalOp::V_FREXP_MANT_F32: {
+    if (!requireDefaultOutputModsIfPresent(Di, Hr))
+      return Hr;
+    Value *S = Ctx.B.CreateBitCast(Op.srcF(0), Ctx.F32Ty);
+    Function *Fn = Intrinsic::getOrInsertDeclaration(
+        &Ctx.M, Intrinsic::amdgcn_frexp_mant, {Ctx.F32Ty});
+    Ctx.writeReg32(
+        Op.dst(),
+        Ctx.B.CreateBitCast(Ctx.B.CreateCall(Fn, {S}, "frexp_mant"),
+                            Ctx.I32Ty));
+    Hr.Handled = true;
+    return Hr;
+  }
   case CanonicalOp::V_FRACT_F32: {
     if (!requireDefaultOutputModsIfPresent(Di, Hr))
       return Hr;
