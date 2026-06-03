@@ -552,6 +552,26 @@ HandlerResult handleValuSmallOps(RaiseContext &Ctx, const DecodedInst &Di,
     Hr.Handled = true;
     return Hr;
   }
+  case CanonicalOp::V_FREXP_EXP_I32_F64: {
+    if (!requireDefaultOutputModsIfPresent(Di, Hr))
+      return Hr;
+    if (Di.HasDpp) {
+      Hr.Failure = RaiseFailure::unsupportedShape(
+          Di, "VOP1",
+          "V_FREXP_EXP_I32_F64 DPP has mixed source/destination widths "
+          "(f64 source, i32 destination); inactive lane preservation must "
+          "be modeled as 32-bit old-destination semantics, not the generic "
+          "same-width DPP source wrapper");
+      return Hr;
+    }
+    Value *S = Ctx.B.CreateBitCast(Op.src64(0), Ctx.F64Ty);
+    Function *Fn = Intrinsic::getOrInsertDeclaration(
+        &Ctx.M, Intrinsic::amdgcn_frexp_exp, {Ctx.I32Ty, Ctx.F64Ty});
+    Value *Exp = Ctx.B.CreateCall(Fn, {S}, "frexp_exp");
+    Ctx.writeReg32(Op.dst(), Exp);
+    Hr.Handled = true;
+    return Hr;
+  }
   case CanonicalOp::V_FLOOR_F32: {
     if (!requireDefaultOutputModsIfPresent(Di, Hr))
       return Hr;

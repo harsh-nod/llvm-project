@@ -350,6 +350,7 @@ enum class CanonicalOp : uint16_t {
   V_CVT_F32_F64, V_CVT_F64_F32,
   V_CVT_F64_U32, V_CVT_F64_I32, V_CVT_U32_F64,
   V_RCP_IFLAG_F32, V_RCP_F32, V_RSQ_F32, V_SQRT_F32, V_EXP_F32, V_LOG_F32,
+  V_FREXP_EXP_I32_F64,
   // gfx12+ VOP3 pseudo-scalar f32 transcendentals: scalar input and scalar
   // output variants of the corresponding VOP1 special-function instructions.
   // The default clamp=0/omod=0 forms lower through AMDGPU hardware intrinsics;
