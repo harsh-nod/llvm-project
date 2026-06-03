@@ -318,15 +318,10 @@ static const Entry kCanonTable[] = {
     // handler cannot be confused with the IEEE-2019 NaN-propagating
     // `S_{MINIMUM,MAXIMUM}_F32` family.
     E(S_MAX_F32, S_MAX_NUM_F32), E(S_MIN_F32, S_MIN_NUM_F32),
-    // gfx12+ scalar IEEE-754-2019 NaN-propagating f16 maximum
-    // (SOPInstructions.td:1009, real opcode 0x052 in gfx12/gfx13). Sources
-    // and destination are 32-bit SGPRs whose low 16 bits carry the f16
-    // operand. Routes to the NaN-propagating `llvm.maximum.f16`; the NUM
-    // (non-propagating) sibling lives under `S_MAX_NUM_F32`-style ops.
-    E(S_MAXIMUM_F16, S_MAXIMUM_F16),
-    // gfx12+ scalar IEEE-2019 NaN-propagating maximum. Distinct opcode
-    // from the NUM family above; lowers to `llvm.maximum.f32`.
-    E(S_MAXIMUM_F32, S_MAXIMUM_F32),
+    // gfx12+ scalar IEEE-2019 NaN-propagating f16/f32 extrema, distinct from
+    // the NUM family above; lower to `llvm.{maximum,minimum}.{f16,f32}`.
+    E(S_MAXIMUM_F16, S_MAXIMUM_F16), E(S_MINIMUM_F16, S_MINIMUM_F16),
+    E(S_MAXIMUM_F32, S_MAXIMUM_F32), E(S_MINIMUM_F32, S_MINIMUM_F32),
     E(S_BFE_U32, S_BFE_U32), E(S_BFE_I32, S_BFE_I32),
     E(S_BFE_I64, S_BFE_I64),
     E(S_BFM_B32, S_BFM_B32), E(S_BFM_B64, S_BFM_B64),
