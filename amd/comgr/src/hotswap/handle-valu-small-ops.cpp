@@ -632,6 +632,19 @@ HandlerResult handleValuSmallOps(RaiseContext &Ctx, const DecodedInst &Di,
     Hr.Handled = true;
     return Hr;
   }
+  case CanonicalOp::V_CVT_I32_F64: {
+    // Saturates out-of-range f64 to INT_MIN/INT_MAX and maps NaN to 0, so
+    // lower to fptosi.sat rather than plain fptosi (which is UB on overflow).
+    if (!requireDefaultOutputModsIfPresent(Di, Hr))
+      return Hr;
+    Value *S = Ctx.B.CreateBitCast(Op.src64(0), Ctx.F64Ty);
+    S = Op.applyMods(0, S);
+    Function *SatFn = Intrinsic::getOrInsertDeclaration(
+        &Ctx.M, Intrinsic::fptosi_sat, {Ctx.I32Ty, Ctx.F64Ty});
+    Ctx.writeReg32(Op.dst(), Ctx.B.CreateCall(SatFn, {S}, "cvt_i32_f64"));
+    Hr.Handled = true;
+    return Hr;
+  }
   case CanonicalOp::V_TRUNC_F32: {
     if (!requireDefaultOutputModsIfPresent(Di, Hr))
       return Hr;

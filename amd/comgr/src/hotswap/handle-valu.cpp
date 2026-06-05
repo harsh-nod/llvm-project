@@ -1314,9 +1314,13 @@ HandlerResult handleVALU(RaiseContext &Ctx, const DecodedInst &Di,
     return Hr;
   }
   if (Sop == CanonicalOp::V_CVT_U32_F64) {
+    // Saturates out-of-range f64 to 0/UINT_MAX and maps NaN to 0, so lower to
+    // fptoui.sat rather than plain fptoui (which is UB on overflow).
     auto *F64Ty = Type::getDoubleTy(Ctx.C);
     Value *V = Ctx.B.CreateBitCast(Op.src64(0), F64Ty);
-    Ctx.writeReg32(Op.dst(), Ctx.B.CreateFPToUI(V, Ctx.I32Ty, "cvt_u32_f64"));
+    Function *SatFn = Intrinsic::getOrInsertDeclaration(
+        &Ctx.M, Intrinsic::fptoui_sat, {Ctx.I32Ty, F64Ty});
+    Ctx.writeReg32(Op.dst(), Ctx.B.CreateCall(SatFn, {V}, "cvt_u32_f64"));
     Hr.Handled = true;
     return Hr;
   }

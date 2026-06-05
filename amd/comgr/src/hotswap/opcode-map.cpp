@@ -414,6 +414,7 @@ static const Entry kCanonTable[] = {
     E(V_CVT_F64_U32_e64, V_CVT_F64_U32),
     E(V_CVT_F64_I32_e64, V_CVT_F64_I32),
     E(V_CVT_U32_F64_e64, V_CVT_U32_F64),
+    E(V_CVT_I32_F64_e64, V_CVT_I32_F64),
     E(V_RCP_IFLAG_F32_e64, V_RCP_IFLAG_F32),
     E(V_RCP_F32_e64, V_RCP_F32),
     E(V_RSQ_F32_e64, V_RSQ_F32),
