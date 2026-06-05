@@ -2736,44 +2736,51 @@ HandlerResult handleVALU(RaiseContext &Ctx, const DecodedInst &Di,
   }
 
   // ---- 64-bit vector ops ----
+  //
+  // V_LSHLREV_B64 / V_LSHRREV_B64 / V_ASHRREV_I64 / V_LSHL_ADD_U64 take
+  // a 32-bit shift count; AMDGPU masks it to the low 6 bits, so we mask
+  // the zext'd count before shifting -- an unmasked count >= 64 makes
+  // the LLVM shift poison.
+  const uint64_t ShiftCountMask = (1u << 6) - 1;
   if (Sop == CanonicalOp::V_LSHLREV_B64) {
-    Value *Shamt = Op.src(0);
+    Value *ShiftAmount = Op.src(0);
     Value *Src = Op.src64(1);
     if (Src->getType() != Ctx.I64Ty) Src = Ctx.B.CreateBitOrPointerCast(Src, Ctx.I64Ty);
-    Value *ShamtExt = Ctx.B.CreateZExt(Shamt, Ctx.I64Ty);
-    Ctx.writeReg64(Op.dst(), Ctx.B.CreateShl(Src, ShamtExt, "shl"));
+    Value *ShiftAmountExt = Ctx.B.CreateZExt(ShiftAmount, Ctx.I64Ty);
+    ShiftAmountExt = Ctx.B.CreateAnd(ShiftAmountExt, Ctx.B.getInt64(ShiftCountMask),
+                                     "shift_amount_masked");
+    Ctx.writeReg64(Op.dst(), Ctx.B.CreateShl(Src, ShiftAmountExt, "shl"));
     Hr.Handled = true;
     return Hr;
   }
   // gfx8+ V_LSHRREV_B64 / V_ASHRREV_I64 -- same operand shape as
   // V_LSHLREV_B64: `dst = src1 >> src0`. Logical right shift fills with
   // zero (lshr) and arithmetic right shift fills with the sign bit (ashr).
-  // The hardware masks the shift count to 6 bits; LLVM treats shifts >=
-  // bitwidth as poison, so we don't paper over the difference. Corpus
-  // shifts always carry a finite immediate or a producer that already
-  // masks (the `_upcast_from_mxfp` blocker is `>> 16` over an i64 that
-  // packs two i32 lanes -- well-defined for both ISA and LLVM).
   if (Sop == CanonicalOp::V_LSHRREV_B64 || Sop == CanonicalOp::V_ASHRREV_I64) {
-    Value *Shamt = Op.src(0);
+    Value *ShiftAmount = Op.src(0);
     Value *Src = Op.src64(1);
     if (Src->getType() != Ctx.I64Ty) Src = Ctx.B.CreateBitOrPointerCast(Src, Ctx.I64Ty);
-    Value *ShamtExt = Ctx.B.CreateZExt(Shamt, Ctx.I64Ty);
+    Value *ShiftAmountExt = Ctx.B.CreateZExt(ShiftAmount, Ctx.I64Ty);
+    ShiftAmountExt = Ctx.B.CreateAnd(ShiftAmountExt, Ctx.B.getInt64(ShiftCountMask),
+                                     "shift_amount_masked");
     Value *Res = (Sop == CanonicalOp::V_LSHRREV_B64)
-                     ? Ctx.B.CreateLShr(Src, ShamtExt, "lshr")
-                     : Ctx.B.CreateAShr(Src, ShamtExt, "ashr");
+                     ? Ctx.B.CreateLShr(Src, ShiftAmountExt, "lshr")
+                     : Ctx.B.CreateAShr(Src, ShiftAmountExt, "ashr");
     Ctx.writeReg64(Op.dst(), Res);
     Hr.Handled = true;
     return Hr;
   }
   if (Sop == CanonicalOp::V_LSHL_ADD_U64) {
     Value *Src0 = Op.src64(0);
-    Value *Shamt = Op.src(1);
+    Value *ShiftAmount = Op.src(1);
     Value *Src2 = Op.src64(2);
     if (Src0->getType()->isPointerTy()) Src0 = Ctx.B.CreatePtrToInt(Src0, Ctx.I64Ty);
     if (Src0->getType() != Ctx.I64Ty) Src0 = Ctx.B.CreateBitOrPointerCast(Src0, Ctx.I64Ty);
     if (Src2->getType() != Ctx.I64Ty) Src2 = Ctx.B.CreateBitOrPointerCast(Src2, Ctx.I64Ty);
-    Value *ShamtExt = Ctx.B.CreateZExt(Shamt, Ctx.I64Ty);
-    Value *Shifted = Ctx.B.CreateShl(Src0, ShamtExt);
+    Value *ShiftAmountExt = Ctx.B.CreateZExt(ShiftAmount, Ctx.I64Ty);
+    ShiftAmountExt = Ctx.B.CreateAnd(ShiftAmountExt, Ctx.B.getInt64(ShiftCountMask),
+                                     "shift_amount_masked");
+    Value *Shifted = Ctx.B.CreateShl(Src0, ShiftAmountExt);
     Ctx.writeReg64(Op.dst(), Ctx.B.CreateAdd(Shifted, Src2, "lshl_add"));
     Hr.Handled = true;
     return Hr;

@@ -1,57 +1,17 @@
 ; RUN: %llvm_mc -mcpu=gfx1250 %s -o %t.o && %ld_lld -shared %t.o -o %t.hsaco \
 ; RUN:   && raise_cli %t.hsaco --target-isa=gfx942 --emit-ir=s_lshr_b64_imm_kernel 2>/dev/null | %FileCheck %s
 ;
-; Lift test for the gfx9+/gfx1250 SOP2 64-bit logical right shift
-; (`s_lshr_b64`) with an immediate shift count. See SemOp::S_LSHR_B64
-; in transpiler/semop.hpp; the matching handler block in
-; transpiler/handle_sop2.cpp under `if (sop == SemOp::S_LSHR_B64)`;
-; and the SOP2 mapping in transpiler/opcode_map.cpp.
-;
-; INVARIANTS PINNED:
-;
-;   1. The kernel signature carries the i64 source-operand argument
-;      directly (`i64 %arg1`); no by_value-style decomposition. This
-;      pins the typical `s_lshr_b64` corpus shape: shifting a 64-bit
-;      kernarg-derived pointer/integer by an immediate.
-;
-;   2. The lift emits a single `lshr i64 ..., 16`. The handler
-;      builds `CreateZExt(op.src(1), i64Ty)` followed by
-;      `CreateLShr(...)`, which constant-folds the zext away when
-;      src1 is the immediate `16` (the corpus shape). A regression
-;      that emitted a 32-bit shift, masked the count with `urem 64`,
-;      or routed the immediate through the wrong width would change
-;      this exact instruction shape.
-;
-;   3. NO `zext i32 16 to i64` (the literal would be a sign that the
-;      handler is leaving an unfolded zext on a constant — harmless
-;      but indicates the immediate-folding path regressed).
-;
-;   4. NO 32-bit shift on the source value — the .td definition
-;      `SOP2_64_32` makes the source 64-bit; a regression to a
-;      pair-of-i32 lift would surface as `lshr i32`.
+; Lift test for the SOP2 64-bit logical right shift (`s_lshr_b64`) with
+; an immediate shift count. src0 is the 64-bit value, src1 a single
+; 32-bit SGPR shift count (SOP2_64_32). AMDGPU masks the count to the
+; low 6 bits, so the handler zext's it to i64 and ANDs with 63 before
+; the shift; the mask constant-folds against an immediate src1. All
+; CHECK lines sit next to the asm they pin, below.
 
 ; CHECK-LABEL: define amdgpu_kernel void @s_lshr_b64_imm_kernel(
+; The i64 source operand is carried directly (no by_value split), the
+; corpus shape for shifting a kernarg-derived i64 by an immediate.
 ; CHECK-SAME: ptr addrspace(4) byref([272 x i8]) align 16 %kargs
-
-; The s_lshr_b64 lift. The `lshr64` value-name is the canonical
-; breadcrumb the handler emits (mirrors `shl64` for S_LSHL_B64 and
-; `ashr64` for S_ASHR_I64). The shift count is the literal `16`
-; from the inline asm.
-; CHECK: %lshr64 = lshr i64 %{{[^,]+}}, 16
-
-; Negative pin: no leftover zext-of-constant shape (the immediate
-; `16` must constant-fold through the i32→i64 widen).
-; CHECK-NOT: zext i32 16 to i64
-
-; Negative pin: the shift must be 64-bit. A regression that lowered
-; src0 to a pair of i32s would emit `lshr i32 ...` instead.
-; CHECK-NOT: %lshr64 = lshr i32
-
-; Negative pin: no defensive shift-count masking (the no-fallback
-; rule rejects `urem` on the shift amount; if the source binary
-; supplies an out-of-range count, the lifted IR's poison is the
-; correct surfacing of a real source bug).
-; CHECK-NOT: urem i64 {{.*}}, 64
 
 	.amdgcn_target "amdgcn-amd-amdhsa--gfx1250"
 	.amdhsa_code_object_version 6
@@ -78,8 +38,24 @@ s_lshr_b64_imm_kernel:
 	s_cselect_b32 s0, ttmp9, s1
 	v_mad_u32 v2, s0, s2, v0
 	;;#ASMSTART
+; In-range immediate 16: 16 & 63 == 16, the mask folds away. `lshr64`
+; is the canonical value-name the handler emits (cf. `shl64`/`ashr64`).
+; The shift stays 64-bit (a pair-of-i32 regression would read
+; `lshr64 = lshr i32`) and the count is masked with `and`, never `urem`.
+; CHECK-NOT: lshr64 = lshr i32
+; CHECK-NOT: urem
+; CHECK: %lshr64 = lshr i64 %{{[^,]+}}, 16
 	s_lshr_b64 s[0:1], s[6:7], 16
-	
+; 64 & 63 == 0 (without the mask LLVM would emit a poison `lshr .., 64`).
+; CHECK: lshr i64 %{{[^,]+}}, 0
+	s_lshr_b64 s[0:1], s[6:7], 64
+; 65 & 63 == 1. 65 is outside the inline-constant range, so it is
+; encoded as a 32-bit literal and folds through the same path.
+; CHECK: lshr i64 %{{[^,]+}}, 1
+	s_lshr_b64 s[0:1], s[6:7], 65
+; 127 & 63 == 63 (upper-bound 7-bit immediate).
+; CHECK: lshr i64 %{{[^,]+}}, 63
+	s_lshr_b64 s[0:1], s[6:7], 127
 	;;#ASMEND
 	v_mov_b64_e32 v[0:1], s[0:1]
 	global_store_b64 v2, v[0:1], s[4:5] scale_offset
