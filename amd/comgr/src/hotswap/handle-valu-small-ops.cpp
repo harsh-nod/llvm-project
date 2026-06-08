@@ -7,9 +7,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "handle-valu-internal.h"
+#include "handle-valu-f16-utils.h"
 #include "handle-valu-output-mods.h"
 
 #include "canonical-op.h"
+#include "ocml-runtime.h"
 
 #include "SIDefines.h"
 #include "llvm/ADT/SmallVector.h"
@@ -303,6 +305,37 @@ HandlerResult handleValuSmallOps(RaiseContext &Ctx, const DecodedInst &Di,
     Hr.Handled = true;
     return Hr;
   }
+  case CanonicalOp::V_TANH_F16: {
+    if (!requireDefaultOutputModsIfPresent(Di, Hr))
+      return Hr;
+
+    bool DstHigh = false;
+    unsigned Mods = 0;
+    if (!readOptionalVOP3F16SrcMods(Di, Hr, 0, "v_tanh_f16", Mods))
+      return Hr;
+    DstHigh = (Mods & SISrcMods::DST_OP_SEL) != 0;
+
+    Value *Src = readOptionalOpSelF16(Ctx, Di, Op, Hr, 0, "v_tanh_f16");
+    if (!Src)
+      return Hr;
+
+    Value *Result = nullptr;
+    if (Ctx.TargetIsa.HasTanhInsts) {
+      Function *TanhFn = Intrinsic::getOrInsertDeclaration(
+          &Ctx.M, Intrinsic::amdgcn_tanh, {Ctx.F16Ty});
+      Result = Ctx.B.CreateCall(TanhFn, {Src}, "tanh_f16");
+    } else {
+      // Targets without a native f16 tanh instruction lower through OCML
+      // rather than widening through f32 or inventing a local approximation.
+      FunctionCallee TanhFn = declareOCMLTanhF16(Ctx.M);
+      Result = Ctx.B.CreateCall(TanhFn, {Src}, "ocml.tanh_f16");
+    }
+
+    writeOpSelF16(Ctx, Op, Result, DstHigh, "tanh_f16_merge_lo",
+                  "tanh_f16_merge_hi");
+    Hr.Handled = true;
+    return Hr;
+  }
 
   // ---- 16-bit integer min/max ----
   case CanonicalOp::V_MAX_U16:
@@ -524,6 +557,32 @@ HandlerResult handleValuSmallOps(RaiseContext &Ctx, const DecodedInst &Di,
     Ctx.writeReg32(Op.dst(),
                    Ctx.B.CreateBitCast(
                        Ctx.B.CreateCall(Log2Fn, {S}, "log"), Ctx.I32Ty));
+    Hr.Handled = true;
+    return Hr;
+  }
+  case CanonicalOp::V_TANH_F32: {
+    if (!requireDefaultOutputModsIfPresent(Di, Hr))
+      return Hr;
+    Value *S = Ctx.B.CreateBitCast(Op.srcF(0), Ctx.F32Ty);
+    if (Ctx.TargetIsa.HasTanhInsts) {
+      Function *TanhFn = Intrinsic::getOrInsertDeclaration(
+          &Ctx.M, Intrinsic::amdgcn_tanh, {Ctx.F32Ty});
+      Ctx.writeReg32(Op.dst(),
+                     Ctx.B.CreateBitCast(
+                         Ctx.B.CreateCall(TanhFn, {S}, "tanh"),
+                         Ctx.I32Ty));
+      Hr.Handled = true;
+      return Hr;
+    }
+
+    // Targets without a native tanh instruction lower through OCML rather than
+    // a local arithmetic approximation. Native-capable targets keep the
+    // intrinsic path above.
+    FunctionCallee TanhFn = declareOCMLTanhF32(Ctx.M);
+    Ctx.writeReg32(Op.dst(),
+                   Ctx.B.CreateBitCast(
+                       Ctx.B.CreateCall(TanhFn, {S}, "ocml.tanh"),
+                       Ctx.I32Ty));
     Hr.Handled = true;
     return Hr;
   }

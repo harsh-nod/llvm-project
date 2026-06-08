@@ -24,6 +24,8 @@ const char *reasonString(RaiseFailureReason R) {
     return "TargetMachineCreationFailed";
   case RaiseFailureReason::IRVerificationFailed:
     return "IRVerificationFailed";
+  case RaiseFailureReason::DeviceLibraryLinkFailed:
+    return "device-library-link-failed";
   case RaiseFailureReason::CrossWaveLaneIdLeak:
     return "cross-wave-lane-id-leak";
   case RaiseFailureReason::CrossWaveUnrewritableShuffle:
@@ -90,6 +92,16 @@ RaiseFailure RaiseFailure::irVerificationFailed(const llvm::Twine &Err) {
   F.Reason = RaiseFailureReason::IRVerificationFailed;
   F.Format = reasonString(RaiseFailureReason::IRVerificationFailed);
   F.Detail = Err.str();
+  return F;
+}
+
+RaiseFailure RaiseFailure::deviceLibraryLinkFailed(
+    llvm::StringRef KernelName, const llvm::Twine &Detail) {
+  RaiseFailure F;
+  F.Reason = RaiseFailureReason::DeviceLibraryLinkFailed;
+  F.Mnemonic = "<device-library-link>";
+  F.Format = reasonString(RaiseFailureReason::DeviceLibraryLinkFailed);
+  F.Detail = ("kernel '" + KernelName + "': " + Detail).str();
   return F;
 }
 

@@ -65,10 +65,10 @@ function(comgr_add_amdgpu_private_include_dirs target)
 endfunction()
 
 # Wire up a test target against the hotswap transpiler OBJECT lib + the
-# comgr-metadata.cpp helpers it calls (`metadata::walkElfMetadataIntoDoc`
-# and `metadata::getElfIsaNameFromBuffer`).
+# COMGR-internal helpers it calls (`getDeviceLibraries`,
+# `metadata::walkElfMetadataIntoDoc`, and `metadata::getElfIsaNameFromBuffer`).
 # Test binaries don't link amd_comgr.so (its export map hides everything
-# except the C entry points), so the metadata helpers must be compiled
+# except the C entry points), so the helper definitions must be compiled
 # in directly. `-ffunction-sections -fdata-sections` + `--gc-sections`
 # lets the linker drop unreferenced comgr-metadata.cpp entries
 # (parseTargetIdentifier, the IsaInfos-driven validation, etc.) without
@@ -80,6 +80,7 @@ function(comgr_link_hotswap_transpiler target)
   # `metadata::getMetadataRoot` / `metadata::getElfIsaName` paths.
   target_link_libraries(${target} PRIVATE hotswap::transpiler amd_comgr)
   target_sources(${target} PRIVATE
+    $<TARGET_OBJECTS:comgr-device-libs-internal>
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/comgr-metadata.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/comgr-symbol.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../test-shared/standalone-init.cpp)

@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "handle-valu-internal.h"
+#include "handle-valu-f16-utils.h"
 #include "handle-valu-output-mods.h"
 #include "handlers.h"
 #include "opcode-map.h"
@@ -158,97 +159,6 @@ Intrinsic::ID true16AddSubSatIntrinsic(bool IsSub, bool IsSigned) {
   if (IsSub)
     return IsSigned ? Intrinsic::ssub_sat : Intrinsic::usub_sat;
   return IsSigned ? Intrinsic::sadd_sat : Intrinsic::uadd_sat;
-}
-
-// VOP3 f16 source modifiers carry both arithmetic modifiers and half-register
-// selection:
-//   bit 0: source neg
-//   bit 1: source abs
-//   bit 2: source op_sel (0 = low 16 bits, 1 = high 16 bits)
-// For VOP3_t16, src0_modifiers bit 3 is also the destination op_sel. It
-// selects which 16-bit half of the destination VGPR receives the result; the
-// other half must be preserved by explicitly merging with the old destination
-// dword. Missing or non-immediate modifier operands are treated as TableGen
-// layout drift and refused rather than defaulting to low-half semantics.
-bool readRequiredVOP3F16SrcMods(const DecodedInst &Di, HandlerResult &Hr,
-                                unsigned SrcIndex, StringRef OpName,
-                                unsigned &Mods) {
-  if (SrcIndex >= Di.NumSrcs) {
-    Hr.Failure = RaiseFailure::unsupportedShape(
-        Di, "VOP3",
-        (Twine(OpName) + " missing f16 source operand").str());
-    return false;
-  }
-
-  unsigned ModIdx = Di.ModMap[SrcIndex];
-  if (ModIdx == UINT_MAX || !Di.isImm(ModIdx)) {
-    Hr.Failure = RaiseFailure::unsupportedShape(
-        Di, "VOP3",
-        (Twine(OpName) + " missing immediate f16 src" + Twine(SrcIndex) +
-         "_modifiers operand; operand table layout does not match the "
-         "expected VOP3 f16 profile")
-            .str());
-    return false;
-  }
-
-  int64_t Raw = Di.getImm(ModIdx);
-  const unsigned Allowed = SrcIndex == 0 ? 0xFu : 0x7u;
-  if (Raw < 0 || (static_cast<unsigned>(Raw) & ~Allowed) != 0) {
-    Hr.Failure = RaiseFailure::unsupportedShape(
-        Di, "VOP3",
-        (Twine(OpName) + " has unsupported f16 src" + Twine(SrcIndex) +
-         "_modifiers bits")
-            .str());
-    return false;
-  }
-
-  Mods = static_cast<unsigned>(Raw);
-  return true;
-}
-
-Value *readOpSelF16(RaiseContext &Ctx, const DecodedInst &Di, OpResolver &Op,
-                    HandlerResult &Hr, unsigned SrcIndex, StringRef OpName) {
-  unsigned Mods = 0;
-  if (!readRequiredVOP3F16SrcMods(Di, Hr, SrcIndex, OpName, Mods))
-    return nullptr;
-
-  Type *I16Ty = Type::getInt16Ty(Ctx.C);
-  Value *Raw = Op.src(SrcIndex);
-  if ((Mods & 4) != 0)
-    Raw = Ctx.B.CreateLShr(Raw, 16, "f16_src_hi");
-  Value *Bits = Ctx.B.CreateTrunc(Raw, I16Ty);
-  Value *V = Ctx.B.CreateBitCast(Bits, Ctx.F16Ty);
-  if (Mods & 2)
-    V = Ctx.B.CreateUnaryIntrinsic(Intrinsic::fabs, V, nullptr, "abs_f16");
-  if (Mods & 1)
-    V = Ctx.B.CreateFNeg(V, "neg_f16");
-  return V;
-}
-
-bool readVOP3F16DstHigh(const DecodedInst &Di, HandlerResult &Hr,
-                        StringRef OpName, bool &DstHigh) {
-  unsigned Mods = 0;
-  if (!readRequiredVOP3F16SrcMods(Di, Hr, 0, OpName, Mods))
-    return false;
-  DstHigh = (Mods & 8) != 0;
-  return true;
-}
-
-void writeOpSelF16(RaiseContext &Ctx, OpResolver &Op, Value *Result,
-                   bool DstHigh) {
-  Type *I16Ty = Type::getInt16Ty(Ctx.C);
-  Value *Bits =
-      Ctx.B.CreateZExt(Ctx.B.CreateBitCast(Result, I16Ty), Ctx.I32Ty);
-  Value *Old = Ctx.Regs.readReg32(Ctx.B, Op.dst());
-  if (!DstHigh) {
-    Value *High =
-        Ctx.B.CreateAnd(Old, ConstantInt::get(Ctx.I32Ty, 0xFFFF0000u));
-    Ctx.writeReg32(Op.dst(), Ctx.B.CreateOr(High, Bits, "f16_merge_lo"));
-    return;
-  }
-  Value *Low = Ctx.B.CreateAnd(Old, ConstantInt::get(Ctx.I32Ty, 0x0000FFFFu));
-  Value *Shifted = Ctx.B.CreateShl(Bits, 16);
-  Ctx.writeReg32(Op.dst(), Ctx.B.CreateOr(Low, Shifted, "f16_merge_hi"));
 }
 
 // ============================================================================

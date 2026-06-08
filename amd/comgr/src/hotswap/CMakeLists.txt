@@ -178,6 +178,7 @@ add_library(hotswap-transpiler OBJECT
   mubuf-addr.cpp
   handle-ds.cpp
   handle-valu.cpp
+  handle-valu-f16-utils.cpp
   handle-valu-output-mods.cpp
   handle-valu-small-ops.cpp
   handle-valu-cross-lane.cpp
@@ -188,6 +189,7 @@ add_library(hotswap-transpiler OBJECT
   handle-mfma.cpp
   handle-vopd.cpp
   handle-vimage.cpp
+  ocml-runtime.cpp
   tdm-runtime.cpp
   wave-size-obstruction.cpp
   rewrite-cross-lane-divergent.cpp

@@ -38,6 +38,7 @@
 #include "handlers.h"
 #include "rewrite-cross-lane-divergent.h"
 #include "c5-predicate-chain-classifier.h"
+#include "ocml-runtime.h"
 #include "tdm-runtime.h"
 
 #include "llvm/ADT/Twine.h"
@@ -1310,6 +1311,27 @@ static RaiseResult raiseToIRImpl(llvm::ArrayRef<uint8_t> TextBytes,
     Regs.collectAllocas(Allocas);
     Ctx.collectSgprWaveMaskShadowAllocas(Allocas);
     PromoteMemToReg(Allocas, DT, &AC);
+  }
+
+  // ==== Link and inline OCML device-library helpers ====
+  // OCML-backed VALU lifts emit declared helper calls into COMGR's embedded
+  // device libraries. Resolve and inline those calls before the cross-lane
+  // rewrite so the DPP/readlane/writelane use-chain classifier sees the actual
+  // arithmetic IR, not an unresolved ordinary call that must conservatively be
+  // treated as an SGPR-forced/unknown consumer.
+  // Linked OCML math bodies are pure arithmetic for this lowering policy; they
+  // should not introduce workitem-id predicate-chain structure before the C5
+  // classifier below.
+  if (moduleUsesOCMLRuntime(M)) {
+    StringRef OCMLTargetCpu = TargetCpu.empty() ? SourceCpu : TargetCpu;
+    std::string OCMLLinkErr;
+    if (!linkOCMLRuntime(M, OCMLTargetCpu, TargetIsa.WaveSize, OCMLLinkErr)) {
+      errs() << "transpiler: OCML device-library link failed for kernel '"
+             << KernelName << "'\n";
+      Result.Failure =
+          RaiseFailure::deviceLibraryLinkFailed(KernelName, OCMLLinkErr);
+      return Result;
+    }
   }
 
   // (Former Phase 6.035 "permlane16-swap-selfpreserve" and Phase

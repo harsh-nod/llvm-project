@@ -1,6 +1,7 @@
 #include "translation-cache.h"
 
 #include "code-object-utils.h"
+#include "comgr-device-libs.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/Twine.h"
@@ -46,7 +47,7 @@ double timingElapsed(bool CollectTimings, TimingClock::time_point start) {
   return CollectTimings ? secondsBetween(start, TimingClock::now()) : 0.0;
 }
 
-constexpr int kCacheSchemaVersion = 1;
+constexpr int kCacheSchemaVersion = 2;
 
 struct FileIdentity {
   std::string path;
@@ -64,6 +65,7 @@ struct KeyData {
   std::string rulesSha256;
   std::string rulesError;
   std::string buildIdentity;
+  std::string deviceLibrariesIdentity;
   std::string llcIdentity;
   std::string llvmMcIdentity;
   std::string lldIdentity;
@@ -151,6 +153,18 @@ std::string loadedImageIdentity() {
     return os.str();
   }();
   return identity;
+}
+
+std::string hexBytes(llvm::ArrayRef<unsigned char> Bytes) {
+  std::string Out;
+  llvm::raw_string_ostream Os(Out);
+  for (unsigned char Byte : Bytes)
+    Os << llvm::format_hex_no_prefix(static_cast<uint8_t>(Byte), 2);
+  return Os.str();
+}
+
+std::string deviceLibrariesIdentity() {
+  return hexBytes(COMGR::getDeviceLibrariesIdentifier());
 }
 
 void appendKeyField(std::string &material, llvm::StringRef name,
@@ -252,6 +266,7 @@ KeyData buildKeyData(const TranslationCacheRequest &request,
   data.buildIdentity = loadedImageIdentity();
   data.Timings.loadedImageIdentitySeconds =
       timingElapsed(CollectTimings, loadedImageIdentityStart);
+  data.deviceLibrariesIdentity = deviceLibrariesIdentity();
   auto kernelNamesStart = timingStart(CollectTimings);
   llvm::Expected<llvm::SmallVector<std::string>> NamesOrErr =
       listKernelNames(request.SourceObject);
@@ -287,6 +302,8 @@ KeyData buildKeyData(const TranslationCacheRequest &request,
                  request.EnableWritelaneRewrite);
   appendKeyField(material, "enable_wave_native", request.EnableWaveNative);
   appendKeyField(material, "hotswap_build_identity", data.buildIdentity);
+  appendKeyField(material, "device_libraries_identity",
+                 data.deviceLibrariesIdentity);
   appendKeyField(material, "llc_identity", data.llcIdentity);
   appendKeyField(material, "llvm_mc_identity", data.llvmMcIdentity);
   appendKeyField(material, "lld_identity", data.lldIdentity);
@@ -494,6 +511,7 @@ llvm::json::Object metadataObject(const TranslationCacheRequest &request,
       {"enable_writelane_rewrite", request.EnableWritelaneRewrite},
       {"enable_wave_native", request.EnableWaveNative},
       {"hotswap_build_identity", keyData.buildIdentity},
+      {"device_libraries_identity", keyData.deviceLibrariesIdentity},
       {"llc_identity", keyData.llcIdentity},
       {"llvm_mc_identity", keyData.llvmMcIdentity},
       {"lld_identity", keyData.lldIdentity},
@@ -542,6 +560,8 @@ bool validateMetadata(const TranslationCacheRequest &request,
                         Reason) ||
       !requireEqualString(obj, "hotswap_build_identity",
                           keyData.buildIdentity, Reason) ||
+      !requireEqualString(obj, "device_libraries_identity",
+                          keyData.deviceLibrariesIdentity, Reason) ||
       !requireEqualString(obj, "llc_identity", keyData.llcIdentity, Reason) ||
       !requireEqualString(obj, "llvm_mc_identity", keyData.llvmMcIdentity,
                           Reason) ||

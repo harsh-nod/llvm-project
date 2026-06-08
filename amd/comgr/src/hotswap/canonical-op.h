@@ -354,6 +354,9 @@ enum class CanonicalOp : uint16_t {
   V_CVT_F64_U32, V_CVT_F64_I32, V_CVT_U32_F64, V_CVT_I32_F64,
   V_RCP_IFLAG_F32, V_RCP_F32, V_RSQ_F32, V_SQRT_F32, V_EXP_F32, V_LOG_F32,
   V_FREXP_EXP_I32_F64,
+  // Targets with native tanh support lower this through `llvm.amdgcn.tanh.*`;
+  // other targets use OCML when a matching OCML entry point exists.
+  V_TANH_F32,
   // gfx12+ VOP3 pseudo-scalar f32 transcendentals: scalar input and scalar
   // output variants of the corresponding VOP1 special-function instructions.
   // The default clamp=0/omod=0 forms lower through AMDGPU hardware intrinsics;
@@ -583,7 +586,7 @@ enum class CanonicalOp : uint16_t {
   // half.
   V_MAXIMUM3_F16, V_MINIMUM3_F16,
   V_MAXIMUMMINIMUM_F16, V_MINIMUMMAXIMUM_F16,
-  V_LDEXP_F16, V_FLOOR_F16, V_CVT_F16_U16, V_CVT_U16_F16,
+  V_LDEXP_F16, V_FLOOR_F16, V_TANH_F16, V_CVT_F16_U16, V_CVT_U16_F16,
   V_ASHRREV_I16, V_LSHRREV_B16, V_LSHLREV_B16,
   V_MAX_U16, V_MIN_U16, V_MAX_I16, V_MIN_I16,
   // 16-bit integer arith (gfx8+, VOP2Instructions.td). Plain i16

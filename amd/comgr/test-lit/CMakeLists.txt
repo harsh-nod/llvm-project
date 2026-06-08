@@ -63,11 +63,14 @@ if(COMGR_ENABLE_HOTSWAP_TRANSPILE)
   # transpiler OBJECT library directly (the public amd_comgr API only
   # exposes the rewriting flow, not raw IR emission), so it doesn't fit
   # the add_comgr_lit_binary macro that links amd_comgr. Also compiles
-  # in comgr-metadata.cpp because hotswap calls into
-  # `metadata::walkElfMetadataIntoDoc` / `getElfIsaNameFromBuffer`;
+  # in comgr-device-libs.cpp / comgr-metadata.cpp because hotswap calls
+  # COMGR-internal helpers (`getDeviceLibraries`,
+  # `metadata::walkElfMetadataIntoDoc`, `getElfIsaNameFromBuffer`) whose
+  # C++ symbols are not exported by amd_comgr.so's public C API map;
   # `--gc-sections` drops the unreferenced bits.
   add_executable(raise_cli
     comgr-sources/raise_cli.cpp
+    $<TARGET_OBJECTS:comgr-device-libs-internal>
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/comgr-metadata.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/comgr-symbol.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../test-shared/standalone-init.cpp)

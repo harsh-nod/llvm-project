@@ -9,6 +9,8 @@
 #include "hotswap/mc-state.h"
 #include "hotswap/opcode-map.h"
 
+#include "comgr-device-libs.h"
+
 #include "MCTargetDesc/AMDGPUMCTargetDesc.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/TargetSelect.h"
@@ -16,6 +18,8 @@
 #include "gtest/gtest.h"
 
 #include <mutex>
+#include <string>
+#include <tuple>
 
 namespace {
 
@@ -30,6 +34,66 @@ void ensureAMDGPURegistered() {
 }
 
 } // namespace
+
+TEST(DeviceLibs, SelectOCMLSupportLibrariesForGfx942) {
+  llvm::SmallVector<std::string, 8> Names;
+  std::string Error;
+  ASSERT_TRUE(COMGR::getOCMLDeviceLibraryNames("gfx942", 64, Names, Error))
+      << Error;
+
+  llvm::SmallVector<llvm::StringRef, 8> Expected = {
+      "ocml.bc",
+      "ockl.bc",
+      "oclc_abi_version_600.bc",
+      "oclc_isa_version_942.bc",
+      "oclc_finite_only_off.bc",
+      "oclc_unsafe_math_off.bc",
+      "oclc_wavefrontsize64_on.bc",
+  };
+  ASSERT_EQ(Names.size(), Expected.size());
+  for (size_t I = 0; I < Expected.size(); ++I)
+    EXPECT_EQ(Names[I], Expected[I]);
+
+  for (llvm::StringRef Name : Names) {
+    bool Found = false;
+    for (const auto &Lib : COMGR::getDeviceLibraries()) {
+      if (std::get<0>(Lib) == Name) {
+        Found = true;
+        break;
+      }
+    }
+    EXPECT_TRUE(Found) << Name.str();
+  }
+}
+
+TEST(DeviceLibs, SelectOCMLSupportLibrariesForGenericGfx) {
+  llvm::SmallVector<std::string, 8> Names;
+  std::string Error;
+  ASSERT_TRUE(
+      COMGR::getOCMLDeviceLibraryNames("gfx9-generic", 64, Names, Error))
+      << Error;
+
+  ASSERT_EQ(Names.size(), 7u);
+  EXPECT_EQ(Names[3], "oclc_isa_version_9_generic.bc");
+}
+
+TEST(DeviceLibs, SelectOCMLSupportLibrariesRejectsInvalidInputs) {
+  llvm::SmallVector<std::string, 8> Names;
+  std::string Error;
+  EXPECT_FALSE(COMGR::getOCMLDeviceLibraryNames("amdgcn-amd-amdhsa--gfx942",
+                                                64, Names, Error));
+  EXPECT_NE(Error.find("known AMDGPU processor"), std::string::npos)
+      << Error;
+
+  Error.clear();
+  EXPECT_FALSE(COMGR::getOCMLDeviceLibraryNames("gfx999", 64, Names, Error));
+  EXPECT_NE(Error.find("known AMDGPU processor"), std::string::npos)
+      << Error;
+
+  Error.clear();
+  EXPECT_FALSE(COMGR::getOCMLDeviceLibraryNames("gfx942", 96, Names, Error));
+  EXPECT_NE(Error.find("wave size 96"), std::string::npos) << Error;
+}
 
 // Empty map: every opcode should resolve to `CanonicalOp::Unknown` until
 // handler patches start adding entries.
@@ -114,6 +178,34 @@ TEST(OpcodeMap, Gfx1250VectorF32F64RealOpcodesMapToCanonicalOps) {
             COMGR::hotswap::CanonicalOp::V_CVT_F32_F64);
   EXPECT_EQ(Map.lookup(llvm::AMDGPU::V_CVT_F64_F32_e64_gfx12),
             COMGR::hotswap::CanonicalOp::V_CVT_F64_F32);
+}
+
+TEST(OpcodeMap, Gfx1250TanhF32RealOpcodeMapsToCanonicalOp) {
+  ensureAMDGPURegistered();
+
+  COMGR::hotswap::MCState State;
+  llvm::cantFail(COMGR::hotswap::initMCState(State, "gfx1250"));
+
+  COMGR::hotswap::OpcodeMap Map;
+  Map.build(*State.InstrInfo);
+
+  EXPECT_EQ(Map.lookup(llvm::AMDGPU::V_TANH_F32_e64_gfx1250),
+            COMGR::hotswap::CanonicalOp::V_TANH_F32);
+}
+
+TEST(OpcodeMap, Gfx1250TanhF16RealOpcodeMapsToCanonicalOp) {
+  ensureAMDGPURegistered();
+
+  COMGR::hotswap::MCState State;
+  llvm::cantFail(COMGR::hotswap::initMCState(State, "gfx1250"));
+
+  COMGR::hotswap::OpcodeMap Map;
+  Map.build(*State.InstrInfo);
+
+  EXPECT_EQ(Map.lookup(llvm::AMDGPU::V_TANH_F16V_TANH_F16_t16_e64_gfx1250),
+            COMGR::hotswap::CanonicalOp::V_TANH_F16);
+  EXPECT_EQ(Map.lookup(llvm::AMDGPU::V_TANH_F16V_TANH_F16_fake16_e64_gfx1250),
+            COMGR::hotswap::CanonicalOp::V_TANH_F16);
 }
 
 TEST(OpcodeMap, Gfx1250AddSubNcI16RealOpcodesMapToSemOps) {

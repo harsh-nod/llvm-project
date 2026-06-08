@@ -49,6 +49,10 @@ enum class RaiseFailureReason : uint16_t {
   TargetMachineCreationFailed,
   // Phase 7: `verifyModule` rejected the emitted IR.
   IRVerificationFailed,
+  // A helper/device-library bitcode link step failed before verification. This
+  // is distinct from verifier failure: the module is intentionally incomplete
+  // until the embedded helper or device-library body is linked and inlined.
+  DeviceLibraryLinkFailed,
   // Phase 1.4.5 wave-size-obstruction classifier (hotswap/docs/
   // wave-size-translation.md §7's three-outcome decision procedure).
   // One reason per refusal *decision* so diagnostics can bucket
@@ -153,6 +157,12 @@ struct RaiseFailure {
   // Phase 7: `verifyModule` rejected the emitted IR.
   // `err` carries the verifier's diagnostic text for the `detail` field.
   static RaiseFailure irVerificationFailed(const llvm::Twine &Err);
+
+  // Embedded helper/device-library linking failed before verification.
+  // `kernelName` and `detail` preserve attribution for proof logs without
+  // mis-bucketing the failure as an LLVM verifier rejection.
+  static RaiseFailure deviceLibraryLinkFailed(llvm::StringRef KernelName,
+                                              const llvm::Twine &Detail);
 
   // Phase 1.4.5 wave-size-obstruction classifier (hotswap/docs/
   // wave-size-translation.md §7). `di` supplies the offending

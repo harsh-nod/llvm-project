@@ -29,6 +29,10 @@ struct ISAProfile {
   bool HasMfma = false;
   bool HasVopd = false;
   bool HasScalarFp = false;
+  // True iff the target can select `llvm.amdgcn.tanh.*` to native v_tanh_*
+  // TRANS instructions. gfx1250/gfx13 have it; gfx942 does not, so
+  // cross-target lifts must not emit the intrinsic there.
+  bool HasTanhInsts = false;
   // True iff the subtarget exposes the gfx12-era WMMA instructions
   // (FeatureWMMA{128,256}bInsts). gfx11 WMMA is encoded via FeatureGFX11Insts
   // + VOP3P patterns and is not covered here; the only WMMA source we lift
@@ -92,6 +96,7 @@ struct ISAProfile {
     P.HasAgpr = P.HasMfma;
     P.HasVopd = STI.hasFeature(llvm::AMDGPU::FeatureVOPDInsts);
     P.HasScalarFp = STI.hasFeature(llvm::AMDGPU::FeatureSALUFloatInsts);
+    P.HasTanhInsts = STI.hasFeature(llvm::AMDGPU::FeatureTanhInsts);
     P.HasWmmA12 = STI.hasFeature(llvm::AMDGPU::FeatureWMMA128bInsts) ||
                   STI.hasFeature(llvm::AMDGPU::FeatureWMMA256bInsts);
     P.HasTensorOps = STI.hasFeature(llvm::AMDGPU::FeatureGFX1250Insts);

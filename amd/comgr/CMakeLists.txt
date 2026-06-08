@@ -97,7 +97,6 @@ set(SOURCES
   src/comgr-clang-command.cpp
   src/comgr-compiler.cpp
   src/comgr.cpp
-  src/comgr-device-libs.cpp
   src/comgr-diagnostic-handler.cpp
   src/comgr-disassembly.cpp
   src/comgr-env.cpp
@@ -425,6 +424,24 @@ target_compile_options(amd_comgr
   PRIVATE "${AMD_COMGR_PRIVATE_COMPILE_OPTIONS}")
 target_compile_definitions(amd_comgr
   PRIVATE "${AMD_COMGR_PRIVATE_COMPILE_DEFINITIONS}")
+add_library(comgr-device-libs-internal OBJECT
+  src/comgr-device-libs.cpp)
+set_target_properties(comgr-device-libs-internal PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED Yes
+  CXX_EXTENSIONS No
+  POSITION_INDEPENDENT_CODE ON)
+target_compile_options(comgr-device-libs-internal
+  PRIVATE "${AMD_COMGR_PRIVATE_COMPILE_OPTIONS}")
+target_compile_definitions(comgr-device-libs-internal
+  PRIVATE "${AMD_COMGR_PRIVATE_COMPILE_DEFINITIONS}")
+target_include_directories(comgr-device-libs-internal
+  PRIVATE
+    ${LLVM_INCLUDE_DIRS}
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_BINARY_DIR}/include)
+target_sources(amd_comgr PRIVATE
+  $<TARGET_OBJECTS:comgr-device-libs-internal>)
 target_include_directories(amd_comgr
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
