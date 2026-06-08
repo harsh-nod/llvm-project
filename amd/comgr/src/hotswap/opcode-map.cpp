@@ -252,6 +252,7 @@ static const Entry kCanonTable[] = {
     // is how the corpus surfaces it (gfx1250 disasm) and what the
     // CanonicalOp enum comment in canonical-op.h documents.
     E(S_SWAPPC_B64, S_SWAP_PC_I64),
+    E(S_ADD_PC_I64, S_ADD_PC_I64),
     E(S_ABS_I32, S_ABS_I32),
     E(S_SET_VGPR_MSB, S_SET_VGPR_MSB),
     E(S_BITSET0_B32, S_BITSET0_B32),

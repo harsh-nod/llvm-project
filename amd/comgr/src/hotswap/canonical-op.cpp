@@ -68,6 +68,7 @@ const char *canonicalOpName(CanonicalOp Op) {
     S(S_GETPC_B64)
     S(S_SET_PC_I64)
     S(S_SWAP_PC_I64)
+    S(S_ADD_PC_I64)
     S(S_ABS_I32)
     S(S_SET_VGPR_MSB)
     S(S_BITSET0_B32) S(S_BITSET1_B32)

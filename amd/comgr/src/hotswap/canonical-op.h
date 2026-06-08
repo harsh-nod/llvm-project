@@ -249,6 +249,8 @@ enum class CanonicalOp : uint16_t {
   // enumerates the swap's return offset as one of its cascade
   // targets.
   S_SWAP_PC_I64,
+  // SOP1 gfx1250 PC-relative branch; signed i64 offset, immediate form only.
+  S_ADD_PC_I64,
   S_ABS_I32,
   S_SET_VGPR_MSB,
   // Read-modify-write bit set/clear on an SGPR. Tied src keeps the
